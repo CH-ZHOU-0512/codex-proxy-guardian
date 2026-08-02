@@ -15,6 +15,21 @@ function Get-CpgConfigValue {
     return $property.Value
 }
 
+function Update-CpgConfigDefaults {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]$Config,
+        [Parameter(Mandatory = $true)]$Defaults
+    )
+
+    foreach ($property in $Defaults.PSObject.Properties) {
+        if ($null -eq $Config.PSObject.Properties[$property.Name]) {
+            $Config | Add-Member -MemberType NoteProperty -Name $property.Name -Value $property.Value
+        }
+    }
+    return $Config
+}
+
 function Test-CpgLoopbackHost {
     [CmdletBinding()]
     param([Parameter(Mandatory = $true)][string]$HostName)
@@ -149,6 +164,64 @@ function Protect-CpgProxyUri {
     return $uri.GetLeftPart([UriPartial]::Authority).Replace($uri.UserInfo + '@', '')
 }
 
+function Select-CpgProxyCandidates {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()]$Candidates,
+        [AllowEmptyString()][string]$PreferredUri = ''
+    )
+
+    return @($Candidates | Sort-Object -Property `
+        @{ Expression = { [int]$_.Score }; Descending = $true }, `
+        @{ Expression = { if ([string]$_.Uri -eq $PreferredUri) { 1 } else { 0 } }; Descending = $true }, `
+        @{ Expression = { [string]$_.Source }; Ascending = $true }, `
+        @{ Expression = { [string]$_.Uri }; Ascending = $true })
+}
+
+function Get-CpgRestartDecision {
+    [CmdletBinding()]
+    param(
+        [datetime[]]$RestartHistory = @(),
+        [datetime]$Now = (Get-Date),
+        [ValidateRange(1, 100)][int]$LimitCount = 3,
+        [ValidateRange(1, 1440)][int]$WindowMinutes = 10,
+        [ValidateRange(1, 1440)][int]$CircuitBreakerMinutes = 15,
+        [datetime]$CircuitBreakerUntil = [datetime]::MinValue
+    )
+
+    $cutoff = $Now.AddMinutes(-$WindowMinutes)
+    $recent = @($RestartHistory | Where-Object { $_ -ge $cutoff -and $_ -le $Now })
+    if ($CircuitBreakerUntil -gt $Now) {
+        return [pscustomobject]@{
+            Allowed = $false
+            Reason = 'circuit_open'
+            RecentRestarts = $recent
+            CircuitBreakerUntil = $CircuitBreakerUntil
+        }
+    }
+    if ($recent.Count -ge $LimitCount) {
+        return [pscustomobject]@{
+            Allowed = $false
+            Reason = 'restart_limit_reached'
+            RecentRestarts = $recent
+            CircuitBreakerUntil = $Now.AddMinutes($CircuitBreakerMinutes)
+        }
+    }
+    return [pscustomobject]@{
+        Allowed = $true
+        Reason = 'allowed'
+        RecentRestarts = $recent
+        CircuitBreakerUntil = [datetime]::MinValue
+    }
+}
+
+function Test-CpgProxyResponseStatus {
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)][int]$StatusCode)
+
+    return ($StatusCode -ge 200 -and $StatusCode -lt 500 -and $StatusCode -ne 407)
+}
+
 function Test-CpgRootUsesProxy {
     [CmdletBinding()]
     param(
@@ -257,10 +330,14 @@ function Test-CpgInstallMarker {
 
 Export-ModuleMember -Function @(
     'Get-CpgConfigValue',
+    'Update-CpgConfigDefaults',
     'Test-CpgLoopbackHost',
     'ConvertTo-CpgHttpProxyUri',
     'ConvertFrom-CpgProxyServer',
     'Protect-CpgProxyUri',
+    'Select-CpgProxyCandidates',
+    'Get-CpgRestartDecision',
+    'Test-CpgProxyResponseStatus',
     'Test-CpgRootUsesProxy',
     'Get-CpgCodexApp',
     'Test-CpgCodexRootProcess',

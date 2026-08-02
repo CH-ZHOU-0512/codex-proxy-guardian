@@ -13,7 +13,13 @@
 4. Set `ExplicitProxy` to the stable HTTP/mixed inbound endpoint if automatic discovery sees multiple listeners.
 5. Increase `DebounceSeconds`, `StableSamples`, or `RestartCooldownSeconds` for a proxy application that recreates listeners during profile switches.
 
+Version 0.2 and later also stops attempting restarts after `RestartLimitCount` events inside `RestartLimitWindowMinutes`. `Status.ps1` shows `RestartCircuitOpen` and its expiry. Do not simply raise the limit until the candidate-change cause is understood.
+
 The watchdog intentionally matches `--proxy-server=<validated URI>` on the current root process. It does not use launcher PID ownership, which is unreliable during MSIX/Electron process handoff.
+
+## Codex stayed closed after a managed restart
+
+Version 0.2 persists a `RecoveryLaunchRequired` flag before stopping Codex. If launch fails, `GuardianState` becomes `RecoveringCodex` and the guardian retries while the proxy remains valid. If a separately launched, unconfigured Codex blocks Safe-mode recovery, the state becomes `RecoveryBlockedByCodex`; close it and use **Codex (Managed Proxy)**. Failed attempts share the normal restart budget; after the limit, `RestartCircuitOpen` prevents an unbounded loop. Check the newest `codex_started`, `loop_error`, and `restart_circuit_opened` log events. Do not delete `state.json` merely to bypass the limit; correct the launch or package-resolution failure first.
 
 ## No proxy is selected
 
@@ -27,6 +33,18 @@ The watchdog intentionally matches `--proxy-server=<validated URI>` on the curre
   ```
 
 Exit code `2` means no candidate passed both TCP and HTTPS validation. A proxy may be listening but unable to reach the configured `ProxyTestUrls`.
+
+For a fuller, redacted diagnosis:
+
+```powershell
+.\Doctor.ps1 -Online
+```
+
+The default requires at least two successful HTTPS targets. This makes a listener-only false positive much less likely.
+
+## Status says ValidatedProxy but not TrafficObserved
+
+`ValidatedProxy` proves the endpoint can carry the configured HTTPS checks. `LaunchConfigured` adds proof that the current Codex root carries the matching proxy argument. `TrafficObserved` appears only after a live Codex process-tree TCP connection to that endpoint is seen. Open or continue a Codex task, then check status again. Short-lived connections can be missed; absence of traffic evidence is not by itself proof of failure.
 
 ## Codex is not found
 

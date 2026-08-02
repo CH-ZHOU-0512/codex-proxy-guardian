@@ -10,6 +10,7 @@
 | Shell | Windows PowerShell 5.1 | PowerShell 7 can run setup/tests, but the task uses inbox Windows PowerShell |
 | Proxy scheme | HTTP, HTTPS | An explicit port is required |
 | Windows proxy | Manual `ProxyServer` | Supports one endpoint or `http=...;https=...` forms |
+| Environment proxy | `HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY` | Values must describe an HTTP/HTTPS proxy and pass validation |
 | Proxy process | Recognized local listener | Process patterns are configurable |
 | Startup | Scheduled Task | HKCU Run is a fallback |
 
@@ -26,12 +27,19 @@
 
 ## Compatibility reports
 
-When opening an issue, include redacted output from:
+When opening an issue, attach the intentionally redacted report first:
 
 ```powershell
-.\Status.ps1 -Json
+.\Doctor.ps1 -Online -Json -ExportPath .\codex-proxy-guardian-diagnostics.json
+```
+
+Also include the proxy application name/version and whether it uses system proxy, an HTTP/mixed port, or TUN mode. A product name alone is not enough to identify its routing behavior.
+
+`Status.ps1 -Json`, `config.json`, and JSONL logs are local operational data and are **not** declared safe for public sharing. Post them only when a maintainer requests a specific field or event, and remove proxy endpoints, custom validation hosts, usernames, paths, IP addresses, tokens, and credentials first.
+
+You may separately provide these low-risk version checks:
+
+```powershell
 Get-AppxPackage -Name OpenAI.Codex | Select-Object Name, Version, Architecture
 Get-ExecutionPolicy -List
 ```
-
-Also include the proxy application name/version, whether it uses system proxy or TUN mode, and the last relevant JSONL log entries. Remove usernames, hostnames, IP addresses, tokens, and any credentials before posting.

@@ -86,7 +86,10 @@ if ($KeepLogs -and (Test-Path -LiteralPath (Join-Path $resolvedRoot 'logs'))) {
     Move-Item -LiteralPath (Join-Path $resolvedRoot 'logs') -Destination $keptLogsPath
 }
 
-Set-Location -LiteralPath $env:TEMP
+$currentLocationPath = [System.IO.Path]::GetFullPath((Get-Location).Path).TrimEnd('\')
+$locationIsInsideInstall = [string]::Equals($currentLocationPath, $resolvedRoot, [System.StringComparison]::OrdinalIgnoreCase) -or `
+    $currentLocationPath.StartsWith($resolvedRoot + '\', [System.StringComparison]::OrdinalIgnoreCase)
+if ($locationIsInsideInstall) { Set-Location -LiteralPath $env:TEMP }
 Remove-Item -LiteralPath $resolvedRoot -Recurse -Force
 
 [pscustomobject]@{

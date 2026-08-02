@@ -1,0 +1,44 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Verify tag matches VERSION
+        shell: powershell
+        run: |
+          $version = (Get-Content -Raw -LiteralPath .\VERSION).Trim()
+          if ($env:GITHUB_REF_NAME -ne "v$version") {
+            throw "Tag '$env:GITHUB_REF_NAME' does not match VERSION '$version'."
+          }
+      - name: Build and test release archive
+        shell: powershell
+        run: .\tools\Package-Release.ps1
+      - name: Publish GitHub Release
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $version = (Get-Content -Raw -LiteralPath .\VERSION).Trim()
+          $archive = ".\artifacts\CodexProxyGuardian-$version.zip"
+          $checksum = "$archive.sha256"
+          $arguments = @(
+            'release', 'create', $env:GITHUB_REF_NAME,
+            $archive, $checksum,
+            '--verify-tag', '--generate-notes',
+            '--title', "Codex Proxy Guardian $env:GITHUB_REF_NAME"
+          )
+          if ($env:GITHUB_REF_NAME -match '-') { $arguments += '--prerelease' }
+          & gh @arguments
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

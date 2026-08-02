@@ -2,6 +2,7 @@
 param(
     [switch]$SelfTest,
     [switch]$RunOnce,
+    [switch]$ObserveOnly,
     [string]$ProxyOverride = ''
 )
 
@@ -19,12 +20,23 @@ $script:StopRequestPath = Join-Path $script:Root 'stop.request'
 $script:LaunchRequestPath = Join-Path $script:Root 'launch.request'
 $script:AdoptRequestPath = Join-Path $script:Root 'adopt-current-once.request'
 $script:ValidationCache = @{}
+$script:ProxyAddressCache = @{}
+$script:InheritedProxyEnvironment = @{}
+foreach ($proxyVariableName in @('HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy', 'ALL_PROXY', 'all_proxy')) {
+    $script:InheritedProxyEnvironment[$proxyVariableName] = [Environment]::GetEnvironmentVariable($proxyVariableName, 'Process')
+}
 
 function Read-GuardianConfig {
     if (-not (Test-Path -LiteralPath $script:ConfigPath)) {
         throw "Missing configuration file: $script:ConfigPath"
     }
-    return (Get-Content -Raw -LiteralPath $script:ConfigPath | ConvertFrom-Json)
+    $config = Get-Content -Raw -LiteralPath $script:ConfigPath | ConvertFrom-Json
+    $defaultsPath = Join-Path $script:Root 'config.default.json'
+    if (Test-Path -LiteralPath $defaultsPath) {
+        $defaults = Get-Content -Raw -LiteralPath $defaultsPath | ConvertFrom-Json
+        $config = Update-CpgConfigDefaults -Config $config -Defaults $defaults
+    }
+    return $config
 }
 
 function Initialize-Logging {
@@ -114,10 +126,30 @@ function Get-SystemProxyCandidates {
     if ($null -eq $settings -or [int](Get-CpgConfigValue $settings 'ProxyEnable' 0) -ne 1) { return $result }
 
     foreach ($item in @(ConvertFrom-CpgProxyServer -ProxyServer ([string](Get-CpgConfigValue $settings 'ProxyServer' '')) -AllowNonLoopback:$allowRemote)) {
-        $result += New-ProxyCandidate ([string]$item.Uri) ("system:{0}" -f $item.Label) 200
+        $score = switch ([string]$item.Label) {
+            'https' { 220 }
+            'http' { 210 }
+            default { 200 }
+        }
+        $result += New-ProxyCandidate ([string]$item.Uri) ("system:{0}" -f $item.Label) $score
     }
-    $maximum = [Math]::Max(1, [int](Get-CpgConfigValue $Config 'MaxProcessProxyCandidates' 6))
-    return @($result | Sort-Object -Property @{ Expression = 'Score'; Descending = $true }, @{ Expression = 'Port'; Ascending = $true } | Select-Object -First $maximum)
+    return $result
+}
+
+function Get-EnvironmentProxyCandidates {
+    param($Config)
+
+    if (-not [bool](Get-CpgConfigValue $Config 'EnableEnvironmentProxyDiscovery' $true)) { return @() }
+    $allowRemote = [bool](Get-CpgConfigValue $Config 'AllowNonLoopbackProxy' $false)
+    $result = @()
+    $score = 190
+    foreach ($name in @('HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy', 'ALL_PROXY', 'all_proxy')) {
+        $value = $script:InheritedProxyEnvironment[$name]
+        $uri = ConvertTo-CpgHttpProxyUri -Address ([string]$value) -AllowNonLoopback:$allowRemote
+        if ($null -ne $uri) { $result += New-ProxyCandidate $uri ("environment:{0}" -f $name) $score }
+        $score--
+    }
+    return $result
 }
 
 function Test-PreferredProxyProcess {
@@ -153,7 +185,8 @@ function Get-ProcessProxyCandidates {
         if ([int]$connection.LocalPort -in $preferredPorts) { $score += 20 }
         $result += New-ProxyCandidate $uri ("process:{0}" -f $process.ProcessName) $score
     }
-    return $result
+    $maximum = [Math]::Max(1, [int](Get-CpgConfigValue $Config 'MaxProcessProxyCandidates' 6))
+    return @($result | Sort-Object -Property @{ Expression = 'Score'; Descending = $true }, @{ Expression = 'Port'; Ascending = $true }, @{ Expression = 'Uri'; Ascending = $true } | Select-Object -First $maximum)
 }
 
 function Test-TcpEndpoint {
@@ -171,14 +204,22 @@ function Test-TcpEndpoint {
 }
 
 function Test-HttpProxy {
-    param([string]$ProxyUri, [string[]]$TestUrls, [int]$TimeoutSeconds)
+    param([string]$ProxyUri, [string[]]$TestUrls, [int]$TimeoutSeconds, [int]$MinimumSuccessCount)
 
     Add-Type -AssemblyName System.Net.Http
+    $results = @()
+    $successCount = 0
+    $required = [Math]::Min($TestUrls.Count, [Math]::Max(1, $MinimumSuccessCount))
+    $attemptedCount = 0
     foreach ($testUrl in $TestUrls) {
+        $attemptedCount++
         $handler = New-Object System.Net.Http.HttpClientHandler
         $client = $null
         $request = $null
         $response = $null
+        $statusCode = $null
+        $passed = $false
+        $failureType = $null
         try {
             $handler.UseProxy = $true
             $handler.Proxy = New-Object System.Net.WebProxy($ProxyUri, $false)
@@ -188,16 +229,32 @@ function Test-HttpProxy {
             $request = New-Object System.Net.Http.HttpRequestMessage([System.Net.Http.HttpMethod]::Head, $testUrl)
             $response = $client.SendAsync($request).GetAwaiter().GetResult()
             $statusCode = [int]$response.StatusCode
-            if ($statusCode -ge 200 -and $statusCode -lt 500 -and $statusCode -ne 407) { return $true }
+            $passed = Test-CpgProxyResponseStatus -StatusCode $statusCode
         }
-        catch { }
+        catch { $failureType = $_.Exception.GetType().Name }
         finally {
             if ($null -ne $response) { $response.Dispose() }
             if ($null -ne $request) { $request.Dispose() }
             if ($null -ne $client) { $client.Dispose() } else { $handler.Dispose() }
         }
+        if ($passed) { $successCount++ }
+        $results += [pscustomobject]@{
+            Host = ([Uri]$testUrl).Host
+            Passed = $passed
+            StatusCode = $statusCode
+            FailureType = $failureType
+        }
+        if ($successCount -ge $required) { break }
+        if (($successCount + ($TestUrls.Count - $attemptedCount)) -lt $required) { break }
     }
-    return $false
+    return [pscustomobject]@{
+        Passed = ($successCount -ge $required)
+        SuccessCount = $successCount
+        RequiredCount = $required
+        TargetCount = $TestUrls.Count
+        AttemptedCount = $attemptedCount
+        Results = $results
+    }
 }
 
 function Test-ProxyCandidate {
@@ -206,13 +263,17 @@ function Test-ProxyCandidate {
     $tcpTimeout = [int](Get-CpgConfigValue $Config 'TcpTimeoutMilliseconds' 1500)
     if (-not (Test-TcpEndpoint $Candidate.Host $Candidate.Port $tcpTimeout)) {
         $script:ValidationCache.Remove($Candidate.Uri)
+        $Candidate | Add-Member -MemberType NoteProperty -Name ValidationResult -Value ([pscustomobject]@{ Passed = $false; SuccessCount = 0; RequiredCount = 1; TargetCount = 0; AttemptedCount = 0; Results = @() }) -Force
         return $false
     }
 
     $interval = [int](Get-CpgConfigValue $Config 'HttpValidationIntervalSeconds' 30)
     if ($script:ValidationCache.ContainsKey($Candidate.Uri)) {
         $cached = $script:ValidationCache[$Candidate.Uri]
-        if ($cached.Valid -and ((Get-Date) - $cached.CheckedAt).TotalSeconds -lt $interval) { return $true }
+        if (((Get-Date) - $cached.CheckedAt).TotalSeconds -lt $interval) {
+            $Candidate | Add-Member -MemberType NoteProperty -Name ValidationResult -Value $cached.Result -Force
+            return [bool]$cached.Valid
+        }
     }
 
     $urls = @((Get-CpgConfigValue $Config 'ProxyTestUrls' @('https://api.openai.com/v1/models')) | ForEach-Object {
@@ -220,13 +281,15 @@ function Test-ProxyCandidate {
         if ([Uri]::TryCreate([string]$_, [UriKind]::Absolute, [ref]$testUri) -and $testUri.Scheme -eq 'https') { [string]$_ }
     } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
     if ($urls.Count -eq 0) { throw 'ProxyTestUrls must contain at least one absolute HTTPS URL.' }
-    $valid = Test-HttpProxy $Candidate.Uri $urls ([int](Get-CpgConfigValue $Config 'HttpTimeoutSeconds' 8))
-    $script:ValidationCache[$Candidate.Uri] = [pscustomobject]@{ Valid = $valid; CheckedAt = Get-Date }
-    return $valid
+    $minimum = [int](Get-CpgConfigValue $Config 'MinimumSuccessfulProxyTests' 1)
+    $validation = Test-HttpProxy $Candidate.Uri $urls ([int](Get-CpgConfigValue $Config 'HttpTimeoutSeconds' 8)) $minimum
+    $Candidate | Add-Member -MemberType NoteProperty -Name ValidationResult -Value $validation -Force
+    $script:ValidationCache[$Candidate.Uri] = [pscustomobject]@{ Valid = [bool]$validation.Passed; CheckedAt = Get-Date; Result = $validation }
+    return [bool]$validation.Passed
 }
 
 function Find-EffectiveProxy {
-    param($Config)
+    param($Config, [string]$PreferredUri = '')
 
     $candidates = @()
     if (-not [string]::IsNullOrWhiteSpace($ProxyOverride)) {
@@ -235,10 +298,11 @@ function Find-EffectiveProxy {
         if ($null -ne $uri) { $candidates += New-ProxyCandidate $uri 'parameter:ProxyOverride' 400 }
     }
     $candidates += @(Get-SystemProxyCandidates $Config)
+    $candidates += @(Get-EnvironmentProxyCandidates $Config)
     $candidates += @(Get-ProcessProxyCandidates $Config)
 
     $seen = @{}
-    foreach ($candidate in @($candidates | Sort-Object Score -Descending)) {
+    foreach ($candidate in @(Select-CpgProxyCandidates -Candidates $candidates -PreferredUri $PreferredUri)) {
         if ($null -eq $candidate -or $seen.ContainsKey($candidate.Uri)) { continue }
         $seen[$candidate.Uri] = $true
         if (Test-ProxyCandidate $candidate $Config) { return $candidate }
@@ -247,14 +311,24 @@ function Find-EffectiveProxy {
 }
 
 function Get-CodexRootProcesses {
-    param($CodexApp)
+    param($CodexApps)
 
-    if ($null -eq $CodexApp) { return @() }
-    $name = [string]$CodexApp.ProcessName
-    $escapedName = $name.Replace("'", "''")
+    $apps = @($CodexApps | Where-Object { $null -ne $_ })
+    if ($apps.Count -eq 0) { return @() }
     $result = @()
-    foreach ($process in @(Get-CimInstance Win32_Process -Filter ("Name='{0}'" -f $escapedName) -ErrorAction SilentlyContinue)) {
-        if (Test-CpgCodexRootProcess -Process $process -CodexApp $CodexApp) { $result += $process }
+    $seen = @{}
+    foreach ($name in @($apps | ForEach-Object { [string]$_.ProcessName } | Sort-Object -Unique)) {
+        $escapedName = $name.Replace("'", "''")
+        foreach ($process in @(Get-CimInstance Win32_Process -Filter ("Name='{0}'" -f $escapedName) -ErrorAction SilentlyContinue)) {
+            if ($seen.ContainsKey([int]$process.ProcessId)) { continue }
+            foreach ($app in $apps) {
+                if (Test-CpgCodexRootProcess -Process $process -CodexApp $app) {
+                    $seen[[int]$process.ProcessId] = $true
+                    $result += $process
+                    break
+                }
+            }
+        }
     }
     return $result
 }
@@ -263,7 +337,7 @@ function Set-ScopedProxyEnvironment {
     param([string]$ProxyUri, $Config)
 
     $noProxy = [string](Get-CpgConfigValue $Config 'NoProxy' 'localhost,127.0.0.1,::1')
-    foreach ($name in @('HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'http_proxy', 'https_proxy', 'all_proxy')) {
+    foreach ($name in @('HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'WS_PROXY', 'WSS_PROXY', 'http_proxy', 'https_proxy', 'all_proxy', 'ws_proxy', 'wss_proxy')) {
         [Environment]::SetEnvironmentVariable($name, $ProxyUri, 'Process')
     }
     foreach ($name in @('NO_PROXY', 'no_proxy')) {
@@ -319,6 +393,47 @@ function Get-ProcessTreeIds {
     return @($depthById.GetEnumerator() | Sort-Object Value -Descending | ForEach-Object { [int]$_.Key })
 }
 
+function Test-CodexProxyTraffic {
+    param([int[]]$RootIds, [string]$ProxyUri)
+
+    if ($RootIds.Count -eq 0 -or [string]::IsNullOrWhiteSpace($ProxyUri)) { return $false }
+    $uri = [Uri]$ProxyUri
+    $proxyHost = $uri.Host.Trim('[', ']')
+    $proxyAddresses = @()
+    $proxyAddress = $null
+    if ([System.Net.IPAddress]::TryParse($proxyHost, [ref]$proxyAddress)) { $proxyAddresses = @($proxyAddress) }
+    elseif (Test-CpgLoopbackHost -HostName $proxyHost) { $proxyAddresses = @([System.Net.IPAddress]::Loopback, [System.Net.IPAddress]::IPv6Loopback) }
+    else {
+        $cacheKey = $proxyHost.ToLowerInvariant()
+        $cachedAddresses = if ($script:ProxyAddressCache.ContainsKey($cacheKey)) { $script:ProxyAddressCache[$cacheKey] } else { $null }
+        if ($null -eq $cachedAddresses -or ((Get-Date) - $cachedAddresses.CheckedAt).TotalMinutes -ge 5) {
+            $resolvedAddresses = @()
+            try {
+                $resolutionTask = [System.Net.Dns]::GetHostAddressesAsync($proxyHost)
+                if ($resolutionTask.Wait(1500)) { $resolvedAddresses = @($resolutionTask.Result) }
+            }
+            catch { $resolvedAddresses = @() }
+            $cachedAddresses = [pscustomobject]@{ CheckedAt = Get-Date; Addresses = $resolvedAddresses }
+            $script:ProxyAddressCache[$cacheKey] = $cachedAddresses
+        }
+        $proxyAddresses = @($cachedAddresses.Addresses)
+    }
+    if ($proxyAddresses.Count -eq 0) { return $false }
+
+    $processIds = @(Get-ProcessTreeIds $RootIds)
+    foreach ($connection in @(Get-NetTCPConnection -State Established -ErrorAction SilentlyContinue | Where-Object {
+        [int]$_.OwningProcess -in $processIds -and [int]$_.RemotePort -eq $uri.Port
+    })) {
+        $remote = $null
+        if (-not [System.Net.IPAddress]::TryParse([string]$connection.RemoteAddress, [ref]$remote)) { continue }
+        if ((Test-CpgLoopbackHost -HostName $proxyHost) -and [System.Net.IPAddress]::IsLoopback($remote)) { return $true }
+        foreach ($expectedAddress in $proxyAddresses) {
+            if ($remote.Equals($expectedAddress) -or $remote.MapToIPv6().Equals($expectedAddress.MapToIPv6())) { return $true }
+        }
+    }
+    return $false
+}
+
 function Stop-CodexDesktop {
     param([int[]]$RootIds, $Config)
 
@@ -357,10 +472,18 @@ function Save-PersistentState {
 
     $restartText = $null
     if ($LastRestart -ne [datetime]::MinValue) { $restartText = $LastRestart.ToUniversalTime().ToString('o') }
+    $circuitText = $null
+    if ($script:CircuitBreakerUntil -gt [datetime]::MinValue) { $circuitText = $script:CircuitBreakerUntil.ToUniversalTime().ToString('o') }
+    $trafficText = $null
+    if ($script:LastProxyConnection -gt [datetime]::MinValue) { $trafficText = $script:LastProxyConnection.ToUniversalTime().ToString('o') }
     Write-JsonAtomically $script:StatePath ([ordered]@{
         activeProxy = $ActiveProxy
         activeSource = $ActiveSource
         lastRestartUtc = $restartText
+        restartHistoryUtc = @($script:RestartHistory | ForEach-Object { $_.ToUniversalTime().ToString('o') })
+        circuitBreakerUntilUtc = $circuitText
+        lastProxyConnectionUtc = $trafficText
+        recoveryLaunchRequired = $script:RecoveryLaunchRequired
         updatedUtc = (Get-Date).ToUniversalTime().ToString('o')
     })
 }
@@ -380,13 +503,20 @@ function Get-MutexName {
 
 $config = Read-GuardianConfig
 $codexApp = Get-CpgCodexApp -Config $config
+$codexApps = @($codexApp | Where-Object { $null -ne $_ })
+$lastCodexResolve = Get-Date
 
 if ($SelfTest) {
     $candidate = Find-EffectiveProxy $config
+    $validation = if ($null -eq $candidate) { $null } else { $candidate.ValidationResult }
     [pscustomobject]@{
         ProxyValid = ($null -ne $candidate)
         Proxy = if ($null -eq $candidate) { $null } else { Protect-CpgProxyUri $candidate.Uri }
         ProxySource = if ($null -eq $candidate) { $null } else { $candidate.Source }
+        ProxyTestSuccessCount = if ($null -eq $validation) { 0 } else { $validation.SuccessCount }
+        ProxyTestRequiredCount = if ($null -eq $validation) { [int](Get-CpgConfigValue $config 'MinimumSuccessfulProxyTests' 1) } else { $validation.RequiredCount }
+        ProxyTestTargetCount = if ($null -eq $validation) { @((Get-CpgConfigValue $config 'ProxyTestUrls' @())).Count } else { $validation.TargetCount }
+        ProxyTestAttemptedCount = if ($null -eq $validation) { 0 } else { $validation.AttemptedCount }
         CodexInstalled = ($null -ne $codexApp)
         CodexPackage = if ($null -eq $codexApp) { $null } else { $codexApp.PackageName }
         SystemProxyModified = $false
@@ -408,10 +538,17 @@ if (-not $createdNew) {
 $pollSeconds = [Math]::Max(2, [int](Get-CpgConfigValue $config 'PollSeconds' 5))
 $stableSamples = [Math]::Max(1, [int](Get-CpgConfigValue $config 'StableSamples' 3))
 $debounceSeconds = [Math]::Max(0, [int](Get-CpgConfigValue $config 'DebounceSeconds' 10))
+if ($RunOnce) { $stableSamples = 1; $debounceSeconds = 0 }
 $externalDebounceSeconds = [Math]::Max(0, [int](Get-CpgConfigValue $config 'ExternalLaunchDebounceSeconds' 15))
 $restartCooldownSeconds = [Math]::Max(10, [int](Get-CpgConfigValue $config 'RestartCooldownSeconds' 45))
+$restartLimitCount = [Math]::Max(1, [int](Get-CpgConfigValue $config 'RestartLimitCount' 3))
+$restartLimitWindowMinutes = [Math]::Max(1, [int](Get-CpgConfigValue $config 'RestartLimitWindowMinutes' 10))
+$circuitBreakerMinutes = [Math]::Max(1, [int](Get-CpgConfigValue $config 'CircuitBreakerMinutes' 15))
+$recoveryLaunchRetrySeconds = [Math]::Max(5, [int](Get-CpgConfigValue $config 'RecoveryLaunchRetrySeconds' 10))
+$codexResolveIntervalSeconds = [Math]::Max(10, [int](Get-CpgConfigValue $config 'CodexResolveIntervalSeconds' 60))
+$trafficEvidenceWindowSeconds = [Math]::Max(30, [int](Get-CpgConfigValue $config 'ProxyConnectionEvidenceWindowSeconds' 300))
 $unavailableLogSeconds = [Math]::Max(30, [int](Get-CpgConfigValue $config 'UnavailableLogIntervalSeconds' 300))
-$manageExternalLaunches = [bool](Get-CpgConfigValue $config 'ManageExternalCodexLaunches' $false)
+$manageExternalLaunches = [bool](Get-CpgConfigValue $config 'ManageExternalCodexLaunches' $false) -and -not $ObserveOnly
 
 $persistentState = Read-PersistentState
 $previousActiveProxy = ''
@@ -425,19 +562,63 @@ $managedRootPid = 0
 $pendingExternalPid = 0
 $pendingExternalSince = [datetime]::MinValue
 $lastRestart = [datetime]::MinValue
+$script:RestartHistory = @()
+$script:CircuitBreakerUntil = [datetime]::MinValue
+$script:LastProxyConnection = [datetime]::MinValue
+$script:RecoveryLaunchRequired = $false
 if ($null -ne $persistentState) {
     $lastRestartText = [string](Get-CpgConfigValue $persistentState 'lastRestartUtc' '')
     if (-not [string]::IsNullOrWhiteSpace($lastRestartText)) {
         try { $lastRestart = ([datetime]::Parse($lastRestartText)).ToLocalTime() } catch { $lastRestart = [datetime]::MinValue }
     }
+    foreach ($historyText in @(Get-CpgConfigValue $persistentState 'restartHistoryUtc' @())) {
+        try { $script:RestartHistory += ([datetime]::Parse([string]$historyText)).ToLocalTime() } catch { }
+    }
+    $circuitText = [string](Get-CpgConfigValue $persistentState 'circuitBreakerUntilUtc' '')
+    if (-not [string]::IsNullOrWhiteSpace($circuitText)) {
+        try { $script:CircuitBreakerUntil = ([datetime]::Parse($circuitText)).ToLocalTime() } catch { $script:CircuitBreakerUntil = [datetime]::MinValue }
+    }
+    $trafficText = [string](Get-CpgConfigValue $persistentState 'lastProxyConnectionUtc' '')
+    if (-not [string]::IsNullOrWhiteSpace($trafficText)) {
+        try { $script:LastProxyConnection = ([datetime]::Parse($trafficText)).ToLocalTime() } catch { $script:LastProxyConnection = [datetime]::MinValue }
+    }
+    $script:RecoveryLaunchRequired = [bool](Get-CpgConfigValue $persistentState 'recoveryLaunchRequired' $false)
 }
 $restartRequired = $false
 $consecutiveErrors = 0
 $lastUnavailableLog = [datetime]::MinValue
 
+function Test-GuardianRestartBudget {
+    $decision = Get-CpgRestartDecision -RestartHistory $script:RestartHistory -Now (Get-Date) `
+        -LimitCount $restartLimitCount -WindowMinutes $restartLimitWindowMinutes `
+        -CircuitBreakerMinutes $circuitBreakerMinutes -CircuitBreakerUntil $script:CircuitBreakerUntil
+    $script:RestartHistory = @($decision.RecentRestarts)
+    if ($decision.Allowed) {
+        $script:CircuitBreakerUntil = [datetime]::MinValue
+        return $true
+    }
+
+    if ($decision.CircuitBreakerUntil -ne $script:CircuitBreakerUntil) {
+        $script:CircuitBreakerUntil = $decision.CircuitBreakerUntil
+        Write-GuardianLog 'ERROR' 'restart_circuit_opened' 'The restart-rate limit was reached. No further Codex lifecycle action will occur until the circuit breaker expires.' @{
+            recent_restarts = @($decision.RecentRestarts).Count
+            retry_after_utc = $script:CircuitBreakerUntil.ToUniversalTime().ToString('o')
+        }
+        Save-PersistentState $activeProxy $activeSource $lastRestart
+    }
+    return $false
+}
+
+function Register-GuardianRestart {
+    param([datetime]$When)
+    $cutoff = $When.AddMinutes(-$restartLimitWindowMinutes)
+    $script:RestartHistory = @($script:RestartHistory | Where-Object { $_ -ge $cutoff }) + @($When)
+    $script:CircuitBreakerUntil = [datetime]::MinValue
+}
+
 if (Test-Path -LiteralPath $script:AdoptRequestPath) {
     Remove-Item -LiteralPath $script:AdoptRequestPath -Force -ErrorAction SilentlyContinue
-    $existing = @(Get-CodexRootProcesses $codexApp)
+    $existing = @(Get-CodexRootProcesses $codexApps)
     if ($existing.Count -gt 0) {
         $managedRootPid = [int]$existing[0].ProcessId
         Write-GuardianLog 'INFO' 'initial_adoption' 'The existing Codex session was adopted without restart.' @{ pid = $managedRootPid }
@@ -445,9 +626,9 @@ if (Test-Path -LiteralPath $script:AdoptRequestPath) {
 }
 
 Write-GuardianLog 'INFO' 'guardian_started' 'Codex Proxy Guardian started.' @{
-    version = '0.1.0-alpha'
+    version = '0.2.0-alpha'
     pid = $PID
-    mode = [string](Get-CpgConfigValue $config 'Mode' 'Safe')
+    mode = if ($ObserveOnly) { 'ObserveOnly' } else { [string](Get-CpgConfigValue $config 'Mode' 'Safe') }
     package_found = ($null -ne $codexApp)
 }
 
@@ -460,8 +641,29 @@ try {
                 break
             }
 
-            if ($null -eq $codexApp) { $codexApp = Get-CpgCodexApp -Config $config }
-            $candidate = Find-EffectiveProxy $config
+            if ($null -eq $codexApp -or -not (Test-Path -LiteralPath ([string]$codexApp.ExecutablePath)) -or ((Get-Date) - $lastCodexResolve).TotalSeconds -ge $codexResolveIntervalSeconds) {
+                $resolvedApp = Get-CpgCodexApp -Config $config
+                $lastCodexResolve = Get-Date
+                if ($null -ne $resolvedApp) {
+                    $appChanged = $null -eq $codexApp -or -not [string]::Equals([string]$codexApp.ExecutablePath, [string]$resolvedApp.ExecutablePath, [System.StringComparison]::OrdinalIgnoreCase)
+                    $codexApp = $resolvedApp
+                    if (@($codexApps | Where-Object { [string]::Equals([string]$_.ExecutablePath, [string]$resolvedApp.ExecutablePath, [System.StringComparison]::OrdinalIgnoreCase) }).Count -eq 0) {
+                        $codexApps = @($codexApps) + @($resolvedApp)
+                        $codexApps = @($codexApps | Select-Object -Last 3)
+                    }
+                    if ($appChanged) {
+                        Write-GuardianLog 'INFO' 'codex_package_refreshed' 'The current Codex MSIX executable was refreshed from its package manifest.' @{
+                            package = [string]$resolvedApp.PackageName
+                            version = [string]$resolvedApp.Version
+                        }
+                    }
+                }
+                elseif ($null -ne $codexApp -and -not (Test-Path -LiteralPath ([string]$codexApp.ExecutablePath))) { $codexApp = $null }
+            }
+
+            $preferredProxy = if (-not [string]::IsNullOrWhiteSpace($activeProxy)) { $activeProxy } else { $previousActiveProxy }
+            $candidate = Find-EffectiveProxy $config $preferredProxy
+            $currentValidation = if ($null -eq $candidate) { $null } else { $candidate.ValidationResult }
             $proxyIsValid = $false
             if ($null -ne $candidate) {
                 if ($pendingProxy -eq $candidate.Uri) { $pendingSamples++ }
@@ -484,6 +686,7 @@ try {
                         $activeProxy = $candidate.Uri
                         $activeSource = $candidate.Source
                         if ($null -ne $oldProxy -and $oldProxy -ne $activeProxy) {
+                            $script:LastProxyConnection = [datetime]::MinValue
                             $restartRequired = $true
                             Write-GuardianLog 'INFO' 'proxy_changed' 'The validated proxy endpoint changed after debounce.' @{
                                 old_proxy = Protect-CpgProxyUri $oldProxy
@@ -513,7 +716,7 @@ try {
                 }
             }
 
-            $roots = @(Get-CodexRootProcesses $codexApp)
+            $roots = @(Get-CodexRootProcesses $codexApps)
             $rootIds = @($roots | ForEach-Object { [int]$_.ProcessId })
             $matchingRoots = @()
             if ($proxyIsValid) {
@@ -523,13 +726,48 @@ try {
             if ($matchingRoots.Count -gt 0) {
                 $managedRootPid = [int]$matchingRoots[0].ProcessId
                 $pendingExternalPid = 0
+                if ($script:RecoveryLaunchRequired) {
+                    $script:RecoveryLaunchRequired = $false
+                    Save-PersistentState $activeProxy $activeSource $lastRestart
+                    Write-GuardianLog 'INFO' 'codex_restart_confirmed' 'The relaunched Codex root was observed with the current proxy argument.' @{ pid = $managedRootPid }
+                }
             }
             elseif ($managedRootPid -ne 0 -and $managedRootPid -notin $rootIds) { $managedRootPid = 0 }
 
-            if ($restartRequired -and $proxyIsValid -and $roots.Count -gt 0 -and $null -ne $codexApp) {
-                if (((Get-Date) - $lastRestart).TotalSeconds -ge $restartCooldownSeconds) {
-                    $managedRootPid = Restart-CodexManaged $roots $activeProxy $config $codexApp
+            $trafficObservedNow = $false
+            if ($proxyIsValid -and $roots.Count -gt 0) {
+                $trafficObservedNow = Test-CodexProxyTraffic -RootIds $rootIds -ProxyUri $activeProxy
+                if ($trafficObservedNow) {
+                    $previousTrafficObservation = $script:LastProxyConnection
+                    $script:LastProxyConnection = Get-Date
+                    if ($previousTrafficObservation -eq [datetime]::MinValue -or ($script:LastProxyConnection - $previousTrafficObservation).TotalSeconds -ge 60) {
+                        Save-PersistentState $activeProxy $activeSource $lastRestart
+                    }
+                }
+            }
+            $trafficObservedRecently = $script:LastProxyConnection -gt [datetime]::MinValue -and ((Get-Date) - $script:LastProxyConnection).TotalSeconds -le $trafficEvidenceWindowSeconds
+
+            if (-not $ObserveOnly -and $script:RecoveryLaunchRequired -and $proxyIsValid -and $roots.Count -eq 0 -and $null -ne $codexApp) {
+                if (((Get-Date) - $lastRestart).TotalSeconds -ge $recoveryLaunchRetrySeconds -and (Test-GuardianRestartBudget)) {
                     $lastRestart = Get-Date
+                    Register-GuardianRestart $lastRestart
+                    Save-PersistentState $activeProxy $activeSource $lastRestart
+                    Write-GuardianLog 'WARN' 'codex_recovery_retry' 'Retrying a managed Codex launch after the previous relaunch was not confirmed.' @{
+                        proxy = Protect-CpgProxyUri $activeProxy
+                        attempt_count = @($script:RestartHistory).Count
+                    }
+                    $managedRootPid = Start-CodexManaged $activeProxy $config $codexApp
+                    $restartRequired = $false
+                }
+            }
+
+            if (-not $ObserveOnly -and $restartRequired -and $proxyIsValid -and $roots.Count -gt 0 -and $null -ne $codexApp) {
+                if (((Get-Date) - $lastRestart).TotalSeconds -ge $restartCooldownSeconds -and (Test-GuardianRestartBudget)) {
+                    $lastRestart = Get-Date
+                    Register-GuardianRestart $lastRestart
+                    $script:RecoveryLaunchRequired = $true
+                    Save-PersistentState $activeProxy $activeSource $lastRestart
+                    $managedRootPid = Restart-CodexManaged $roots $activeProxy $config $codexApp
                     $restartRequired = $false
                     $pendingExternalPid = 0
                     Save-PersistentState $activeProxy $activeSource $lastRestart
@@ -543,31 +781,72 @@ try {
                     $pendingExternalSince = Get-Date
                     Write-GuardianLog 'INFO' 'unmanaged_codex' 'A Codex root missing the current proxy argument is being debounced.' @{ pid = $externalPid }
                 }
-                elseif (((Get-Date) - $pendingExternalSince).TotalSeconds -ge $externalDebounceSeconds -and ((Get-Date) - $lastRestart).TotalSeconds -ge $restartCooldownSeconds) {
-                    $managedRootPid = Restart-CodexManaged $roots $activeProxy $config $codexApp
+                elseif (((Get-Date) - $pendingExternalSince).TotalSeconds -ge $externalDebounceSeconds -and ((Get-Date) - $lastRestart).TotalSeconds -ge $restartCooldownSeconds -and (Test-GuardianRestartBudget)) {
                     $lastRestart = Get-Date
+                    Register-GuardianRestart $lastRestart
+                    $script:RecoveryLaunchRequired = $true
+                    Save-PersistentState $activeProxy $activeSource $lastRestart
+                    $managedRootPid = Restart-CodexManaged $roots $activeProxy $config $codexApp
                     $pendingExternalPid = 0
                     Save-PersistentState $activeProxy $activeSource $lastRestart
                 }
             }
             elseif ($roots.Count -eq 0 -or $matchingRoots.Count -gt 0) { $pendingExternalPid = 0 }
 
-            if (Test-Path -LiteralPath $script:LaunchRequestPath) {
-                if ($roots.Count -gt 0) { Remove-Item -LiteralPath $script:LaunchRequestPath -Force -ErrorAction SilentlyContinue }
-                elseif ($proxyIsValid -and $null -ne $codexApp) {
+            if (-not $ObserveOnly -and (Test-Path -LiteralPath $script:LaunchRequestPath)) {
+                if ($proxyIsValid -and $matchingRoots.Count -gt 0) {
                     Remove-Item -LiteralPath $script:LaunchRequestPath -Force -ErrorAction SilentlyContinue
+                }
+                elseif ($proxyIsValid -and $roots.Count -eq 0 -and $null -ne $codexApp -and (Test-GuardianRestartBudget)) {
+                    Remove-Item -LiteralPath $script:LaunchRequestPath -Force -ErrorAction SilentlyContinue
+                    $lastRestart = Get-Date
+                    Register-GuardianRestart $lastRestart
+                    $script:RecoveryLaunchRequired = $true
+                    Save-PersistentState $activeProxy $activeSource $lastRestart
                     $managedRootPid = Start-CodexManaged $activeProxy $config $codexApp
                 }
+                elseif ($proxyIsValid -and $roots.Count -gt 0 -and $null -ne $codexApp -and ((Get-Date) - $lastRestart).TotalSeconds -ge $restartCooldownSeconds -and (Test-GuardianRestartBudget)) {
+                    Remove-Item -LiteralPath $script:LaunchRequestPath -Force -ErrorAction SilentlyContinue
+                    $lastRestart = Get-Date
+                    Register-GuardianRestart $lastRestart
+                    $script:RecoveryLaunchRequired = $true
+                    Save-PersistentState $activeProxy $activeSource $lastRestart
+                    Write-GuardianLog 'INFO' 'managed_launch_takeover' 'The managed shortcut requested replacement of a Codex root missing the current proxy argument.' @{ old_pids = $rootIds }
+                    $managedRootPid = Restart-CodexManaged $roots $activeProxy $config $codexApp
+                    $pendingExternalPid = 0
+                }
             }
+
+            $historyCutoff = (Get-Date).AddMinutes(-$restartLimitWindowMinutes)
+            $script:RestartHistory = @($script:RestartHistory | Where-Object { $_ -ge $historyCutoff -and $_ -le (Get-Date) })
+
+            $effectiveness = 'NoValidatedProxy'
+            if ($proxyIsValid) { $effectiveness = 'ValidatedProxy' }
+            if ($proxyIsValid -and $matchingRoots.Count -gt 0) { $effectiveness = 'LaunchConfigured' }
+            if ($proxyIsValid -and $roots.Count -gt 0 -and $trafficObservedRecently) { $effectiveness = 'TrafficObserved' }
+
+            $guardianState = 'WaitingForProxy'
+            if (-not $proxyIsValid -and -not [string]::IsNullOrWhiteSpace([string]$pendingProxy)) { $guardianState = 'Stabilizing' }
+            if ($proxyIsValid) { $guardianState = 'Ready' }
+            if ($script:RecoveryLaunchRequired) { $guardianState = 'RecoveringCodex' }
+            if ($script:RecoveryLaunchRequired -and $roots.Count -gt 0 -and $matchingRoots.Count -eq 0 -and -not $manageExternalLaunches) { $guardianState = 'RecoveryBlockedByCodex' }
+            if ($script:CircuitBreakerUntil -gt (Get-Date)) { $guardianState = 'RestartCircuitOpen' }
 
             Write-JsonAtomically $script:StatusPath ([ordered]@{
                 running = $true
                 guardianPid = $PID
                 updatedUtc = (Get-Date).ToUniversalTime().ToString('o')
-                mode = [string](Get-CpgConfigValue $config 'Mode' 'Safe')
+                guardianState = $guardianState
+                mode = if ($ObserveOnly) { 'ObserveOnly' } else { [string](Get-CpgConfigValue $config 'Mode' 'Safe') }
                 activeProxy = $activeProxy
                 activeSource = $activeSource
                 activeProxyValid = $proxyIsValid
+                effectivenessEvidence = $effectiveness
+                proxyTestSuccessCount = if ($null -eq $currentValidation) { 0 } else { $currentValidation.SuccessCount }
+                proxyTestRequiredCount = if ($null -eq $currentValidation) { [int](Get-CpgConfigValue $config 'MinimumSuccessfulProxyTests' 1) } else { $currentValidation.RequiredCount }
+                proxyTestTargetCount = if ($null -eq $currentValidation) { @((Get-CpgConfigValue $config 'ProxyTestUrls' @())).Count } else { $currentValidation.TargetCount }
+                proxyTestAttemptedCount = if ($null -eq $currentValidation) { 0 } else { $currentValidation.AttemptedCount }
+                proxyTestResults = if ($null -eq $currentValidation) { @() } else { @($currentValidation.Results) }
                 pendingProxy = $pendingProxy
                 pendingSamples = $pendingSamples
                 codexInstalled = ($null -ne $codexApp)
@@ -576,7 +855,14 @@ try {
                 codexRootPids = $rootIds
                 managedCodexRootPid = if ($managedRootPid -eq 0) { $null } else { $managedRootPid }
                 codexProxyArgumentMatch = ($matchingRoots.Count -gt 0)
+                codexProxyConnectionObservedNow = $trafficObservedNow
+                codexProxyConnectionObservedRecently = $trafficObservedRecently
+                lastProxyConnectionUtc = if ($script:LastProxyConnection -eq [datetime]::MinValue) { $null } else { $script:LastProxyConnection.ToUniversalTime().ToString('o') }
                 restartRequired = $restartRequired
+                recoveryLaunchRequired = $script:RecoveryLaunchRequired
+                recentRestartCount = @($script:RestartHistory).Count
+                restartCircuitOpen = ($script:CircuitBreakerUntil -gt (Get-Date))
+                circuitBreakerUntilUtc = if ($script:CircuitBreakerUntil -gt (Get-Date)) { $script:CircuitBreakerUntil.ToUniversalTime().ToString('o') } else { $null }
                 systemProxyModified = $false
             })
 

@@ -18,4 +18,4 @@ Do not include real proxy credentials, access tokens, usernames, public IPs, or 
 
 ## Design commitments
 
-The project does not request elevation, change Windows/WinHTTP proxy settings, persist proxy environment variables, or collect telemetry. Release archives should be reproducible from the tagged source with `tools\Package-Release.ps1`; verify the published SHA-256 checksum before installation.
+The project does not request elevation, change Windows/WinHTTP proxy settings, persist proxy environment variables, capture packets, or collect telemetry. Traffic evidence uses only local TCP connection metadata and is not written to a remote service. Release archives should be reproducible from the tagged source with `tools\Package-Release.ps1`; verify the published SHA-256 checksum before installation.

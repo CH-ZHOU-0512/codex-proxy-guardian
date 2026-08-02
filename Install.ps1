@@ -90,6 +90,22 @@ if ($null -eq $codexApp -and -not $AllowMissingCodex) {
     throw 'The Store/MSIX Codex desktop app was not found for the current user. Install Codex first, or use -AllowMissingCodex for staging.'
 }
 
+$installedConfigPath = Join-Path $resolvedRoot 'config.json'
+$prospectiveConfig = $defaultConfig | ConvertTo-Json -Depth 8 | ConvertFrom-Json
+if ((Test-MarkerMatchesRoot $existingMarker $resolvedRoot) -and (Test-Path -LiteralPath $installedConfigPath)) {
+    try { $prospectiveConfig = Get-Content -Raw -LiteralPath $installedConfigPath | ConvertFrom-Json }
+    catch { throw "The installed configuration is invalid and was left untouched: $installedConfigPath" }
+    $prospectiveConfig = Update-CpgConfigDefaults -Config $prospectiveConfig -Defaults $defaultConfig
+    if ($PSBoundParameters.ContainsKey('Mode')) {
+        $prospectiveConfig.Mode = $Mode
+        $prospectiveConfig.ManageExternalCodexLaunches = ($Mode -eq 'Enforce')
+    }
+}
+else {
+    $prospectiveConfig.Mode = $Mode
+    $prospectiveConfig.ManageExternalCodexLaunches = ($Mode -eq 'Enforce')
+}
+
 $existingTask = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
 if ($null -ne $existingTask -and -not (Test-MarkerMatchesRoot $existingMarker $resolvedRoot)) {
     throw "A scheduled task named '$TaskName' already exists and is not owned by this installation. Choose another -TaskName."
@@ -128,6 +144,30 @@ $preflight = [pscustomobject]@{
 if ($PreflightOnly) { return $preflight }
 
 if (-not $PSCmdlet.ShouldProcess($resolvedRoot, "Install Codex Proxy Guardian $version in $Mode mode")) { return }
+
+$connectivityState = 'Skipped'
+if (-not $SkipConnectivityCheck) {
+    $stagingRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('CodexProxyGuardian-preflight-' + [Guid]::NewGuid().ToString('N'))
+    try {
+        New-Item -ItemType Directory -Path $stagingRoot -Force | Out-Null
+        Copy-Item -LiteralPath (Join-Path $sourceRoot 'src\CodexProxyGuardian.Core.psm1') -Destination (Join-Path $stagingRoot 'CodexProxyGuardian.Core.psm1')
+        Copy-Item -LiteralPath (Join-Path $sourceRoot 'src\Watch-CodexProxy.ps1') -Destination (Join-Path $stagingRoot 'Watch-CodexProxy.ps1')
+        Copy-Item -LiteralPath $defaultConfigPath -Destination (Join-Path $stagingRoot 'config.default.json')
+        $prospectiveConfig | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $stagingRoot 'config.json') -Encoding UTF8
+        $selfTestOutput = @(& $powershellPath -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $stagingRoot 'Watch-CodexProxy.ps1') -SelfTest 2>&1)
+        $selfTestExit = $LASTEXITCODE
+    }
+    finally {
+        if (Test-Path -LiteralPath $stagingRoot) { Remove-Item -LiteralPath $stagingRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+    if ($selfTestExit -eq 0) { $connectivityState = 'Passed' }
+    else {
+        $connectivityState = "Warning (exit $selfTestExit)"
+        $message = "Connectivity self-test did not pass. Installation can continue because proxies may be offline temporarily. Output: $($selfTestOutput -join ' ')"
+        if ($RequireConnectivity) { throw $message }
+        Write-Warning $message
+    }
+}
 
 if (Test-MarkerMatchesRoot $existingMarker $resolvedRoot) {
     $oldStatusPath = Join-Path $resolvedRoot 'status.json'
@@ -182,6 +222,8 @@ $payload = [ordered]@{
     (Join-Path $sourceRoot 'src\Run-ManagedCodex.vbs') = 'Run-ManagedCodex.vbs'
     (Join-Path $sourceRoot 'Uninstall.ps1') = 'Uninstall.ps1'
     (Join-Path $sourceRoot 'Status.ps1') = 'Status.ps1'
+    (Join-Path $sourceRoot 'Doctor.ps1') = 'Doctor.ps1'
+    (Join-Path $sourceRoot 'Control.ps1') = 'Control.ps1'
     (Join-Path $sourceRoot 'LICENSE') = 'LICENSE'
     (Join-Path $sourceRoot 'config\config.schema.json') = 'config.schema.json'
 }
@@ -191,32 +233,8 @@ foreach ($entry in $payload.GetEnumerator()) {
 }
 Get-ChildItem -LiteralPath $resolvedRoot -File | Unblock-File -ErrorAction SilentlyContinue
 
-$installedConfigPath = Join-Path $resolvedRoot 'config.json'
-if (-not (Test-Path -LiteralPath $installedConfigPath)) {
-    $defaultConfig.Mode = $Mode
-    $defaultConfig.ManageExternalCodexLaunches = ($Mode -eq 'Enforce')
-    $defaultConfig | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $installedConfigPath -Encoding UTF8
-}
-elseif ($PSBoundParameters.ContainsKey('Mode')) {
-    $installedConfig = Get-Content -Raw -LiteralPath $installedConfigPath | ConvertFrom-Json
-    $installedConfig.Mode = $Mode
-    $installedConfig.ManageExternalCodexLaunches = ($Mode -eq 'Enforce')
-    $installedConfig | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $installedConfigPath -Encoding UTF8
-}
+$prospectiveConfig | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $installedConfigPath -Encoding UTF8
 Copy-Item -LiteralPath $defaultConfigPath -Destination (Join-Path $resolvedRoot 'config.default.json') -Force
-
-$connectivityState = 'Skipped'
-if (-not $SkipConnectivityCheck) {
-    $selfTestOutput = @(& $powershellPath -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $resolvedRoot 'Watch-CodexProxy.ps1') -SelfTest 2>&1)
-    $selfTestExit = $LASTEXITCODE
-    if ($selfTestExit -eq 0) { $connectivityState = 'Passed' }
-    else {
-        $connectivityState = "Warning (exit $selfTestExit)"
-        $message = "Connectivity self-test did not pass. Installation can continue because proxies may be offline temporarily. Output: $($selfTestOutput -join ' ')"
-        if ($RequireConnectivity) { throw $message }
-        Write-Warning $message
-    }
-}
 
 $startupMode = 'ScheduledTask'
 $startupError = $null
@@ -225,7 +243,7 @@ try {
     $taskAction = New-ScheduledTaskAction -Execute $powershellPath -Argument ('-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File "{0}"' -f (Join-Path $resolvedRoot 'Watch-CodexProxy.ps1')) -WorkingDirectory $resolvedRoot
     $taskTrigger = New-ScheduledTaskTrigger -AtLogOn -User $identity
     $taskPrincipal = New-ScheduledTaskPrincipal -UserId $identity -LogonType Interactive -RunLevel Limited
-    $taskSettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -MultipleInstances IgnoreNew -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit ([TimeSpan]::Zero)
+    $taskSettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -MultipleInstances IgnoreNew -RestartCount 50 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit ([TimeSpan]::Zero)
     Register-ScheduledTask -TaskName $TaskName -Action $taskAction -Trigger $taskTrigger -Principal $taskPrincipal -Settings $taskSettings -Description 'Validates the active proxy and relaunches Codex after a stable endpoint change. Does not modify Windows proxy settings.' -Force | Out-Null
 
     $runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
@@ -263,6 +281,7 @@ $marker.startupMode = $startupMode
 $marker.startupError = $startupError
 $marker | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $resolvedRoot $markerName) -Encoding UTF8
 
+$runtimeStatus = $null
 if (-not $NoStart) {
     Remove-Item -LiteralPath (Join-Path $resolvedRoot 'status.json') -Force -ErrorAction SilentlyContinue
     if ($null -ne $codexApp) {
@@ -274,14 +293,24 @@ if (-not $NoStart) {
     if ($startupMode -eq 'ScheduledTask') { Start-ScheduledTask -TaskName $TaskName }
     else { Start-Process -FilePath $wscriptPath -ArgumentList ('"{0}"' -f (Join-Path $resolvedRoot 'Run-Guardian.vbs')) -WindowStyle Hidden }
 
+    $statusPath = Join-Path $resolvedRoot 'status.json'
     $deadline = (Get-Date).AddSeconds(40)
-    while (-not (Test-Path -LiteralPath (Join-Path $resolvedRoot 'status.json')) -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 500 }
-    if (-not (Test-Path -LiteralPath (Join-Path $resolvedRoot 'status.json'))) {
-        throw "The guardian was registered but did not publish status within 40 seconds. Check: $resolvedRoot\logs"
+    do {
+        if (Test-Path -LiteralPath $statusPath) {
+            try { $runtimeStatus = Get-Content -Raw -LiteralPath $statusPath | ConvertFrom-Json } catch { $runtimeStatus = $null }
+            if ($null -ne $runtimeStatus -and [string]$runtimeStatus.guardianState -ne 'Stabilizing') { break }
+        }
+        Start-Sleep -Milliseconds 500
+    } while ((Get-Date) -lt $deadline)
+    if ($null -eq $runtimeStatus) {
+        $statusMessage = "The guardian was registered but did not publish status within 40 seconds. Check: $resolvedRoot\logs"
+        if ($RequireConnectivity) { throw $statusMessage }
+        Write-Warning $statusMessage
     }
 }
 
 $effectiveConfig = Get-Content -Raw -LiteralPath $installedConfigPath | ConvertFrom-Json
+$managedLaunchRecommended = $null -ne $runtimeStatus -and [bool]$runtimeStatus.codexRunning -and [bool]$runtimeStatus.activeProxyValid -and -not [bool]$runtimeStatus.codexProxyArgumentMatch
 [pscustomobject]@{
     Installed = $true
     Version = $version
@@ -291,5 +320,10 @@ $effectiveConfig = Get-Content -Raw -LiteralPath $installedConfigPath | ConvertF
     TaskName = if ($startupMode -eq 'ScheduledTask') { $TaskName } else { $null }
     ManagedShortcut = if ($NoShortcut) { $null } else { $shortcutPath }
     ConnectivityCheck = $connectivityState
+    GuardianState = if ($null -eq $runtimeStatus) { $null } else { [string]$runtimeStatus.guardianState }
+    ActiveProxyValid = if ($null -eq $runtimeStatus) { $null } else { [bool]$runtimeStatus.activeProxyValid }
+    EffectivenessEvidence = if ($null -eq $runtimeStatus) { $null } else { [string]$runtimeStatus.effectivenessEvidence }
+    ManagedLaunchRecommended = $managedLaunchRecommended
+    NextStep = if ($managedLaunchRecommended) { 'Open the Start Menu shortcut "Codex (Managed Proxy)" to apply the validated proxy to the current Codex session.' } else { $null }
     SystemProxyModified = $false
 }

@@ -80,6 +80,20 @@ Invoke-Test 'Default configuration is conservative' {
     Assert-False $config.AllowNonLoopbackProxy
     Assert-True $config.UseChromiumProxyArgument
     Assert-True ([int]$config.RestartCooldownSeconds -ge 10)
+    Assert-True ([int]$config.RestartLimitCount -le 3)
+    Assert-True ([int]$config.RecoveryLaunchRetrySeconds -ge 5)
+    Assert-True ([int]$config.MinimumSuccessfulProxyTests -ge 2)
+    Assert-True ([int]$config.MinimumSuccessfulProxyTests -le @($config.ProxyTestUrls).Count)
+    foreach ($url in @($config.ProxyTestUrls)) { Assert-True ([string]$url).StartsWith('https://', [System.StringComparison]::OrdinalIgnoreCase) }
+}
+
+Invoke-Test 'Configuration migration adds defaults without replacing user choices' {
+    $config = [pscustomobject]@{ Mode = 'Enforce'; PollSeconds = 12 }
+    $defaults = [pscustomobject]@{ Mode = 'Safe'; PollSeconds = 5; CircuitBreakerMinutes = 15 }
+    $merged = Update-CpgConfigDefaults -Config $config -Defaults $defaults
+    Assert-Equal 'Enforce' ([string]$merged.Mode)
+    Assert-Equal 12 ([int]$merged.PollSeconds)
+    Assert-Equal 15 ([int]$merged.CircuitBreakerMinutes)
 }
 
 Invoke-Test 'Loopback proxy without a scheme is normalized' {
@@ -121,6 +135,44 @@ Invoke-Test 'Windows protocol proxy map prefers HTTPS and deduplicates' {
     Assert-Equal 'http://127.0.0.1:9000' ([string]$items[0].Uri)
 }
 
+Invoke-Test 'Candidate ordering is deterministic and sticky only within a score tier' {
+    $candidates = @(
+        [pscustomobject]@{ Uri = 'http://127.0.0.1:9000'; Source = 'process:z'; Score = 100 },
+        [pscustomobject]@{ Uri = 'http://127.0.0.1:8000'; Source = 'process:a'; Score = 100 },
+        [pscustomobject]@{ Uri = 'http://127.0.0.1:7000'; Source = 'system:all'; Score = 200 }
+    )
+    $ordered = @(Select-CpgProxyCandidates -Candidates $candidates -PreferredUri 'http://127.0.0.1:9000')
+    Assert-Equal 'http://127.0.0.1:7000' ([string]$ordered[0].Uri)
+    Assert-Equal 'http://127.0.0.1:9000' ([string]$ordered[1].Uri)
+    Assert-Equal 'http://127.0.0.1:8000' ([string]$ordered[2].Uri)
+}
+
+Invoke-Test 'Restart circuit breaker opens, remains open, and later recovers' {
+    $now = [datetime]'2026-08-02T10:00:00Z'
+    $history = @($now.AddMinutes(-8), $now.AddMinutes(-4), $now.AddMinutes(-1))
+    $opened = Get-CpgRestartDecision -RestartHistory $history -Now $now -LimitCount 3 -WindowMinutes 10 -CircuitBreakerMinutes 15
+    Assert-False $opened.Allowed
+    Assert-Equal 'restart_limit_reached' ([string]$opened.Reason)
+    Assert-True ($opened.CircuitBreakerUntil -eq $now.AddMinutes(15))
+
+    $stillOpen = Get-CpgRestartDecision -RestartHistory $history -Now $now.AddMinutes(2) -LimitCount 3 -WindowMinutes 10 -CircuitBreakerMinutes 15 -CircuitBreakerUntil $opened.CircuitBreakerUntil
+    Assert-False $stillOpen.Allowed
+    Assert-Equal 'circuit_open' ([string]$stillOpen.Reason)
+
+    $recovered = Get-CpgRestartDecision -RestartHistory $history -Now $now.AddMinutes(16) -LimitCount 3 -WindowMinutes 10 -CircuitBreakerMinutes 15 -CircuitBreakerUntil $opened.CircuitBreakerUntil
+    Assert-True $recovered.Allowed
+    Assert-Equal 0 @($recovered.RecentRestarts).Count
+}
+
+Invoke-Test 'HTTPS target responses require a usable non-server-error response' {
+    Assert-True (Test-CpgProxyResponseStatus -StatusCode 200)
+    Assert-True (Test-CpgProxyResponseStatus -StatusCode 401)
+    Assert-True (Test-CpgProxyResponseStatus -StatusCode 403)
+    Assert-False (Test-CpgProxyResponseStatus -StatusCode 500)
+    Assert-False (Test-CpgProxyResponseStatus -StatusCode 407)
+    Assert-False (Test-CpgProxyResponseStatus -StatusCode 0)
+}
+
 Invoke-Test 'Managed-root matching survives PID handoff' {
     $old = [pscustomobject]@{ ProcessId = 10; CommandLine = 'ChatGPT.exe --proxy-server=http://127.0.0.1:8080' }
     $new = [pscustomobject]@{ ProcessId = 99; CommandLine = 'ChatGPT.exe --proxy-server=http://127.0.0.1:8080' }
@@ -151,6 +203,31 @@ Invoke-Test 'Install marker is bound to its canonical root' {
     Assert-False (Test-CpgInstallMarker -InstallRoot $root -Marker $marker)
 }
 
+Invoke-Test 'Mandatory connectivity is staged before an existing guardian is stopped' {
+    $installer = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'Install.ps1')
+    $stagingIndex = $installer.IndexOf('CodexProxyGuardian-preflight-', [System.StringComparison]::Ordinal)
+    $stopIndex = $installer.IndexOf("'stop.request'", [System.StringComparison]::Ordinal)
+    Assert-True ($stagingIndex -ge 0) 'The staged connectivity gate is missing.'
+    Assert-True ($stopIndex -gt $stagingIndex) 'The installer can stop an existing guardian before staged connectivity is checked.'
+}
+
+Invoke-Test 'Watcher publishes explicit lifecycle states' {
+    $watcher = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'src\Watch-CodexProxy.ps1')
+    foreach ($state in @('WaitingForProxy', 'Stabilizing', 'Ready', 'RecoveringCodex', 'RecoveryBlockedByCodex', 'RestartCircuitOpen')) {
+        Assert-True ($watcher.Contains("'$state'")) "Missing guardian lifecycle state: $state"
+    }
+}
+
+Invoke-Test 'Injected Codex proxy variables cannot feed back into discovery' {
+    $watcher = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'src\Watch-CodexProxy.ps1')
+    $start = $watcher.IndexOf('function Get-EnvironmentProxyCandidates', [System.StringComparison]::Ordinal)
+    $end = $watcher.IndexOf('function Test-PreferredProxyProcess', [System.StringComparison]::Ordinal)
+    Assert-True ($start -ge 0 -and $end -gt $start) 'Could not isolate environment discovery.'
+    $environmentDiscovery = $watcher.Substring($start, $end - $start)
+    Assert-True ($environmentDiscovery.Contains('$script:InheritedProxyEnvironment')) 'Environment discovery is not using its startup snapshot.'
+    Assert-False ($environmentDiscovery.Contains('GetEnvironmentVariable')) 'Environment discovery can read proxy variables injected later for Codex.'
+}
+
 Invoke-Test 'Source contains no original-machine fingerprints' {
     $forbidden = @('Gzhou', 'POTATO', 'C:\VPN', '26.727.6591.0')
     $hits = @()
@@ -173,6 +250,16 @@ Invoke-Test 'Public scripts do not mutate network configuration' {
         }
     }
     Assert-Equal 0 $hits.Count ($hits -join [Environment]::NewLine)
+}
+
+Invoke-Test 'Doctor emits a redacted, share-safe JSON report' {
+    $diagnosticRoot = Join-Path $env:TEMP 'CodexProxyGuardian-Nonexistent-Diagnostics'
+    $reportText = & (Join-Path $repoRoot 'Doctor.ps1') -InstallRoot $diagnosticRoot -Json
+    $report = $reportText | ConvertFrom-Json
+    Assert-True $report.safeForSharing
+    Assert-Equal 1 ([int]$report.reportSchema)
+    Assert-False (($reportText -join '') -match [regex]::Escape($env:USERPROFILE)) 'The diagnostic report exposed the user profile path.'
+    Assert-False (($reportText -join '') -match '(?i)"(?:activeProxy|systemProxy|proxyUri|proxyServer)"\s*:') 'The diagnostic report exposed a raw proxy field.'
 }
 
 Write-Host "`n$script:Passed passed, $script:Failed failed."

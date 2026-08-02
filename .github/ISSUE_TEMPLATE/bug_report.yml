@@ -11,7 +11,7 @@ body:
     id: version
     attributes:
       label: Guardian version
-      placeholder: 0.1.0-alpha
+      placeholder: 0.2.0-alpha
     validations:
       required: true
   - type: input
@@ -49,6 +49,12 @@ body:
       description: Include the smallest reliable sequence.
     validations:
       required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Redacted Doctor report
+      description: Attach or paste output from Doctor.ps1 -Online -Json. Review it once before posting.
+      render: json
   - type: textarea
     id: expected
     attributes:

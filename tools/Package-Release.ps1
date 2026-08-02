@@ -16,8 +16,16 @@ $stageRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("CodexProxyGuardian-pa
 $stageProject = Join-Path $stageRoot 'CodexProxyGuardian'
 New-Item -ItemType Directory -Path $stageProject -Force | Out-Null
 try {
-    foreach ($item in @(Get-ChildItem -LiteralPath $repoRoot -Force | Where-Object { $_.Name -notin @('.git', 'artifacts') })) {
-        Copy-Item -LiteralPath $item.FullName -Destination $stageProject -Recurse -Force
+    $releaseItems = @(
+        'CHANGELOG.md', 'CODE_OF_CONDUCT.md', 'CONTRIBUTING.md', 'Control.ps1',
+        'DISCLAIMER.md', 'Doctor.ps1', 'Install.ps1', 'LICENSE', 'README.md',
+        'SECURITY.md', 'Status.ps1', 'Uninstall.ps1', 'VERSION',
+        'config', 'docs', 'src', 'tests', 'tools'
+    )
+    foreach ($name in $releaseItems) {
+        $sourcePath = Join-Path $repoRoot $name
+        if (-not (Test-Path -LiteralPath $sourcePath)) { throw "Missing release item: $sourcePath" }
+        Copy-Item -LiteralPath $sourcePath -Destination $stageProject -Recurse -Force
     }
 
     $zipPath = Join-Path $outputRoot ("CodexProxyGuardian-{0}.zip" -f $version)
