@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:codex-proxy-guardian:config:v1",
+  "title": "Codex Proxy Guardian configuration",
+  "type": "object",
+  "required": ["SchemaVersion", "Mode", "PollSeconds", "ProxyTestUrls", "CodexPackageNames"],
+  "properties": {
+    "SchemaVersion": { "const": 1 },
+    "Mode": { "enum": ["Safe", "Enforce"] },
+    "PollSeconds": { "type": "integer", "minimum": 2, "maximum": 300 },
+    "StableSamples": { "type": "integer", "minimum": 1, "maximum": 100 },
+    "DebounceSeconds": { "type": "integer", "minimum": 0, "maximum": 600 },
+    "ExternalLaunchDebounceSeconds": { "type": "integer", "minimum": 0, "maximum": 600 },
+    "RestartCooldownSeconds": { "type": "integer", "minimum": 10, "maximum": 3600 },
+    "ExplicitProxy": { "type": "string" },
+    "AllowNonLoopbackProxy": { "type": "boolean" },
+    "ProxyTestUrls": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "format": "uri", "pattern": "^https://" }
+    },
+    "PreferredProxyProcesses": { "type": "array", "items": { "type": "string" } },
+    "PreferredProxyPorts": { "type": "array", "items": { "type": "integer", "minimum": 1, "maximum": 65535 } },
+    "MaxProcessProxyCandidates": { "type": "integer", "minimum": 1, "maximum": 50 },
+    "CodexPackageNames": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+    "UseChromiumProxyArgument": { "type": "boolean" },
+    "ManageExternalCodexLaunches": { "type": "boolean" }
+  },
+  "additionalProperties": true
+}

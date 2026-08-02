@@ -1,0 +1,14 @@
+artifacts/
+*.zip
+*.sha256
+.cpg-install.json
+config.json
+logs/
+state.json
+status.json
+*.request
+*.tmp
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

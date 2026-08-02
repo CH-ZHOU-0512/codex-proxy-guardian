@@ -1,0 +1,71 @@
+name: Bug report
+description: Report reproducible guardian behavior or a compatibility problem
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Never post proxy credentials, tokens, usernames, private IPs, or unredacted logs. Security vulnerabilities belong in a private security advisory.
+  - type: input
+    id: version
+    attributes:
+      label: Guardian version
+      placeholder: 0.1.0-alpha
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows build and architecture
+      placeholder: Windows 11 24H2, x64 or ARM64
+    validations:
+      required: true
+  - type: input
+    id: codex
+    attributes:
+      label: Codex distribution and version
+      placeholder: Microsoft Store/MSIX, redacted version output
+    validations:
+      required: true
+  - type: input
+    id: proxy
+    attributes:
+      label: Proxy application and mode
+      placeholder: Application/version; system proxy, mixed port, TUN, etc.
+    validations:
+      required: true
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Guardian mode
+      options: [Safe, Enforce]
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+      description: Include the smallest reliable sequence.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior and redacted status/log excerpts
+      render: shell
+    validations:
+      required: true
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Privacy check
+      options:
+        - label: I removed credentials, tokens, usernames, hostnames, and private/public IP addresses.
+          required: true

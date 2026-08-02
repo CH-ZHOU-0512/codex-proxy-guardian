@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shell: [windows-powershell, powershell]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run tests on Windows PowerShell 5.1
+        if: matrix.shell == 'windows-powershell'
+        shell: powershell
+        run: .\tests\Run-Tests.ps1
+      - name: Run tests on PowerShell 7
+        if: matrix.shell == 'powershell'
+        shell: pwsh
+        run: .\tests\Run-Tests.ps1
+
+  package:
+    runs-on: windows-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build release archive
+        shell: powershell
+        run: .\tools\Package-Release.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: codex-proxy-guardian-${{ github.sha }}
+          path: artifacts/*

@@ -1,0 +1,51 @@
+{
+  "SchemaVersion": 1,
+  "Mode": "Safe",
+  "PollSeconds": 5,
+  "StableSamples": 3,
+  "DebounceSeconds": 10,
+  "ExternalLaunchDebounceSeconds": 15,
+  "RestartCooldownSeconds": 45,
+  "GracefulCloseSeconds": 10,
+  "TcpTimeoutMilliseconds": 1500,
+  "HttpTimeoutSeconds": 8,
+  "HttpValidationIntervalSeconds": 30,
+  "UnavailableLogIntervalSeconds": 300,
+  "ProxyTestUrls": [
+    "https://api.openai.com/v1/models"
+  ],
+  "ExplicitProxy": "",
+  "AllowNonLoopbackProxy": false,
+  "PreferredProxyProcesses": [
+    "verge-mihomo*",
+    "mihomo*",
+    "clash*",
+    "v2ray*",
+    "xray*",
+    "sing-box*",
+    "singbox*",
+    "shadowsocks*",
+    "nekoray*",
+    "hiddify*",
+    "FlClash*"
+  ],
+  "PreferredProxyPorts": [
+    7890,
+    7891,
+    7892,
+    7897,
+    10808,
+    10809
+  ],
+  "MaxProcessProxyCandidates": 6,
+  "CodexPackageNames": [
+    "OpenAI.Codex"
+  ],
+  "CodexApplicationId": "",
+  "UseChromiumProxyArgument": true,
+  "ManageExternalCodexLaunches": false,
+  "NoProxy": "localhost,127.0.0.1,::1",
+  "LogRetentionDays": 14,
+  "MaxLogFiles": 20,
+  "MaxLogFileMB": 5
+}
