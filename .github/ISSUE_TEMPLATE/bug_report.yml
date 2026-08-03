@@ -1,77 +1,77 @@
-name: Bug report
-description: Report reproducible guardian behavior or a compatibility problem
+name: 错误报告 / Bug report
+description: 报告可复现的守护程序异常或兼容性问题
 title: "[Bug]: "
 labels: [bug]
 body:
   - type: markdown
     attributes:
       value: |
-        Never post proxy credentials, tokens, usernames, private IPs, or unredacted logs. Security vulnerabilities belong in a private security advisory.
+        请勿公开代理账号密码、令牌、用户名、主机名、IP 地址或未经脱敏的日志。安全漏洞请使用 GitHub Private Security Advisory 私下报告。
   - type: input
     id: version
     attributes:
-      label: Guardian version
+      label: Guardian 版本
       placeholder: 0.2.0-alpha
     validations:
       required: true
   - type: input
     id: windows
     attributes:
-      label: Windows build and architecture
-      placeholder: Windows 11 24H2, x64 or ARM64
+      label: Windows 版本与架构
+      placeholder: Windows 11 24H2，x64 或 ARM64
     validations:
       required: true
   - type: input
     id: codex
     attributes:
-      label: Codex distribution and version
-      placeholder: Microsoft Store/MSIX, redacted version output
+      label: Codex 来源与版本
+      placeholder: Microsoft Store/MSIX；请将输出中的隐私信息脱敏
     validations:
       required: true
   - type: input
     id: proxy
     attributes:
-      label: Proxy application and mode
-      placeholder: Application/version; system proxy, mixed port, TUN, etc.
+      label: 代理软件与运行模式
+      placeholder: 例如 Clash Verge Rev / Mihomo / v2rayN；系统代理、混合端口、TUN 等
     validations:
       required: true
   - type: dropdown
     id: mode
     attributes:
-      label: Guardian mode
+      label: Guardian 模式
       options: [Safe, Enforce]
     validations:
       required: true
   - type: textarea
     id: steps
     attributes:
-      label: Reproduction steps
-      description: Include the smallest reliable sequence.
+      label: 复现步骤
+      description: 请提供能够稳定复现问题的最短步骤。
     validations:
       required: true
   - type: textarea
     id: doctor
     attributes:
-      label: Redacted Doctor report
-      description: Attach or paste output from Doctor.ps1 -Online -Json. Review it once before posting.
+      label: 已脱敏的 Doctor 报告
+      description: 请粘贴 Doctor.ps1 -Online -Json 的输出，并在提交前人工检查一次。
       render: json
   - type: textarea
     id: expected
     attributes:
-      label: Expected behavior
+      label: 预期行为
     validations:
       required: true
   - type: textarea
     id: actual
     attributes:
-      label: Actual behavior and redacted status/log excerpts
+      label: 实际行为及已脱敏的状态/日志片段
       render: shell
     validations:
       required: true
   - type: checkboxes
     id: safety
     attributes:
-      label: Privacy check
+      label: 隐私确认
       options:
-        - label: I removed credentials, tokens, usernames, hostnames, and private/public IP addresses.
+        - label: 我已删除账号密码、令牌、用户名、主机名以及内网/公网 IP 地址。
           required: true

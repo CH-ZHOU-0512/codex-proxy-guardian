@@ -1,83 +1,105 @@
-# Codex Proxy Guardian for Windows
+# Codex Proxy Guardian：Windows 11 Codex 桌面版代理守护程序
 
-An unofficial, current-user watchdog for the Store/MSIX Codex desktop app on Windows 11. It validates an HTTP/HTTPS proxy against multiple OpenAI/ChatGPT HTTPS targets, launches Codex with process-scoped proxy variables and a Chromium proxy argument, and relaunches Codex only after a stable proxy endpoint change.
+[简体中文](README.md) | [English](docs/README.en.md)
+
+[![CI](https://github.com/CH-ZHOU-0512/codex-proxy-guardian/actions/workflows/ci.yml/badge.svg)](https://github.com/CH-ZHOU-0512/codex-proxy-guardian/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/CH-ZHOU-0512/codex-proxy-guardian?include_prereleases)](https://github.com/CH-ZHOU-0512/codex-proxy-guardian/releases)
+[![License](https://img.shields.io/github/license/CH-ZHOU-0512/codex-proxy-guardian)](LICENSE)
+
+这是一个面向中国 Windows 11 用户的非官方 **Codex 桌面版代理守护工具**。它能够持续发现并验证当前可用的 HTTP/HTTPS 代理；当 Clash、Mihomo、v2rayN、sing-box 等代理软件的监听地址或端口稳定变化后，为 Codex 配置当前代理并进行受控重启。
+
+项目重点解决这些实际问题：**Codex 桌面端无法连接、系统代理端口变化、代理软件随机端口、Codex 没有继承代理、切换节点后 Codex 仍使用旧代理、守护脚本导致 Codex 反复重启**。
 
 > [!IMPORTANT]
-> This is an independent community project. It is not affiliated with, endorsed by, or supported by OpenAI. The proxy behavior used here is a best-effort compatibility technique, not a documented Codex desktop API.
+> 本项目是独立的社区项目，与 OpenAI 没有隶属、认可或支持关系。项目使用的是基于实际行为的兼容方案，并非 Codex 桌面端公开且承诺长期稳定的代理 API。
 
-## Safety first
+## 它能做什么
 
-- It never changes Windows system proxy, WinHTTP proxy, DNS, routes, or persistent user/machine environment variables.
-- It accepts only HTTP/HTTPS proxy endpoints with explicit ports. Credentials embedded in proxy URLs are rejected.
-- A candidate must have a live TCP listener and pass an HTTPS request through the proxy before it can become active.
-- Changes are debounced, restarts have a cooldown, and one mutex is used per installation.
-- A restart-rate circuit breaker opens after three restarts in ten minutes by default, preventing an unstable environment from relaunching Codex indefinitely.
-- Before a managed restart, recovery intent is persisted. If the new Codex process does not start, the guardian retries within the same rate limit instead of silently leaving Codex closed.
-- Candidate ordering is deterministic and keeps the current endpoint within the same priority tier, avoiding port flip-flop.
-- The MSIX manifest is periodically re-read, so a Store update can move the executable without leaving the guardian on a stale version path.
-- Uninstall removes only resources whose installation marker and target paths match.
-- `Safe` is the default mode. It reacts to a validated proxy endpoint change but does not take over every normally launched Codex process.
+- 自动读取 Windows 当前用户的系统代理、显式指定代理、进程环境变量和常见代理程序的本地监听端口。
+- 不只判断端口是否存在，还会通过代理访问多个 OpenAI/ChatGPT HTTPS 目标，达到成功数量要求后才启用。
+- 使用进程级 `HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY` 环境变量和 Chromium `--proxy-server` 参数启动 Codex。
+- 代理地址或端口变化时先防抖，再受控重启 Codex；端口来回波动时不会立即反复重启。
+- 提供重启冷却、十分钟重启次数限制、熔断和启动失败恢复，避免形成 Codex 重启循环。
+- 自动适配 Microsoft Store / MSIX 版 Codex 更新后的安装路径，并支持 x64 和 ARM64。
+- 以当前用户身份静默运行、登录后自启，不要求管理员权限。
+- 提供状态、日志、在线诊断、单实例保护和安全卸载脚本。
 
-## Supported baseline
+## 先看安全边界
 
-- Windows 11, interactive current-user session
-- Windows PowerShell 5.1 or PowerShell 7 for setup; the background task uses Windows PowerShell 5.1
-- Codex installed from Microsoft Store or an enterprise-distributed Store-signed MSIX
-- Explicit Windows Internet Settings proxy (`ProxyEnable` + `ProxyServer`)
-- A manually configured HTTP/HTTPS endpoint
-- Inherited `HTTPS_PROXY`, `HTTP_PROXY`, or HTTP-compatible `ALL_PROXY` values
-- Loopback listeners owned by common Clash/Mihomo, V2Ray/Xray, sing-box, Shadowsocks, NekoRay, Hiddify, or FlClash processes
-- x64 and ARM64, resolved from the installed package manifest rather than a hard-coded path
+- **不会修改** Windows 系统代理、WinHTTP 代理、DNS、路由或永久用户/系统环境变量。
+- 只接受带明确端口的 HTTP/HTTPS 代理；拒绝 URL 中包含账号密码的代理地址。
+- 候选代理必须同时通过 TCP 监听检查和经代理发起的 HTTPS 请求验证。
+- 默认使用 `Safe` 模式，不会接管每一次普通方式启动的 Codex。
+- 卸载时会核对安装标记、计划任务动作和快捷方式目标，只删除本项目拥有的资源。
+- 诊断报告默认脱敏，不包含原始代理 URL、用户名路径或日志正文；提交 Issue 前仍建议人工检查一次。
 
-PAC/WPAD, pure SOCKS proxies, TUN-only configurations, WinHTTP-only proxy settings, services running in another user session, and enforced script restrictions are not automatically supported. See [support matrix](docs/SUPPORT.md).
+## 支持范围
 
-## Install
+当前支持的基础环境：
 
-Download and extract a release ZIP. In a normal, non-administrator PowerShell window:
+- Windows 11 当前用户的交互式桌面会话；
+- Windows PowerShell 5.1 或 PowerShell 7 安装环境；后台任务使用系统自带的 Windows PowerShell 5.1；
+- Microsoft Store 或企业分发的 Store 签名 MSIX 版 Codex 桌面端；
+- Windows“Internet 设置”中的显式 HTTP/HTTPS 系统代理；
+- `config.json` 中手动指定的 HTTP/HTTPS 代理；
+- 当前进程继承的 `HTTPS_PROXY`、`HTTP_PROXY` 或兼容 HTTP 的 `ALL_PROXY`；
+- Clash/Mihomo、v2rayN/Xray、sing-box、Shadowsocks、NekoRay、Hiddify、FlClash 等常见代理程序的本机监听端口；
+- x64 与 ARM64，Codex 路径从 MSIX 清单动态解析，不写死版本目录。
+
+暂不自动支持：PAC/WPAD、纯 SOCKS 代理、只有 TUN 而没有 HTTP/混合端口的配置、仅 WinHTTP 代理、其他用户或服务会话中的监听器，以及企业策略禁止未签名 PowerShell 脚本的环境。详见[兼容性矩阵](docs/SUPPORT.md)。
+
+## 下载与安装
+
+从 [Releases 发布页面](https://github.com/CH-ZHOU-0512/codex-proxy-guardian/releases)下载最新 ZIP 并解压。不要直接下载 GitHub 自动生成的 `Source code` 压缩包，因为正式 Release ZIP 已经过测试、打包并附带 SHA-256 校验文件。
+
+在**普通权限、非管理员** PowerShell 中进入解压目录并执行：
 
 ```powershell
 Unblock-File .\Install.ps1
 .\Install.ps1
 ```
 
-If your local execution policy does not allow direct invocation:
+如果本机执行策略不允许直接运行：
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Install.ps1
 ```
 
-The default installation is `%LOCALAPPDATA%\CodexProxyGuardian`. Setup creates a current-user scheduled task and a Start Menu shortcut named **Codex (Managed Proxy)**. If Task Scheduler registration is unavailable, it falls back to the current user's `Run` key.
+默认安装到 `%LOCALAPPDATA%\CodexProxyGuardian`，并创建：
 
-Setup checks connectivity but treats a temporarily offline proxy as a warning. Use `-RequireConnectivity` to make that check mandatory:
+- 当前用户计划任务 `Codex Proxy Guardian`，用于登录后静默启动；
+- 开始菜单快捷方式 **Codex (Managed Proxy)**，用于明确地以当前有效代理启动 Codex。
+
+安装时会进行联网自检。代理暂时离线默认只产生警告；如需把连通性作为安装的硬性条件：
 
 ```powershell
 .\Install.ps1 -RequireConnectivity
 ```
 
-To stage on a machine without Codex installed:
+需要在尚未安装 Codex 的电脑上提前部署时：
 
 ```powershell
 .\Install.ps1 -AllowMissingCodex -NoStart
 ```
 
-## Modes
+## Safe 与 Enforce 模式
 
-| Mode | Behavior | Recommendation |
+| 模式 | 行为 | 建议 |
 |---|---|---|
-| `Safe` | Restarts Codex after a validated endpoint change; ordinary external launches are not forcibly replaced | Default for public installs |
-| `Enforce` | Also detects a Codex root process missing the current proxy argument and relaunches it after debounce | Opt in after Safe mode is proven stable |
+| `Safe` | 已验证代理稳定变化后重启 Codex；不会强制替换普通方式启动的 Codex | 默认，适合绝大多数用户 |
+| `Enforce` | 还会检测 Codex 根进程是否缺少当前代理参数，缺失时经防抖后重新启动 | Safe 长期稳定后再按需开启 |
 
-Enable Enforce mode during installation or update:
+安装或更新时开启 Enforce：
 
 ```powershell
 .\Install.ps1 -Mode Enforce
 ```
 
-The earlier restart-loop class is avoided by matching the root process's proxy argument, not a short-lived launcher PID. Explicitly opening **Codex (Managed Proxy)** replaces an already-running Codex only when its root is missing the validated proxy argument, and the same cooldown/circuit protection still applies.
+项目通过匹配 Codex **根进程**的代理参数，而不是匹配短暂存在的启动器 PID，来规避早期脚本常见的误判重启问题。所有重启仍受到防抖、冷却、频率限制和熔断保护。
 
-## Configuration
+## 指定代理
 
-Edit `%LOCALAPPDATA%\CodexProxyGuardian\config.json`, then restart the scheduled task. Common options:
+编辑 `%LOCALAPPDATA%\CodexProxyGuardian\config.json`：
 
 ```json
 {
@@ -89,9 +111,17 @@ Edit `%LOCALAPPDATA%\CodexProxyGuardian\config.json`, then restart the scheduled
 }
 ```
 
-`ExplicitProxy` has the highest priority. Leave it empty to inspect the current Windows proxy and recognized proxy-process listeners. See [default-config.json](config/default-config.json) and [config.schema.json](config/config.schema.json).
+`ExplicitProxy` 优先级最高。留空时会自动检查 Windows 当前代理、继承的代理环境变量和已识别代理程序的监听端口。完整选项见 [default-config.json](config/default-config.json) 和 [config.schema.json](config/config.schema.json)。
 
-## Status and logs
+修改配置后重启守护程序：
+
+```powershell
+.\Control.ps1 -Action Restart
+```
+
+这只会重启守护程序，不会修改 Windows 网络配置。
+
+## 如何确认它真的有效
 
 ```powershell
 .\Status.ps1
@@ -99,57 +129,73 @@ Edit `%LOCALAPPDATA%\CodexProxyGuardian\config.json`, then restart the scheduled
 .\Doctor.ps1 -Online
 ```
 
-The status reports progressive effectiveness evidence:
+状态中包含三级有效性证据：
 
-| Evidence | Meaning |
+| 证据 | 含义 |
 |---|---|
-| `ValidatedProxy` | The endpoint accepted a TCP connection and met the configured HTTPS-test quorum |
-| `LaunchConfigured` | A current Codex root also carries the same normalized proxy argument |
-| `TrafficObserved` | A Codex process-tree connection to that proxy endpoint was observed recently |
+| `ValidatedProxy` | 代理端口可连接，并且经代理访问配置的 HTTPS 测试目标达到成功数量要求 |
+| `LaunchConfigured` | 当前 Codex 根进程带有同一个规范化代理参数 |
+| `TrafficObserved` | 近期实际观察到 Codex 进程树连接了这个代理端点 |
 
-`TrafficObserved` is the strongest local evidence this project can provide without packet capture. It does not claim a particular exit IP, location, anonymity level, or proxy policy. Run `Doctor.ps1 -Online -Json` to create a deliberately redacted compatibility report; it omits raw proxy URLs, user paths, and logs.
-
-`GuardianState` distinguishes `Stabilizing`, `Ready`, `WaitingForProxy`, `RecoveringCodex`, `RecoveryBlockedByCodex`, and `RestartCircuitOpen`. `Control.ps1 -Action Start` waits through the normal debounce phase and reports the resulting state.
-
-Control the guardian itself without touching Codex or Windows networking:
+`TrafficObserved` 是不进行抓包时项目能够提供的最强本地证据，但它不代表特定出口 IP、地区、匿名等级或代理规则一定符合预期。需要提交兼容性反馈时运行：
 
 ```powershell
-.\Control.ps1 -Action Restart
-.\Control.ps1 -Action Stop
-.\Control.ps1 -Action Start
+.\Doctor.ps1 -Online -Json
 ```
 
-Runtime status is in `status.json`; daily JSON Lines logs are under `logs`. Logs rotate by size, age, and count. Proxy credentials are never accepted or logged.
+`GuardianState` 会区分 `Stabilizing`、`Ready`、`WaitingForProxy`、`RecoveringCodex`、`RecoveryBlockedByCodex` 和 `RestartCircuitOpen` 等状态。完整验证标准见[兼容性与有效性测试](docs/COMPATIBILITY-TESTING.md)。
 
-If Codex starts restarting unexpectedly, the circuit breaker will stop further relaunches. Keep Safe mode enabled and follow [Troubleshooting](docs/TROUBLESHOOTING.md).
+## Codex 反复重启怎么办
 
-## Uninstall
+重启频率达到上限后，熔断器会阻止继续重启。建议：
 
-From the release directory or installed directory:
+1. 保持或切回默认的 `Safe` 模式；
+2. 运行 `.\Status.ps1` 查看 `GuardianState` 和最近重启原因；
+3. 运行 `.\Doctor.ps1 -Online` 检查代理验证和 Codex 启动参数；
+4. 按[故障排查文档](docs/TROUBLESHOOTING.md)处理；
+5. 仍无法解决时，提交经过人工复核的脱敏诊断报告。
+
+## 日志与控制
+
+```powershell
+.\Control.ps1 -Action Start
+.\Control.ps1 -Action Stop
+.\Control.ps1 -Action Restart
+```
+
+运行状态保存在安装目录的 `status.json`，每日 JSON Lines 日志位于 `logs`。日志按大小、保留天数和文件数轮转。项目不会接受或记录代理账号密码。
+
+## 卸载
+
+在 Release 解压目录或安装目录执行：
 
 ```powershell
 .\Uninstall.ps1 -Confirm:$false
 ```
 
-To preserve logs outside the installation directory:
+如需将日志保留到安装目录之外：
 
 ```powershell
 .\Uninstall.ps1 -KeepLogs -Confirm:$false
 ```
 
-Uninstall does not restore network settings because the project never modifies them.
+卸载程序不会“恢复网络设置”，因为本项目从未修改这些设置。
 
-## Build and test
+## 参与测试与贡献
+
+中国用户使用的代理软件、端口模式和 Codex 分发版本差异很大。欢迎在不泄露代理地址、IP、用户名、令牌和日志隐私的前提下，提交兼容性反馈。
+
+- 报告问题：使用中文 [Bug report](https://github.com/CH-ZHOU-0512/codex-proxy-guardian/issues/new?template=bug_report.yml)
+- 建议新功能：使用中文 [Feature request](https://github.com/CH-ZHOU-0512/codex-proxy-guardian/issues/new?template=feature_request.yml)
+- 贡献代码：参阅 [CONTRIBUTING.md](CONTRIBUTING.md)
+
+本地构建与测试：
 
 ```powershell
 .\tests\Run-Tests.ps1
 .\tools\Package-Release.ps1
 ```
 
-The release tool runs tests, creates a ZIP in `artifacts`, and writes a SHA-256 checksum. Store/MSIX integration tests require a real Windows user session and are intentionally separate from CI. See [compatibility and effectiveness testing](docs/COMPATIBILITY-TESTING.md) for the online proof and soak-test gates.
+## 许可证与声明
 
-中文说明见 [docs/README.zh-CN.md](docs/README.zh-CN.md). Architecture and threat boundaries are documented in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
-
-## License
-
-[MIT](LICENSE). “Codex” and “OpenAI” may be trademarks of their respective owner; see [DISCLAIMER.md](DISCLAIMER.md).
+本项目采用 [MIT 许可证](LICENSE)。“Codex”和“OpenAI”可能是其各自所有者的商标，详见[非官方与商标声明](DISCLAIMER.md)。
