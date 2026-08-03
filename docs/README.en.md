@@ -4,6 +4,15 @@
 
 An unofficial, current-user watchdog for the Store/MSIX Codex desktop app on Windows 11. It validates an HTTP/HTTPS proxy against multiple OpenAI/ChatGPT HTTPS targets, launches Codex with process-scoped proxy variables and a Chromium proxy argument, and relaunches Codex only after a stable proxy endpoint change.
 
+## Why this exists
+
+Many Windows proxy applications expose a local HTTP endpoint such as `127.0.0.1:7890`. Other applications must connect to that endpoint to use the proxy. A working browser does not necessarily mean that an already-running Codex process received the same proxy configuration. When the proxy application restarts, changes profiles, or updates, its port may change while Codex keeps using the old address, resulting in sign-in failures, content that does not load, or interrupted tasks.
+
+The manual workaround is to find the current port, close Codex, set proxy environment variables or launch arguments, and start Codex again—then repeat whenever the endpoint changes. Codex Proxy Guardian automates that sequence: it discovers candidates, proves that the proxy can carry real HTTPS requests, applies only a stable change, and uses debounce, cooldown, and a circuit breaker to avoid restart loops. The default `Safe` mode is intended to work without requiring users to understand ports, environment variables, or Task Scheduler.
+
+> [!NOTE]
+> This project is **not a proxy application and does not provide a proxy service or endpoints**. A working HTTP/HTTPS proxy must already exist on the computer. The guardian solves the narrower problem of keeping Codex aligned with that proxy.
+
 > [!IMPORTANT]
 > This is an independent community project. It is not affiliated with, endorsed by, or supported by OpenAI. The proxy behavior used here is a best-effort compatibility technique, not a documented Codex desktop API.
 
