@@ -6,7 +6,7 @@
 [![Release](https://img.shields.io/github/v/release/CH-ZHOU-0512/codex-proxy-guardian?include_prereleases)](https://github.com/CH-ZHOU-0512/codex-proxy-guardian/releases)
 [![License](https://img.shields.io/github/license/CH-ZHOU-0512/codex-proxy-guardian)](LICENSE)
 
-这是一个面向中国 Windows 11 用户的非官方 **Codex 桌面版代理守护工具**。它能够持续发现并验证当前可用的 HTTP/HTTPS 代理；当 Clash、Mihomo、v2rayN、sing-box 等代理软件的监听地址或端口稳定变化后，为 Codex 配置当前代理并进行受控重启。
+这是一个非官方的 **Windows 11 Codex 桌面版代理守护工具**。它能够持续发现并验证当前可用的 HTTP/HTTPS 代理；当 Clash、Mihomo、v2rayN、sing-box 等代理软件的监听地址或端口稳定变化后，为 Codex 配置当前代理并进行受控重启。
 
 项目重点解决这些实际问题：**Codex 桌面端无法连接、系统代理端口变化、代理软件随机端口、Codex 没有继承代理、切换节点后 Codex 仍使用旧代理、守护脚本导致 Codex 反复重启**。
 
@@ -183,7 +183,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Install.ps1
 
 ## 参与测试与贡献
 
-中国用户使用的代理软件、端口模式和 Codex 分发版本差异很大。欢迎在不泄露代理地址、IP、用户名、令牌和日志隐私的前提下，提交兼容性反馈。
+不同代理软件、端口模式和 Codex 分发版本之间存在差异。欢迎在不泄露代理地址、IP、用户名、令牌和日志隐私的前提下，提交兼容性反馈。
 
 - 报告问题：使用中文 [Bug report](https://github.com/CH-ZHOU-0512/codex-proxy-guardian/issues/new?template=bug_report.yml)
 - 建议新功能：使用中文 [Feature request](https://github.com/CH-ZHOU-0512/codex-proxy-guardian/issues/new?template=feature_request.yml)
