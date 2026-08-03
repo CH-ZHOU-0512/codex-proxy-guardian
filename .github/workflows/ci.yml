@@ -15,7 +15,7 @@ jobs:
       matrix:
         shell: [windows-powershell, powershell]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Run tests on Windows PowerShell 5.1
         if: matrix.shell == 'windows-powershell'
         shell: powershell
@@ -29,11 +29,11 @@ jobs:
     runs-on: windows-latest
     needs: test
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Build release archive
         shell: powershell
         run: .\tools\Package-Release.ps1
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: codex-proxy-guardian-${{ github.sha }}
           path: artifacts/*
