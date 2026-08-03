@@ -31,7 +31,7 @@ Import-Module $coreModule -Force
 $config = Get-Content -Raw -LiteralPath $configPath | ConvertFrom-Json
 $currentVersion = (Get-Content -Raw -LiteralPath $versionPath).Trim()
 $automaticUpdates = [bool](Get-CpgConfigValue $config 'AutomaticUpdates' $true)
-$channel = [string](Get-CpgConfigValue $config 'UpdateChannel' 'Prerelease')
+$channel = [string](Get-CpgConfigValue $config 'UpdateChannel' 'Stable')
 if ($channel -notin @('Stable', 'Prerelease')) { throw "Unsupported update channel: $channel" }
 
 $logsPath = Join-Path $resolvedRoot 'logs'

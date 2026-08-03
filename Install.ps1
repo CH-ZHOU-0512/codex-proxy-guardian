@@ -402,7 +402,7 @@ if ($managedLaunchRecommended) {
     ManagedShortcut = if ($NoShortcut) { $null } else { $shortcutPath }
     SettingsShortcut = if ($NoShortcut) { $null } else { $settingsShortcutPath }
     AutomaticUpdates = [bool](Get-CpgConfigValue $effectiveConfig 'AutomaticUpdates' $true)
-    UpdateChannel = [string](Get-CpgConfigValue $effectiveConfig 'UpdateChannel' 'Prerelease')
+    UpdateChannel = [string](Get-CpgConfigValue $effectiveConfig 'UpdateChannel' 'Stable')
     UpdateTaskPreserved = ($PreserveUpdateTask -and $null -ne $existingUpdateTask)
     ConnectivityCheck = $connectivityState
     GuardianState = if ($null -eq $runtimeStatus) { $null } else { [string]$runtimeStatus.guardianState }

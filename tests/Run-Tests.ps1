@@ -82,7 +82,7 @@ Invoke-Test 'Default configuration is conservative' {
     $config = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'config\default-config.json') | ConvertFrom-Json
     Assert-Equal 'Safe' ([string]$config.Mode)
     Assert-True $config.AutomaticUpdates
-    Assert-Equal 'Prerelease' ([string]$config.UpdateChannel)
+    Assert-Equal 'Stable' ([string]$config.UpdateChannel)
     Assert-False $config.ManageExternalCodexLaunches
     Assert-True $config.SafeRepairExternalCodexLaunches
     Assert-True ([int]$config.SafeExternalLaunchGraceSeconds -ge 10)
@@ -175,12 +175,18 @@ Invoke-Test 'Release checksum parser accepts only a leading SHA-256 digest' {
 }
 
 Invoke-Test 'Configuration migration adds defaults without replacing user choices' {
-    $config = [pscustomobject]@{ Mode = 'Enforce'; PollSeconds = 12 }
-    $defaults = [pscustomobject]@{ Mode = 'Safe'; PollSeconds = 5; CircuitBreakerMinutes = 15 }
+    $config = [pscustomobject]@{ Mode = 'Enforce'; PollSeconds = 12; UpdateChannel = 'Prerelease' }
+    $defaults = [pscustomobject]@{ Mode = 'Safe'; PollSeconds = 5; CircuitBreakerMinutes = 15; UpdateChannel = 'Stable' }
     $merged = Update-CpgConfigDefaults -Config $config -Defaults $defaults
     Assert-Equal 'Enforce' ([string]$merged.Mode)
     Assert-Equal 12 ([int]$merged.PollSeconds)
     Assert-Equal 15 ([int]$merged.CircuitBreakerMinutes)
+    Assert-Equal 'Prerelease' ([string]$merged.UpdateChannel)
+}
+
+Invoke-Test 'First stable release upgrades the alpha series on the Stable channel' {
+    $releases = @([pscustomobject]@{ tag_name = 'v1.0.0'; draft = $false; prerelease = $false })
+    Assert-Equal 'v1.0.0' ([string](Select-CpgUpdateRelease $releases '0.4.0-alpha' Stable).tag_name)
 }
 
 Invoke-Test 'Loopback proxy without a scheme is normalized' {

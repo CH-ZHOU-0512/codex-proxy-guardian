@@ -244,7 +244,7 @@ $report = [ordered]@{
     }
     updates = [ordered]@{
         automatic = if ($null -eq $config) { $null } else { [bool](Get-CpgConfigValue $config 'AutomaticUpdates' $true) }
-        channel = if ($null -eq $config) { $null } else { [string](Get-CpgConfigValue $config 'UpdateChannel' 'Prerelease') }
+        channel = if ($null -eq $config) { $null } else { [string](Get-CpgConfigValue $config 'UpdateChannel' 'Stable') }
         taskPresent = ($null -ne $updateTask)
         taskState = if ($null -eq $updateTask) { $null } else { [string]$updateTask.State }
         lastCheckUtc = if ($null -eq $updateStatus) { $null } else { [string](Get-SafeProperty $updateStatus 'time' '') }

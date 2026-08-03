@@ -26,7 +26,7 @@ Add-Type -AssemblyName System.Drawing
 $config = Get-Content -Raw -LiteralPath $configPath | ConvertFrom-Json
 $profile = Get-CpgModeProfile -Config $config
 $automaticUpdates = [bool](Get-CpgConfigValue $config 'AutomaticUpdates' $true)
-$updateChannel = [string](Get-CpgConfigValue $config 'UpdateChannel' 'Prerelease')
+$updateChannel = [string](Get-CpgConfigValue $config 'UpdateChannel' 'Stable')
 $version = [string]$marker.version
 
 $form = New-Object System.Windows.Forms.Form
@@ -102,9 +102,9 @@ $channelCombo = New-Object System.Windows.Forms.ComboBox
 $channelCombo.DropDownStyle = 'DropDownList'
 $channelCombo.Location = New-Object System.Drawing.Point(95, 59)
 $channelCombo.Size = New-Object System.Drawing.Size(205, 26)
-[void]$channelCombo.Items.Add('预发布版本（Alpha）')
-[void]$channelCombo.Items.Add('仅稳定版本')
-$channelCombo.SelectedIndex = if ($updateChannel -eq 'Stable') { 1 } else { 0 }
+[void]$channelCombo.Items.Add('稳定版本（推荐）')
+[void]$channelCombo.Items.Add('预发布版本（Alpha / Beta）')
+$channelCombo.SelectedIndex = if ($updateChannel -eq 'Prerelease') { 1 } else { 0 }
 $updateGroup.Controls.Add($channelCombo)
 
 $checkButton = New-Object System.Windows.Forms.Button
@@ -170,7 +170,7 @@ $applyButton.Add_Click({
         [System.Windows.Forms.Application]::DoEvents()
         $requestedMode = if ($strictRadio.Checked) { 'Strict' } else { 'Auto' }
         $requestedUpdates = if ($updateCheck.Checked) { 'On' } else { 'Off' }
-        $requestedChannel = if ($channelCombo.SelectedIndex -eq 1) { 'Stable' } else { 'Prerelease' }
+        $requestedChannel = if ($channelCombo.SelectedIndex -eq 1) { 'Prerelease' } else { 'Stable' }
         $result = & $controlPath -Action Configure -InstallRoot $resolvedRoot -Mode $requestedMode -AutomaticUpdates $requestedUpdates -UpdateChannel $requestedChannel
         $statusLabel.Text = "当前：$($result.ModeProfile)；自动更新：$(if ($result.AutomaticUpdates) { '开启' } else { '关闭' })"
         $message = if ($result.Changed) { '设置已经应用。模式会由 Guardian 自动重新加载，不会重启当前 Codex。' } else { '设置没有变化。' }

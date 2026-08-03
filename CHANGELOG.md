@@ -4,8 +4,9 @@ All notable changes are documented here. This project follows semantic versionin
 
 ## [未发布 / Unreleased]
 
-## [0.4.0-alpha] - 2026-08-03
+## [1.0.0] - 2026-08-03
 
+- 首个正式版本；新安装默认跟随 Stable 更新通道，已有安装继续保留用户选择。
 - 增加开始菜单设置窗口，将技术模式显示为“自动（Safe）”和“严格（Enforce）”，无需手改 JSON。
 - `Control.ps1` 增加 `SetMode`、`ToggleMode`、`Configure`、`CheckUpdate` 和 `Update` 操作；模式切换由 Guardian 后台热加载，不重启 Guardian 或 Codex。
 - 增加每日当前用户自动更新任务；更新器固定到本项目 GitHub Release，并核对通道、语义版本、资产名称、包内 `VERSION` 和 SHA-256。

@@ -140,7 +140,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Install.ps1
 
 Codex 更新后，Guardian 会重新读取当前用户的 MSIX 清单，根据应用 ID、常见可执行文件名和完整路径重新解析根进程，并在短时间内同时识别更新前后的路径。如果更新期间暂时找不到新的可执行文件，它会保留仍在运行的 Codex，而不是先关闭再尝试启动。`Status.ps1` 和脱敏 `Doctor.ps1` 报告会显示解析方式、Codex 版本、架构和外部启动策略，方便社区反馈不同机器上的真实结果。
 
-当前项目仍处于 Alpha 阶段，无法承诺未来 Codex 或 Windows 更新完全不改变启动行为；但解析失败会显示为明确状态，不会通过猜测路径去终止其他进程。
+`v1.0.0` 是首个正式版本。Codex 或 Windows 后续更新仍可能改变进程启动行为，社区工具需要持续跟进；解析失败会显示为明确状态，不会通过猜测路径去终止其他进程。
 
 ## 指定代理
 
@@ -150,7 +150,7 @@ Codex 更新后，Guardian 会重新读取当前用户的 MSIX 清单，根据�
 {
   "ExplicitProxy": "http://127.0.0.1:7890",
   "AutomaticUpdates": true,
-  "UpdateChannel": "Prerelease",
+  "UpdateChannel": "Stable",
   "AllowNonLoopbackProxy": false,
   "ManageExternalCodexLaunches": false,
   "SafeRepairExternalCodexLaunches": true,
@@ -181,7 +181,7 @@ Codex 更新后，Guardian 会重新读取当前用户的 MSIX 清单，根据�
 .\Control.ps1 -Action Update
 ```
 
-Alpha 阶段默认使用 `Prerelease` 通道；不希望跟随预发布版本时，可在设置窗口改为“仅稳定版本”。原位升级会保留现有配置，并优先接管正在运行的 Codex 会话而不是重启它。
+新安装默认使用 `Stable` 通道；愿意提前测试 Alpha/Beta 的用户可以在设置窗口主动改为“预发布版本”。升级会保留已有通道选择和其他配置，并优先接管正在运行的 Codex 会话而不是重启它。
 
 ## 如何确认它真的有效
 

@@ -113,7 +113,7 @@ function Select-CpgUpdateRelease {
     param(
         [Parameter(Mandatory = $true)]$Releases,
         [Parameter(Mandatory = $true)][string]$CurrentVersion,
-        [ValidateSet('Stable', 'Prerelease')][string]$Channel = 'Prerelease'
+        [ValidateSet('Stable', 'Prerelease')][string]$Channel = 'Stable'
     )
 
     $selected = $null

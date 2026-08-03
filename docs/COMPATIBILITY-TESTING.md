@@ -31,7 +31,7 @@ Run a read-only health measurement during normal work:
 
 A healthy soak has no missing status, invalid proxy, or open-circuit samples and sees no more than one endpoint fingerprint when the proxy configuration was not intentionally changed. PID changes are reported separately because Codex itself can update or restart.
 
-Maintainers should exercise at least these scenarios before promoting an alpha release:
+Maintainers should exercise at least these scenarios before promoting any release, especially when moving from prerelease to stable:
 
 - Store/MSIX Codex fresh install and in-place Store update;
 - x64 plus ARM64 community confirmation;

@@ -128,7 +128,7 @@ function Set-GuardianConfiguration {
     $beforeManageExternal = [bool](Get-CpgConfigValue $config 'ManageExternalCodexLaunches' $false)
     $beforeSafeRepair = [bool](Get-CpgConfigValue $config 'SafeRepairExternalCodexLaunches' $true)
     $beforeUpdates = [bool](Get-CpgConfigValue $config 'AutomaticUpdates' $true)
-    $beforeChannel = [string](Get-CpgConfigValue $config 'UpdateChannel' 'Prerelease')
+    $beforeChannel = [string](Get-CpgConfigValue $config 'UpdateChannel' 'Stable')
 
     if (-not [string]::IsNullOrWhiteSpace($RequestedMode)) {
         $config = Set-CpgModeProfile -Config $config -Profile $RequestedMode
@@ -145,7 +145,7 @@ function Set-GuardianConfiguration {
     $afterManageExternal = [bool](Get-CpgConfigValue $config 'ManageExternalCodexLaunches' $false)
     $afterSafeRepair = [bool](Get-CpgConfigValue $config 'SafeRepairExternalCodexLaunches' $true)
     $afterUpdates = [bool](Get-CpgConfigValue $config 'AutomaticUpdates' $true)
-    $afterChannel = [string](Get-CpgConfigValue $config 'UpdateChannel' 'Prerelease')
+    $afterChannel = [string](Get-CpgConfigValue $config 'UpdateChannel' 'Stable')
     $modeChanged = $beforeMode -ne $afterMode -or $beforeManageExternal -ne $afterManageExternal -or $beforeSafeRepair -ne $afterSafeRepair
     $changed = $modeChanged -or $beforeUpdates -ne $afterUpdates -or $beforeChannel -ne $afterChannel
     $applied = $false

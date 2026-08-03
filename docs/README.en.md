@@ -101,7 +101,7 @@ Edit `%LOCALAPPDATA%\CodexProxyGuardian\config.json`, then restart the scheduled
 {
   "ExplicitProxy": "http://127.0.0.1:7890",
   "AutomaticUpdates": true,
-  "UpdateChannel": "Prerelease",
+  "UpdateChannel": "Stable",
   "AllowNonLoopbackProxy": false,
   "ManageExternalCodexLaunches": false,
   "SafeRepairExternalCodexLaunches": true,
@@ -122,7 +122,7 @@ The daily updater is bound to `CH-ZHOU-0512/codex-proxy-guardian`. It requires t
 .\Control.ps1 -Action Update
 ```
 
-Alpha builds default to the `Prerelease` channel. Choose Stable in the settings window to ignore prereleases, or disable automatic updates entirely. An in-place update preserves configuration and asks the guardian to adopt the current Codex session.
+New installations default to the `Stable` channel. Users who deliberately want early Alpha/Beta builds can opt into `Prerelease` in Settings. An in-place update preserves the existing channel and other configuration, then asks the guardian to adopt the current Codex session.
 
 ## Status and logs
 
