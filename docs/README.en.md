@@ -2,6 +2,8 @@
 
 [简体中文](../README.md) | [English](README.en.md)
 
+> **In one sentence:** If Codex often reconnects four or five times before it starts thinking because it did not pick up the working proxy, this tool is designed to fix that.
+
 An unofficial, current-user watchdog for the Store/MSIX Codex desktop app on Windows 11. It validates an HTTP/HTTPS proxy against multiple OpenAI/ChatGPT HTTPS targets, launches Codex with process-scoped proxy variables and a Chromium proxy argument, and relaunches Codex only after a stable proxy endpoint change.
 
 ## Why this exists

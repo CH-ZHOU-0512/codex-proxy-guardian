@@ -6,6 +6,8 @@
 [![Release](https://img.shields.io/github/v/release/CH-ZHOU-0512/codex-proxy-guardian?include_prereleases)](https://github.com/CH-ZHOU-0512/codex-proxy-guardian/releases)
 [![License](https://img.shields.io/github/license/CH-ZHOU-0512/codex-proxy-guardian)](LICENSE)
 
+> **一句话解释：** 如果你的 Codex 经常要重连四五次才开始思考，而原因是代理没有正确跟上，这个工具就是用来解决它的。
+
 这是一个非官方的 **Windows 11 Codex 桌面版代理守护工具**。它能够持续发现并验证当前可用的 HTTP/HTTPS 代理；当 Clash、Mihomo、v2rayN、sing-box 等代理软件的监听地址或端口稳定变化后，为 Codex 配置当前代理并进行受控重启。
 
 项目重点解决这些实际问题：**Codex 桌面端无法连接、系统代理端口变化、代理软件随机端口、Codex 没有继承代理、切换节点后 Codex 仍使用旧代理、守护脚本导致 Codex 反复重启**。
