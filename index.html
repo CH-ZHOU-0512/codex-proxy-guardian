@@ -44,7 +44,7 @@
           "@id": "https://ch-zhou-0512.github.io/codex-proxy-guardian/#software",
           "name": "Codex Proxy Guardian",
           "alternateName": "Codex 代理守护程序",
-          "softwareVersion": "1.0.0",
+          "softwareVersion": "1.1.0",
           "operatingSystem": "Windows 11",
           "applicationCategory": "UtilitiesApplication",
           "isAccessibleForFree": true,
@@ -234,11 +234,11 @@
               <p class="eyebrow">After installation</p>
               <h2 id="workflow-title">以后直接打开 Codex，<br>别的什么也不用做。</h2>
             </div>
-            <p>安装脚本只需要运行一次。Guardian 随 Windows 登录静默自启，默认自动模式会先观察、再判断，避免没必要的重启。</p>
+            <p>安装只需要完成一次。Guardian 随 Windows 登录静默自启，默认自动模式会先观察、再判断，避免没必要的重启。</p>
           </div>
 
           <ol class="timeline" data-timeline>
-            <li data-reveal><span>01</span><strong>安装一次</strong><p>运行 Install.ps1</p></li>
+            <li data-reveal><span>01</span><strong>安装一次</strong><p>双击 Setup EXE</p></li>
             <li data-reveal><span>02</span><strong>照常使用</strong><p>从原图标打开 Codex</p></li>
             <li data-reveal><span>03</span><strong>后台判断</strong><p>验证代理与实际流量</p></li>
             <li data-reveal><span>04</span><strong>必要时修复</strong><p>端口变化才安全接管</p></li>
@@ -256,18 +256,18 @@
         <div class="shell install-grid">
           <div data-reveal>
             <p class="eyebrow">Install · Windows 11</p>
-            <h2 id="install-title">下载、解压、运行。<br>三分钟开始守护。</h2>
+            <h2 id="install-title">下载、双击、安装。<br>一分钟开始守护。</h2>
             <p>无需管理员权限；默认安装到当前用户目录。安装器不会修改 Windows 系统代理、DNS、路由或永久环境变量。</p>
             <a class="button button-accent" href="https://github.com/CH-ZHOU-0512/codex-proxy-guardian/releases/latest">下载最新正式版 <span aria-hidden="true">↓</span></a>
             <small>需要：Windows 11 · Codex Desktop · HTTP / HTTPS 或混合代理端口</small>
           </div>
 
-          <div class="terminal" data-reveal aria-label="PowerShell 安装步骤">
-            <div class="terminal-head"><strong>PowerShell</strong><span aria-hidden="true">● ● ●</span></div>
+          <div class="terminal" data-reveal aria-label="一键安装步骤">
+            <div class="terminal-head"><strong>Codex Proxy Guardian Setup</strong><span aria-hidden="true">● ● ●</span></div>
             <ol>
-              <li><span>01</span>解压 Release 下载包</li>
-              <li><span>02</span>右键选择“在终端中打开”</li>
-              <li><span>03</span><code>Unblock-File .\Install.ps1<br>.\Install.ps1</code></li>
+              <li><span>01</span>下载正式版 Setup EXE</li>
+              <li><span>02</span>双击并确认官方仓库地址</li>
+              <li><span>03</span><code>点击“立即安装”<br>无需管理员权限</code></li>
             </ol>
             <div class="terminal-success">✓ 安装完成 · Guardian 正在后台运行</div>
           </div>
@@ -317,6 +317,10 @@
               <p>默认每天检查 Stable Release，并在版本、资产名称、包内 VERSION 与 SHA-256 等校验全部通过后安全更新；失败会保留原版本。</p>
             </details>
             <details>
+              <summary>为什么 Windows 说安装器无法识别？</summary>
+              <p>项目目前没有商业代码签名证书，新 EXE 可能触发 SmartScreen 提示。只从官方 Release 下载并核对 SHA-256；不确定来源时使用可直接审阅的 ZIP 方案，不要关闭 Windows 安全功能。</p>
+            </details>
+            <details>
               <summary>支持哪些代理程序？</summary>
               <p>适用于提供 HTTP、HTTPS 或混合端口的 Clash、Mihomo、v2rayN、sing-box、NekoRay、Hiddify、FlClash 等程序。纯 SOCKS、只有 TUN 而没有 HTTP/混合端口的情况暂不自动支持。</p>
               <a href="https://github.com/CH-ZHOU-0512/codex-proxy-guardian/discussions/6">提交兼容性反馈 ↗</a>
@@ -345,7 +349,7 @@
           <a href="https://github.com/CH-ZHOU-0512/codex-proxy-guardian/discussions/4">使用指南</a>
           <a href="https://github.com/CH-ZHOU-0512/codex-proxy-guardian/discussions">Discussions</a>
         </nav>
-        <p>MIT License · v1.0.0 · <a href="https://github.com/CH-ZHOU-0512">CH-ZHOU-0512</a></p>
+        <p>MIT License · v1.1.0 · <a href="https://github.com/CH-ZHOU-0512">CH-ZHOU-0512</a></p>
       </div>
     </footer>
   </body>

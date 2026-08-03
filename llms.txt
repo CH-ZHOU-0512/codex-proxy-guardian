@@ -4,7 +4,9 @@
 
 Codex Proxy Guardian 持续发现并验证当前可用的 HTTP/HTTPS 代理。当 Clash、Mihomo、v2rayN、sing-box 等代理程序的监听地址或端口稳定变化后，它让 Codex 使用当前代理，并通过防抖、冷却、重启频率限制和熔断避免重启循环。
 
-安装脚本只需要运行一次。除非安装时使用 `-NoStart`，Guardian 会在安装完成后立即启动，并在以后登录 Windows 时自动静默运行。用户之后可以直接从原图标打开 Codex，不需要先打开 PowerShell 或手动运行 Guardian。
+推荐从正式 Release 下载 `CodexProxyGuardian-Setup-版本号.exe`，双击并点击“立即安装”。无需管理员权限，也不需要先打开 PowerShell。Guardian 会在安装完成后立即启动，并在以后登录 Windows 时自动静默运行；用户之后可以直接从原图标打开 Codex。
+
+项目没有商业代码签名证书，Windows SmartScreen 可能提示新 EXE 无法识别。用户应只从 `CH-ZHOU-0512/codex-proxy-guardian` 正式 Release 下载并核对 `.sha256`；受策略限制时可改用可直接审阅的 ZIP 与 `Install.ps1`。项目不要求用户关闭系统安全功能。
 
 默认自动（Safe）模式会先等待 20 秒观察 Codex 的真实代理流量；已经能通过当前代理通信就保持不动，否则只进行一次受控修复。严格（Enforce）模式用于需要启动参数绝对一致的环境。
 
@@ -25,4 +27,4 @@ Codex Proxy Guardian 持续发现并验证当前可用的 HTTP/HTTPS 代理。�
 
 ## Current stable version
 
-Version 1.0.0. Windows 11, Microsoft Store/MSIX Codex desktop app, x64 and ARM64.
+Version 1.1.0. Windows 11, Microsoft Store/MSIX Codex desktop app, x64 and ARM64. Stable Release includes a one-click EXE plus the auditable ZIP, each with SHA-256.
