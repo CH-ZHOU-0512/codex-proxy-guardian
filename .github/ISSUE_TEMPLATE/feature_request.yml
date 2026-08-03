@@ -1,25 +1,30 @@
-name: Feature request
-description: Propose a narrowly scoped compatibility or safety improvement
+name: 功能建议 / Feature request
+description: 提出兼容性、安全性或使用体验改进建议
 title: "[Feature]: "
 labels: [enhancement]
 body:
   - type: textarea
     id: problem
     attributes:
-      label: Problem
-      description: What compatibility gap or unsafe manual workflow needs improvement?
+      label: 要解决的问题
+      description: 目前遇到了什么兼容性缺口、不便或不安全的手动流程？
     validations:
       required: true
   - type: textarea
+    id: environment
+    attributes:
+      label: 使用环境
+      description: 请说明 Windows、Codex 来源以及代理软件/模式；不要填写代理地址、IP 或账号密码。
+  - type: textarea
     id: proposal
     attributes:
-      label: Proposed behavior
+      label: 建议的行为
     validations:
       required: true
   - type: textarea
     id: safety
     attributes:
-      label: Safety and compatibility impact
-      description: Explain network mutations, credential exposure, restart behavior, and fallback behavior.
+      label: 安全性与兼容性影响
+      description: 请考虑网络配置修改、凭据暴露、Codex 重启行为和失败回退方式。
     validations:
       required: true

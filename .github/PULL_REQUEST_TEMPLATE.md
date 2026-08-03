@@ -1,12 +1,12 @@
-## Summary
+## 改动说明 / Summary
 
-Describe the user-visible behavior and compatibility target.
+请说明用户可见行为、要解决的问题和目标兼容环境。中文或英文均可。
 
-## Safety checklist
+## 安全检查 / Safety checklist
 
-- [ ] Safe mode remains the default.
-- [ ] No Windows/WinHTTP proxy, DNS, route, or persistent proxy environment setting is modified.
-- [ ] Proxy credentials and sensitive endpoints cannot enter logs or command lines.
-- [ ] Restart-related behavior includes debounce/cooldown coverage.
-- [ ] Windows PowerShell 5.1 tests pass.
-- [ ] Documentation and changelog are updated where needed.
+- [ ] `Safe` 仍为默认模式。
+- [ ] 未修改 Windows/WinHTTP 代理、DNS、路由或永久代理环境变量。
+- [ ] 代理凭据和敏感端点不会进入日志或命令行。
+- [ ] 与重启有关的行为包含防抖、冷却和频率限制测试。
+- [ ] Windows PowerShell 5.1 测试通过。
+- [ ] 已按需更新文档、兼容性矩阵和更新日志。
