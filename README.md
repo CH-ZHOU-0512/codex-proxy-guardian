@@ -2,7 +2,9 @@
 
 [简体中文](README.md) | [English](docs/README.en.md)
 
-![Codex Proxy Guardian：让 Codex 不再因为代理没有跟上而反复重连](assets/social-preview.png)
+[![Codex Proxy Guardian 在线项目页：别再重连五次，才开始思考](assets/website-preview.png)](https://ch-zhou-0512.github.io/codex-proxy-guardian/)
+
+**[打开在线项目主页 →](https://ch-zhou-0512.github.io/codex-proxy-guardian/)**　|　[下载最新正式版](https://github.com/CH-ZHOU-0512/codex-proxy-guardian/releases/latest)　|　[查看使用文档](https://github.com/CH-ZHOU-0512/codex-proxy-guardian/wiki)
 
 [![CI](https://github.com/CH-ZHOU-0512/codex-proxy-guardian/actions/workflows/ci.yml/badge.svg)](https://github.com/CH-ZHOU-0512/codex-proxy-guardian/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/CH-ZHOU-0512/codex-proxy-guardian?include_prereleases)](https://github.com/CH-ZHOU-0512/codex-proxy-guardian/releases)
