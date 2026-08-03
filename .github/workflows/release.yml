@@ -36,9 +36,16 @@ jobs:
           $arguments = @(
             'release', 'create', $env:GITHUB_REF_NAME,
             $archive, $checksum,
-            '--verify-tag', '--generate-notes',
+            '--verify-tag',
             '--title', "Codex Proxy Guardian $env:GITHUB_REF_NAME"
           )
+          $notesFile = ".\docs\releases\v$version.md"
+          if (Test-Path -LiteralPath $notesFile) {
+            $arguments += @('--notes-file', $notesFile)
+          }
+          else {
+            $arguments += '--generate-notes'
+          }
           if ($env:GITHUB_REF_NAME -match '-') { $arguments += '--prerelease' }
           & gh @arguments
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
