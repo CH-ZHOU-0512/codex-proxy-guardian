@@ -33,9 +33,11 @@ jobs:
           $version = (Get-Content -Raw -LiteralPath .\VERSION).Trim()
           $archive = ".\artifacts\CodexProxyGuardian-$version.zip"
           $checksum = "$archive.sha256"
+          $installer = ".\artifacts\CodexProxyGuardian-Setup-$version.exe"
+          $installerChecksum = "$installer.sha256"
           $arguments = @(
             'release', 'create', $env:GITHUB_REF_NAME,
-            $archive, $checksum,
+            $installer, $installerChecksum, $archive, $checksum,
             '--verify-tag',
             '--title', "Codex Proxy Guardian $env:GITHUB_REF_NAME"
           )

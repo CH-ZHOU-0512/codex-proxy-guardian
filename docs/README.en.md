@@ -33,6 +33,7 @@ The manual workaround is to find the current port, close Codex, set proxy enviro
 - Uninstall removes only resources whose installation marker and target paths match.
 - Automatic (`Safe`) is the default mode. For a normally launched Codex process missing the current proxy argument, it waits for traffic evidence before performing one controlled repair; a process already observed using the validated proxy is left untouched.
 - A daily current-user task checks this project's GitHub Releases and installs an update only after tag, filename, staged `VERSION`, and SHA-256 checks agree.
+- A single-file graphical installer lets normal users install or upgrade without administrator rights.
 
 ## Supported baseline
 
@@ -49,7 +50,27 @@ PAC/WPAD, pure SOCKS proxies, TUN-only configurations, WinHTTP-only proxy settin
 
 ## Install
 
-Download and extract a release ZIP. In a normal, non-administrator PowerShell window:
+### Recommended: one-click EXE
+
+1. Open the [latest stable Release](https://github.com/CH-ZHOU-0512/codex-proxy-guardian/releases/latest) and download the `.exe` whose name starts with `CodexProxyGuardian-Setup-`.
+2. Double-click it and confirm that the window links to `CH-ZHOU-0512/codex-proxy-guardian`.
+3. Select **Install now**. Guardian starts in the background when setup completes; keep opening Codex normally afterward.
+
+The installer is current-user only, does not request elevation, and does not change the Windows system proxy, WinHTTP, DNS, routes, or persistent environment variables. It embeds the exact ZIP produced by the same Release build and validates its version and required files before installation.
+
+> [!WARNING]
+> This community project does not currently have a commercial code-signing certificate, so Windows SmartScreen may show an unrecognized-app warning. Download only from this repository's official Releases. Use the ZIP method below if the source cannot be confirmed or your policy blocks unsigned software; do not disable Windows security features.
+
+For an optional integrity check, download the matching `.sha256` file and compare these outputs:
+
+```powershell
+Get-FileHash .\CodexProxyGuardian-Setup-*.exe -Algorithm SHA256
+Get-Content .\CodexProxyGuardian-Setup-*.exe.sha256
+```
+
+### Alternative: release ZIP
+
+Download the versioned ZIP and its `.sha256` from the same Release, extract it, and run the following in a normal, non-administrator PowerShell window. Do not use GitHub's automatically generated `Source code` archives.
 
 ```powershell
 Unblock-File .\Install.ps1

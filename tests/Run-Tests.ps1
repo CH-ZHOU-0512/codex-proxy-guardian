@@ -339,6 +339,30 @@ Invoke-Test 'Installer provisions settings and a verified-release update task' {
     Assert-False $control.Contains('::Replace($temporaryPath, $configPath, $null') 'Mode changes use an invalid File.Replace backup path.'
 }
 
+Invoke-Test 'One-click installer embeds and safely verifies the exact release payload' {
+    $bootstrapper = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'setup\Program.cs')
+    foreach ($required in @(
+        'CodexProxyGuardian.Payload.zip', '--verify', 'MaximumEntries', 'MaximumExpandedBytes',
+        'MaximumEntryBytes', 'FileMode.CreateNew', 'GetManifestResourceStream',
+        'The embedded payload VERSION does not match the installer.',
+        'WindowsPowerShell\v1.0\powershell.exe', 'ExecutionPolicy Bypass'
+    )) {
+        Assert-True $bootstrapper.Contains($required) "One-click installer is missing safety behavior: $required"
+    }
+    Assert-True $bootstrapper.Contains('targetPath.StartsWith(rootPrefix, StringComparison.OrdinalIgnoreCase)') 'One-click installer does not reject paths outside its temporary root.'
+    Assert-True $bootstrapper.Contains('process.WaitForExit(10 * 60 * 1000)') 'One-click installer has no bounded wait for Install.ps1.'
+    Assert-False ($bootstrapper -match '(?i)SetEnvironmentVariable|ProxyEnable|netsh\s+winhttp') 'One-click installer directly mutates network or persistent environment configuration.'
+
+    $packager = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'tools\Package-Release.ps1')
+    Assert-True $packager.Contains('CodexProxyGuardian-Setup-{0}.exe') 'Release packaging does not create the one-click installer.'
+    Assert-True $packager.Contains('/resource:$zipPath,CodexProxyGuardian.Payload.zip') 'Release ZIP is not embedded as the installer payload.'
+    Assert-True $packager.Contains('& $installerPath --verify') 'Packaged installer is not self-checked.'
+
+    $releaseWorkflow = Get-Content -Raw -LiteralPath (Join-Path $repoRoot '.github\workflows\release.yml')
+    Assert-True $releaseWorkflow.Contains('CodexProxyGuardian-Setup-$version.exe') 'GitHub Release does not publish the one-click installer.'
+    Assert-True $releaseWorkflow.Contains('$installerChecksum') 'GitHub Release does not publish the installer checksum.'
+}
+
 Invoke-Test 'Watcher publishes explicit lifecycle states' {
     $watcher = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'src\Watch-CodexProxy.ps1')
     foreach ($state in @('WaitingForProxy', 'Stabilizing', 'Ready', 'EvaluatingCodexLaunch', 'CodexNeedsManagedLaunch', 'CodexResolutionUnavailable', 'RecoveringCodex', 'RecoveryBlockedByCodex', 'RestartCircuitOpen')) {

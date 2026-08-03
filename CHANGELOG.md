@@ -4,6 +4,14 @@ All notable changes are documented here. This project follows semantic versionin
 
 ## [未发布 / Unreleased]
 
+## [1.1.0] - 2026-08-03
+
+- 新增面向普通用户的单文件图形化安装器 `CodexProxyGuardian-Setup-1.1.0.exe`，双击即可完成当前用户安装或原位升级。
+- EXE 内嵌与 Release ZIP 完全相同的载荷；构建时会校验内嵌版本、必需文件、安全解压边界和安装器自检结果。
+- 安装器不申请管理员权限、不直接修改网络配置，使用系统自带 Windows PowerShell 调用经过测试的 `Install.ps1`，并限制最长执行时间。
+- GitHub Release 同时发布 EXE、ZIP 及各自的 SHA-256 文件；ZIP 手动安装和 Guardian 现有自动更新机制继续兼容。
+- 更新中英文 README、支持矩阵、Release 说明和自动化测试，明确未签名 EXE 的 SmartScreen 提示与校验方式。
+
 ## [1.0.0] - 2026-08-03
 
 - 首个正式版本；新安装默认跟随 Stable 更新通道，已有安装继续保留用户选择。
