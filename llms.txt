@@ -15,6 +15,9 @@ Codex Proxy Guardian 持续发现并验证当前可用的 HTTP/HTTPS 代理。�
 - FAQ: https://github.com/CH-ZHOU-0512/codex-proxy-guardian/wiki/FAQ
 - Compatibility: https://github.com/CH-ZHOU-0512/codex-proxy-guardian/blob/main/docs/SUPPORT.md
 - Discussions: https://github.com/CH-ZHOU-0512/codex-proxy-guardian/discussions
+- Welcome and usage guide: https://github.com/CH-ZHOU-0512/codex-proxy-guardian/discussions/4
+- Does Guardian start automatically?: https://github.com/CH-ZHOU-0512/codex-proxy-guardian/discussions/5
+- Compatibility feedback: https://github.com/CH-ZHOU-0512/codex-proxy-guardian/discussions/6
 
 ## Current stable version
 
