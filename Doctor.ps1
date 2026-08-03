@@ -150,11 +150,20 @@ if ($guardianAlive -and $guardianLifecycle -eq 'WaitingForProxy') {
 }
 if ($guardianLifecycle -eq 'RecoveryBlockedByCodex') {
     $issues += 'codex_relaunch_recovery_blocked'
-    $recommendations += 'A Codex root without the current proxy argument is blocking Safe-mode recovery. Close it and use the managed shortcut, or explicitly enable Enforce mode.'
+    $recommendations += 'A Codex root without the current proxy argument is blocking recovery. Use the managed shortcut, or enable SafeRepairExternalCodexLaunches/Enforce mode.'
 }
 elseif ([bool](Get-SafeProperty $status 'recoveryLaunchRequired' $false)) {
     $issues += 'codex_relaunch_recovery_pending'
     $recommendations += 'The last managed relaunch has not been confirmed. Leave the guardian running; it will retry within the restart-rate limit.'
+}
+$externalLaunchState = [string](Get-SafeProperty $status 'externalLaunchState' '')
+if ($externalLaunchState -eq 'ManagedShortcutRequired') {
+    $issues += 'codex_managed_launch_required'
+    $recommendations += 'Open "Codex (Managed Proxy)", or enable SafeRepairExternalCodexLaunches after checking the restart safeguards.'
+}
+elseif ($externalLaunchState -eq 'CodexResolutionUnavailable') {
+    $issues += 'codex_replacement_resolution_unavailable'
+    $recommendations += 'Codex was left running because a replacement MSIX executable could not be resolved. Finish any Store update, then restart the guardian.'
 }
 if ($Online -and $null -ne $onlineResult -and -not [bool](Get-SafeProperty ([pscustomobject]$onlineResult) 'proxyValid' $false)) {
     $issues += 'online_proxy_validation_failed'
@@ -166,7 +175,7 @@ if (@($issues).Count -gt 0) { $health = 'NeedsAttention' }
 if ($issues -contains 'unsupported_os' -or $issues -contains 'powershell_too_old' -or $issues -contains 'constrained_language_mode' -or $issues -contains 'codex_msix_not_found') { $health = 'Blocked' }
 
 $report = [ordered]@{
-    reportSchema = 1
+    reportSchema = 2
     generatedUtc = (Get-Date).ToUniversalTime().ToString('o')
     safeForSharing = $true
     health = $health
@@ -186,6 +195,10 @@ $report = [ordered]@{
         found = ($null -ne $codexApp)
         package = if ($null -eq $codexApp) { $null } else { $codexApp.PackageName }
         version = if ($null -eq $codexApp) { $null } else { $codexApp.Version }
+        packageArchitecture = if ($null -eq $codexApp) { $null } else { $codexApp.PackageArchitecture }
+        applicationId = if ($null -eq $codexApp) { $null } else { $codexApp.ApplicationId }
+        executableName = if ($null -eq $codexApp) { $null } else { $codexApp.ProcessName }
+        resolutionMethod = if ($null -eq $codexApp) { $null } else { $codexApp.ResolutionMethod }
         processRunning = [bool](Get-SafeProperty $status 'codexRunning' $false)
         launchProxyMatch = Get-SafeProperty $status 'codexProxyArgumentMatch' $null
         proxyTrafficObservedRecently = Get-SafeProperty $status 'codexProxyConnectionObservedRecently' $null
@@ -207,6 +220,8 @@ $report = [ordered]@{
         alive = $guardianAlive
         state = Get-SafeProperty $status 'guardianState' $null
         mode = Get-SafeProperty $status 'mode' $null
+        externalLaunchPolicy = Get-SafeProperty $status 'externalLaunchPolicy' $null
+        externalLaunchState = Get-SafeProperty $status 'externalLaunchState' $null
         activeProxyValid = [bool](Get-SafeProperty $status 'activeProxyValid' $false)
         effectivenessEvidence = Get-SafeProperty $status 'effectivenessEvidence' $null
         proxyTestSuccessCount = [int](Get-SafeProperty $status 'proxyTestSuccessCount' 0)

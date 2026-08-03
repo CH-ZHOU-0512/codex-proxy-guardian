@@ -8,8 +8,8 @@
    Stop-ScheduledTask -TaskName 'Codex Proxy Guardian'
    ```
 
-2. Set `Mode` to `Safe` and `ManageExternalCodexLaunches` to `false` in the installed `config.json`.
-3. Inspect `status.json` and the newest `logs\guardian-*.jsonl` file. Repeated `proxy_changed` events indicate an unstable candidate selection; repeated `unmanaged_codex` events indicate Enforce mode is not observing the expected launch argument.
+2. Set `Mode` to `Safe`, and set both `ManageExternalCodexLaunches` and `SafeRepairExternalCodexLaunches` to `false` in the installed `config.json` to temporarily disable takeover of ordinary Codex launches.
+3. Inspect `status.json` and the newest `logs\guardian-*.jsonl` file. Repeated `proxy_changed` events indicate an unstable candidate selection; repeated `unmanaged_codex` or `external_codex_repair` events indicate that an ordinary Codex launch did not carry the current proxy argument.
 4. Set `ExplicitProxy` to the stable HTTP/mixed inbound endpoint if automatic discovery sees multiple listeners.
 5. Increase `DebounceSeconds`, `StableSamples`, or `RestartCooldownSeconds` for a proxy application that recreates listeners during profile switches.
 
@@ -19,7 +19,7 @@ The watchdog intentionally matches `--proxy-server=<validated URI>` on the curre
 
 ## Codex stayed closed after a managed restart
 
-Version 0.2 persists a `RecoveryLaunchRequired` flag before stopping Codex. If launch fails, `GuardianState` becomes `RecoveringCodex` and the guardian retries while the proxy remains valid. If a separately launched, unconfigured Codex blocks Safe-mode recovery, the state becomes `RecoveryBlockedByCodex`; close it and use **Codex (Managed Proxy)**. Failed attempts share the normal restart budget; after the limit, `RestartCircuitOpen` prevents an unbounded loop. Check the newest `codex_started`, `loop_error`, and `restart_circuit_opened` log events. Do not delete `state.json` merely to bypass the limit; correct the launch or package-resolution failure first.
+Version 0.2 and later persists a `RecoveryLaunchRequired` flag before stopping Codex. If launch fails, `GuardianState` becomes `RecoveringCodex` and the guardian retries while the proxy remains valid. Starting with 0.3, Safe mode observes a separately launched Codex that lacks the current proxy argument: it leaves the process alone if current-proxy traffic appears during the evidence window, and otherwise performs one controlled repair. Such a process can produce `RecoveryBlockedByCodex` only when both `SafeRepairExternalCodexLaunches` and `ManageExternalCodexLaunches` are disabled; in that case, close it and use **Codex (Managed Proxy)**. Failed attempts share the normal restart budget; after the limit, `RestartCircuitOpen` prevents an unbounded loop. Check the newest `codex_started`, `loop_error`, and `restart_circuit_opened` log events. Do not delete `state.json` merely to bypass the limit; correct the launch or package-resolution failure first.
 
 ## No proxy is selected
 

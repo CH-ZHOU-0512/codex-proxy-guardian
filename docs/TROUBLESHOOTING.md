@@ -10,8 +10,8 @@
    Stop-ScheduledTask -TaskName 'Codex Proxy Guardian'
    ```
 
-2. 在安装目录的 `config.json` 中，将 `Mode` 设为 `Safe`，将 `ManageExternalCodexLaunches` 设为 `false`。
-3. 检查 `status.json` 和最新的 `logs\guardian-*.jsonl`。重复出现 `proxy_changed` 表示候选端点不稳定；重复出现 `unmanaged_codex` 表示 Enforce 模式没有在 Codex 根进程上观察到预期启动参数。
+2. 在安装目录的 `config.json` 中，将 `Mode` 设为 `Safe`，并将 `ManageExternalCodexLaunches`、`SafeRepairExternalCodexLaunches` 都设为 `false`，以暂时关闭对普通 Codex 启动的自动接管。
+3. 检查 `status.json` 和最新的 `logs\guardian-*.jsonl`。重复出现 `proxy_changed` 表示候选端点不稳定；重复出现 `unmanaged_codex` 或 `external_codex_repair` 表示普通 Codex 启动没有带上当前代理参数。
 4. 如果自动发现了多个监听器，将 `ExplicitProxy` 设为稳定的 HTTP/混合入站端口。
 5. 如果代理软件切换配置时会重建监听器，可适当增加 `DebounceSeconds`、`StableSamples` 或 `RestartCooldownSeconds`。
 
@@ -23,7 +23,7 @@
 
 0.2 及更高版本会在关闭 Codex 前持久化 `RecoveryLaunchRequired`。如果新进程启动失败，`GuardianState` 会变为 `RecoveringCodex`，代理仍有效时守护程序会在正常频率限制内重试。
 
-如果另行启动、但未带代理参数的 Codex 阻止 Safe 模式恢复，状态会变为 `RecoveryBlockedByCodex`；请关闭该进程并使用 **Codex (Managed Proxy)**。失败尝试与正常重启共用同一个次数预算；达到上限后 `RestartCircuitOpen` 会阻止无限循环。
+从 0.3 起，默认的 Safe 模式会先观察另行启动、但未带代理参数的 Codex：证据等待期内如果发现它已通过当前代理通信，就保持不动；否则进行一次受控修复。只有同时关闭 `SafeRepairExternalCodexLaunches` 和 `ManageExternalCodexLaunches` 时，这类进程才可能使恢复状态变为 `RecoveryBlockedByCodex`；此时请关闭该进程并使用 **Codex (Managed Proxy)**。失败尝试与正常重启共用同一个次数预算；达到上限后 `RestartCircuitOpen` 会阻止无限循环。
 
 检查最新日志中的 `codex_started`、`loop_error` 和 `restart_circuit_opened`。不要为了绕过限制直接删除 `state.json`，应先解决启动失败或 MSIX 包路径解析问题。
 

@@ -2,6 +2,8 @@
 
 [简体中文](../README.md) | [English](README.en.md)
 
+![Codex Proxy Guardian social preview](../assets/social-preview.png)
+
 > **In one sentence:** If Codex often reconnects four or five times before it starts thinking because it did not pick up the working proxy, this tool is designed to fix that.
 
 An unofficial, current-user watchdog for the Store/MSIX Codex desktop app on Windows 11. It validates an HTTP/HTTPS proxy against multiple OpenAI/ChatGPT HTTPS targets, launches Codex with process-scoped proxy variables and a Chromium proxy argument, and relaunches Codex only after a stable proxy endpoint change.
@@ -29,7 +31,7 @@ The manual workaround is to find the current port, close Codex, set proxy enviro
 - Candidate ordering is deterministic and keeps the current endpoint within the same priority tier, avoiding port flip-flop.
 - The MSIX manifest is periodically re-read, so a Store update can move the executable without leaving the guardian on a stale version path.
 - Uninstall removes only resources whose installation marker and target paths match.
-- `Safe` is the default mode. It reacts to a validated proxy endpoint change but does not take over every normally launched Codex process.
+- `Safe` is the default mode. For a normally launched Codex process missing the current proxy argument, it waits for traffic evidence before performing one controlled repair; a process already observed using the validated proxy is left untouched.
 
 ## Supported baseline
 
@@ -77,8 +79,8 @@ To stage on a machine without Codex installed:
 
 | Mode | Behavior | Recommendation |
 |---|---|---|
-| `Safe` | Restarts Codex after a validated endpoint change; ordinary external launches are not forcibly replaced | Default for public installs |
-| `Enforce` | Also detects a Codex root process missing the current proxy argument and relaunches it after debounce | Opt in after Safe mode is proven stable |
+| `Safe` | For an ordinary Codex launch missing the current proxy argument, waits 20 seconds for proxy-traffic evidence; leaves a working process alone or performs one controlled repair | Default for public installs |
+| `Enforce` | Relaunches a Codex root missing the current proxy argument after debounce, without the Safe traffic-evidence exemption | Opt in when exact launch arguments must be enforced |
 
 Enable Enforce mode during installation or update:
 
@@ -86,7 +88,7 @@ Enable Enforce mode during installation or update:
 .\Install.ps1 -Mode Enforce
 ```
 
-The earlier restart-loop class is avoided by matching the root process's proxy argument, not a short-lived launcher PID. Explicitly opening **Codex (Managed Proxy)** replaces an already-running Codex only when its root is missing the validated proxy argument, and the same cooldown/circuit protection still applies.
+The earlier restart-loop class is avoided by matching the root process's proxy argument, not a short-lived launcher PID. In short, Safe means “prove a repair is needed first,” while Enforce means “repair any argument mismatch.” Explicitly opening **Codex (Managed Proxy)** remains the immediate deterministic path, and the same cooldown/circuit protection applies to every repair. During a Store update, an existing Codex process is left running if the replacement MSIX executable cannot yet be resolved.
 
 ## Configuration
 
@@ -97,6 +99,8 @@ Edit `%LOCALAPPDATA%\CodexProxyGuardian\config.json`, then restart the scheduled
   "ExplicitProxy": "http://127.0.0.1:7890",
   "AllowNonLoopbackProxy": false,
   "ManageExternalCodexLaunches": false,
+  "SafeRepairExternalCodexLaunches": true,
+  "SafeExternalLaunchGraceSeconds": 20,
   "DebounceSeconds": 10,
   "RestartCooldownSeconds": 45
 }

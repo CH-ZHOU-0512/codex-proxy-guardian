@@ -5,6 +5,8 @@
   "StableSamples": 3,
   "DebounceSeconds": 10,
   "ExternalLaunchDebounceSeconds": 15,
+  "SafeRepairExternalCodexLaunches": true,
+  "SafeExternalLaunchGraceSeconds": 20,
   "RestartCooldownSeconds": 45,
   "RestartLimitCount": 3,
   "RestartLimitWindowMinutes": 10,
@@ -62,6 +64,10 @@
     "OpenAI.Codex"
   ],
   "CodexApplicationId": "",
+  "PreferredCodexExecutables": [
+    "ChatGPT.exe",
+    "Codex.exe"
+  ],
   "CodexResolveIntervalSeconds": 60,
   "ProxyConnectionEvidenceWindowSeconds": 300,
   "UseChromiumProxyArgument": true,

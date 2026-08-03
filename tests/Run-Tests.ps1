@@ -77,6 +77,8 @@ Invoke-Test 'Default configuration is conservative' {
     $config = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'config\default-config.json') | ConvertFrom-Json
     Assert-Equal 'Safe' ([string]$config.Mode)
     Assert-False $config.ManageExternalCodexLaunches
+    Assert-True $config.SafeRepairExternalCodexLaunches
+    Assert-True ([int]$config.SafeExternalLaunchGraceSeconds -ge 10)
     Assert-False $config.AllowNonLoopbackProxy
     Assert-True $config.UseChromiumProxyArgument
     Assert-True ([int]$config.RestartCooldownSeconds -ge 10)
@@ -85,6 +87,23 @@ Invoke-Test 'Default configuration is conservative' {
     Assert-True ([int]$config.MinimumSuccessfulProxyTests -ge 2)
     Assert-True ([int]$config.MinimumSuccessfulProxyTests -le @($config.ProxyTestUrls).Count)
     foreach ($url in @($config.ProxyTestUrls)) { Assert-True ([string]$url).StartsWith('https://', [System.StringComparison]::OrdinalIgnoreCase) }
+}
+
+Invoke-Test 'Safe external launches are repaired only after an evidence grace period' {
+    $waiting = Get-CpgExternalLaunchDecision -Mode Safe -SafeRepairEnabled:$true -ProxyValid:$true -ArgumentMatches:$false -TrafficObserved:$false -PendingSeconds 19 -SafeGraceSeconds 20
+    Assert-Equal 'Wait' ([string]$waiting.Action)
+    Assert-Equal 'safe_evidence_grace' ([string]$waiting.Reason)
+
+    $working = Get-CpgExternalLaunchDecision -Mode Safe -SafeRepairEnabled:$true -ProxyValid:$true -ArgumentMatches:$false -TrafficObserved:$true -PendingSeconds 30 -SafeGraceSeconds 20
+    Assert-Equal 'Keep' ([string]$working.Action)
+    Assert-Equal 'safe_proxy_traffic_observed' ([string]$working.Reason)
+
+    $repair = Get-CpgExternalLaunchDecision -Mode Safe -SafeRepairEnabled:$true -ProxyValid:$true -ArgumentMatches:$false -TrafficObserved:$false -PendingSeconds 20 -SafeGraceSeconds 20
+    Assert-Equal 'Repair' ([string]$repair.Action)
+
+    $enforced = Get-CpgExternalLaunchDecision -Mode Enforce -ProxyValid:$true -ArgumentMatches:$false -TrafficObserved:$true -PendingSeconds 15 -EnforceDebounceSeconds 15
+    Assert-Equal 'Repair' ([string]$enforced.Action)
+    Assert-Equal 'enforce_missing_proxy_argument' ([string]$enforced.Reason)
 }
 
 Invoke-Test 'Configuration migration adds defaults without replacing user choices' {
@@ -181,6 +200,21 @@ Invoke-Test 'Managed-root matching survives PID handoff' {
     Assert-False (Test-CpgRootUsesProxy -RootProcess $new -ProxyUri 'http://127.0.0.1:8081')
 }
 
+Invoke-Test 'Codex manifest selection prefers a configured app and known executable names' {
+    $applications = @(
+        [pscustomobject]@{ Id = 'Updater'; Executable = 'tools\Updater.exe'; EntryPoint = 'Windows.FullTrustApplication' },
+        [pscustomobject]@{ Id = 'App'; Executable = 'app\ChatGPT.exe'; EntryPoint = 'Windows.FullTrustApplication' },
+        [pscustomobject]@{ Id = 'Preview'; Executable = 'app\Preview.exe'; EntryPoint = 'Windows.FullTrustApplication' }
+    )
+    $ranked = @(Get-CpgCodexApplicationCandidates -Applications $applications)
+    Assert-Equal 'App' ([string]$ranked[0].ApplicationId)
+    Assert-Equal 'preferred_executable_name' ([string]$ranked[0].ResolutionMethod)
+
+    $configured = @(Get-CpgCodexApplicationCandidates -Applications $applications -PreferredApplicationId 'Preview')
+    Assert-Equal 'Preview' ([string]$configured[0].ApplicationId)
+    Assert-Equal 'configured_application_id' ([string]$configured[0].ResolutionMethod)
+}
+
 Invoke-Test 'Proxy argument must be a complete token' {
     $root = [pscustomobject]@{ CommandLine = 'ChatGPT.exe --proxy-server=http://127.0.0.1:80800' }
     Assert-False (Test-CpgRootUsesProxy -RootProcess $root -ProxyUri 'http://127.0.0.1:8080')
@@ -213,7 +247,7 @@ Invoke-Test 'Mandatory connectivity is staged before an existing guardian is sto
 
 Invoke-Test 'Watcher publishes explicit lifecycle states' {
     $watcher = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'src\Watch-CodexProxy.ps1')
-    foreach ($state in @('WaitingForProxy', 'Stabilizing', 'Ready', 'RecoveringCodex', 'RecoveryBlockedByCodex', 'RestartCircuitOpen')) {
+    foreach ($state in @('WaitingForProxy', 'Stabilizing', 'Ready', 'EvaluatingCodexLaunch', 'CodexNeedsManagedLaunch', 'CodexResolutionUnavailable', 'RecoveringCodex', 'RecoveryBlockedByCodex', 'RestartCircuitOpen')) {
         Assert-True ($watcher.Contains("'$state'")) "Missing guardian lifecycle state: $state"
     }
 }
@@ -257,7 +291,7 @@ Invoke-Test 'Doctor emits a redacted, share-safe JSON report' {
     $reportText = & (Join-Path $repoRoot 'Doctor.ps1') -InstallRoot $diagnosticRoot -Json
     $report = $reportText | ConvertFrom-Json
     Assert-True $report.safeForSharing
-    Assert-Equal 1 ([int]$report.reportSchema)
+    Assert-Equal 2 ([int]$report.reportSchema)
     Assert-False (($reportText -join '') -match [regex]::Escape($env:USERPROFILE)) 'The diagnostic report exposed the user profile path.'
     Assert-False (($reportText -join '') -match '(?i)"(?:activeProxy|systemProxy|proxyUri|proxyServer)"\s*:') 'The diagnostic report exposed a raw proxy field.'
 }

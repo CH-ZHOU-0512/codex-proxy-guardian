@@ -43,7 +43,7 @@ stateDiagram-v2
     Active --> Active: candidate unchanged
 ```
 
-In Safe mode, an ordinary Codex root missing the launch argument is observed but not replaced. In Enforce mode it is debounced and relaunched. Either mode can restart a running Codex instance after a validated endpoint change.
+In Safe mode, an ordinary Codex root missing the launch argument enters an evidence grace period. If that exact process tree is observed using the validated proxy, it is left untouched; otherwise one managed repair is attempted after the grace period. In Enforce mode the missing argument is sufficient to trigger a debounced repair. Either mode can restart a running Codex instance after a validated endpoint change, and every repair uses the same cooldown, restart budget, and circuit breaker.
 
 A recovery flag is written before the old Codex process is stopped and cleared only after a matching new root is observed. A failed launch is retried only while the proxy is still valid. A sliding restart window opens a persistent circuit breaker after the configured limit; while open, the guardian performs no further lifecycle action. This converts a bad detection or launch environment into a diagnosable degraded state instead of an endless restart loop or an unreported closed application.
 

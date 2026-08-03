@@ -30,6 +30,45 @@ function Update-CpgConfigDefaults {
     return $Config
 }
 
+function Get-CpgExternalLaunchDecision {
+    [CmdletBinding()]
+    param(
+        [ValidateSet('Safe', 'Enforce')][string]$Mode = 'Safe',
+        [bool]$SafeRepairEnabled = $true,
+        [bool]$ProxyValid = $false,
+        [bool]$ArgumentMatches = $false,
+        [bool]$TrafficObserved = $false,
+        [double]$PendingSeconds = 0,
+        [int]$SafeGraceSeconds = 20,
+        [int]$EnforceDebounceSeconds = 15
+    )
+
+    if (-not $ProxyValid) {
+        return [pscustomobject]@{ Action = 'None'; Reason = 'proxy_not_valid' }
+    }
+    if ($ArgumentMatches) {
+        return [pscustomobject]@{ Action = 'None'; Reason = 'proxy_argument_matches' }
+    }
+
+    if ($Mode -eq 'Enforce') {
+        if ($PendingSeconds -lt [Math]::Max(0, $EnforceDebounceSeconds)) {
+            return [pscustomobject]@{ Action = 'Wait'; Reason = 'enforce_debounce' }
+        }
+        return [pscustomobject]@{ Action = 'Repair'; Reason = 'enforce_missing_proxy_argument' }
+    }
+
+    if (-not $SafeRepairEnabled) {
+        return [pscustomobject]@{ Action = 'ManagedShortcut'; Reason = 'safe_repair_disabled' }
+    }
+    if ($TrafficObserved) {
+        return [pscustomobject]@{ Action = 'Keep'; Reason = 'safe_proxy_traffic_observed' }
+    }
+    if ($PendingSeconds -lt [Math]::Max(0, $SafeGraceSeconds)) {
+        return [pscustomobject]@{ Action = 'Wait'; Reason = 'safe_evidence_grace' }
+    }
+    return [pscustomobject]@{ Action = 'Repair'; Reason = 'safe_missing_argument_without_proxy_traffic' }
+}
+
 function Test-CpgLoopbackHost {
     [CmdletBinding()]
     param([Parameter(Mandatory = $true)][string]$HostName)
@@ -242,12 +281,66 @@ function Test-CpgRootUsesProxy {
     return ($commandLine -match ('(?i)(?:^|\s)' + [regex]::Escape($expected) + '(?:\s|$)'))
 }
 
+function Get-CpgCodexApplicationCandidates {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]$Applications,
+        [string]$PreferredApplicationId = '',
+        [string[]]$PreferredExecutableNames = @('ChatGPT.exe', 'Codex.exe')
+    )
+
+    $ranked = @()
+    foreach ($application in @($Applications)) {
+        if ($null -eq $application) { continue }
+        $id = [string](Get-CpgConfigValue -Config $application -Name 'Id' -Default '')
+        $executable = [string](Get-CpgConfigValue -Config $application -Name 'Executable' -Default '')
+        $entryPoint = [string](Get-CpgConfigValue -Config $application -Name 'EntryPoint' -Default '')
+        if ([string]::IsNullOrWhiteSpace($executable)) { continue }
+
+        $fileName = [System.IO.Path]::GetFileName($executable.Replace('/', '\'))
+        $score = 100
+        $reason = 'manifest_executable'
+        if (-not [string]::IsNullOrWhiteSpace($PreferredApplicationId) -and [string]::Equals($id, $PreferredApplicationId, [System.StringComparison]::OrdinalIgnoreCase)) {
+            $score = 10000
+            $reason = 'configured_application_id'
+        }
+        else {
+            for ($index = 0; $index -lt @($PreferredExecutableNames).Count; $index++) {
+                if ([string]::Equals($fileName, [string]$PreferredExecutableNames[$index], [System.StringComparison]::OrdinalIgnoreCase)) {
+                    $score = 5000 - $index
+                    $reason = 'preferred_executable_name'
+                    break
+                }
+            }
+            if ($score -eq 100 -and ($id -match '(?i)(codex|chatgpt)' -or $fileName -match '(?i)(codex|chatgpt)')) {
+                $score = 4000
+                $reason = 'codex_identity_match'
+            }
+            elseif ($score -eq 100 -and $entryPoint -match '(?i)FullTrustApplication') {
+                $score = 1000
+                $reason = 'full_trust_application'
+            }
+        }
+
+        $ranked += [pscustomobject]@{
+            Application = $application
+            ApplicationId = $id
+            Executable = $executable
+            Score = $score
+            ResolutionMethod = $reason
+        }
+    }
+
+    return @($ranked | Sort-Object @{ Expression = 'Score'; Descending = $true }, ApplicationId, Executable)
+}
+
 function Get-CpgCodexApp {
     [CmdletBinding()]
     param([Parameter(Mandatory = $true)]$Config)
 
     $packageNames = @(Get-CpgConfigValue -Config $Config -Name 'CodexPackageNames' -Default @('OpenAI.Codex'))
     $preferredAppId = [string](Get-CpgConfigValue -Config $Config -Name 'CodexApplicationId' -Default '')
+    $preferredExecutableNames = @(Get-CpgConfigValue -Config $Config -Name 'PreferredCodexExecutables' -Default @('ChatGPT.exe', 'Codex.exe'))
     foreach ($packageName in $packageNames) {
         $package = Get-AppxPackage -Name ([string]$packageName) -ErrorAction SilentlyContinue |
             Sort-Object Version -Descending |
@@ -259,31 +352,23 @@ function Get-CpgCodexApp {
         try {
             $manifest = Get-AppxPackageManifest -Package $package -ErrorAction Stop
             $applications = @($manifest.Package.Applications.Application)
-            $application = $null
-            if (-not [string]::IsNullOrWhiteSpace($preferredAppId)) {
-                $application = $applications | Where-Object { [string]$_.Id -eq $preferredAppId } | Select-Object -First 1
-            }
-            if ($null -eq $application) {
-                $application = $applications | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_.Executable) } | Select-Object -First 1
-            }
-            if ($null -eq $application) {
-                continue
-            }
+            foreach ($candidate in @(Get-CpgCodexApplicationCandidates -Applications $applications -PreferredApplicationId $preferredAppId -PreferredExecutableNames $preferredExecutableNames)) {
+                $application = $candidate.Application
+                $relativeExecutable = ([string]$candidate.Executable).Replace('/', '\')
+                $executablePath = Join-Path ([string]$package.InstallLocation) $relativeExecutable
+                if (-not (Test-Path -LiteralPath $executablePath)) { continue }
 
-            $relativeExecutable = ([string]$application.Executable).Replace('/', '\')
-            $executablePath = Join-Path ([string]$package.InstallLocation) $relativeExecutable
-            if (-not (Test-Path -LiteralPath $executablePath)) {
-                continue
-            }
-
-            return [pscustomobject]@{
-                PackageName       = [string]$package.Name
-                PackageFamilyName = [string]$package.PackageFamilyName
-                Version           = [string]$package.Version
-                ApplicationId     = [string]$application.Id
-                InstallLocation   = [string]$package.InstallLocation
-                ExecutablePath    = $executablePath
-                ProcessName       = [System.IO.Path]::GetFileName($executablePath)
+                return [pscustomobject]@{
+                    PackageName       = [string]$package.Name
+                    PackageFamilyName = [string]$package.PackageFamilyName
+                    PackageArchitecture = [string]$package.Architecture
+                    Version           = [string]$package.Version
+                    ApplicationId     = [string]$candidate.ApplicationId
+                    InstallLocation   = [string]$package.InstallLocation
+                    ExecutablePath    = $executablePath
+                    ProcessName       = [System.IO.Path]::GetFileName($executablePath)
+                    ResolutionMethod  = [string]$candidate.ResolutionMethod
+                }
             }
         }
         catch {
@@ -331,6 +416,7 @@ function Test-CpgInstallMarker {
 Export-ModuleMember -Function @(
     'Get-CpgConfigValue',
     'Update-CpgConfigDefaults',
+    'Get-CpgExternalLaunchDecision',
     'Test-CpgLoopbackHost',
     'ConvertTo-CpgHttpProxyUri',
     'ConvertFrom-CpgProxyServer',
@@ -339,6 +425,7 @@ Export-ModuleMember -Function @(
     'Get-CpgRestartDecision',
     'Test-CpgProxyResponseStatus',
     'Test-CpgRootUsesProxy',
+    'Get-CpgCodexApplicationCandidates',
     'Get-CpgCodexApp',
     'Test-CpgCodexRootProcess',
     'Test-CpgInstallMarker'

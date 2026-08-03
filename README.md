@@ -2,6 +2,8 @@
 
 [简体中文](README.md) | [English](docs/README.en.md)
 
+![Codex Proxy Guardian：让 Codex 不再因为代理没有跟上而反复重连](assets/social-preview.png)
+
 [![CI](https://github.com/CH-ZHOU-0512/codex-proxy-guardian/actions/workflows/ci.yml/badge.svg)](https://github.com/CH-ZHOU-0512/codex-proxy-guardian/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/CH-ZHOU-0512/codex-proxy-guardian?include_prereleases)](https://github.com/CH-ZHOU-0512/codex-proxy-guardian/releases)
 [![License](https://img.shields.io/github/license/CH-ZHOU-0512/codex-proxy-guardian)](LICENSE)
@@ -20,6 +22,8 @@
 
 > [!NOTE]
 > 本项目本身**不是代理软件，也不提供代理服务或节点**。使用前需要电脑上已经存在一个可用的 HTTP/HTTPS 代理；它解决的是“怎样让 Codex 稳定跟随这个代理”的问题。
+
+![Codex Proxy Guardian 工作流程：发现、验证、稳定、生效](assets/how-it-works.png)
 
 > [!IMPORTANT]
 > 本项目是独立的社区项目，与 OpenAI 没有隶属、认可或支持关系。项目使用的是基于实际行为的兼容方案，并非 Codex 桌面端公开且承诺长期稳定的代理 API。
@@ -40,7 +44,7 @@
 - **不会修改** Windows 系统代理、WinHTTP 代理、DNS、路由或永久用户/系统环境变量。
 - 只接受带明确端口的 HTTP/HTTPS 代理；拒绝 URL 中包含账号密码的代理地址。
 - 候选代理必须同时通过 TCP 监听检查和经代理发起的 HTTPS 请求验证。
-- 默认使用 `Safe` 模式，不会接管每一次普通方式启动的 Codex。
+- 默认使用 `Safe` 模式：只有在代理已经验证、Codex 缺少当前代理参数，而且证据等待期内没有观察到该进程正在使用当前代理时，才会进行一次受控修复。
 - 卸载时会核对安装标记、计划任务动作和快捷方式目标，只删除本项目拥有的资源。
 - 诊断报告默认脱敏，不包含原始代理 URL、用户名路径或日志正文；提交 Issue 前仍建议人工检查一次。
 
@@ -81,6 +85,22 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Install.ps1
 - 当前用户计划任务 `Codex Proxy Guardian`，用于登录后静默启动；
 - 开始菜单快捷方式 **Codex (Managed Proxy)**，用于明确地以当前有效代理启动 Codex。
 
+### 安装后怎么使用
+
+**只需要先运行一次安装脚本。** 除非安装时使用了 `-NoStart`，守护程序会在安装完成后立即启动，并在以后登录 Windows 时自动静默运行；不需要每次打开 PowerShell，也不需要手动先启动守护程序。
+
+默认 `Safe` 模式也会检查从原图标打开的 Codex：如果它缺少当前代理参数，Guardian 会先等待证据；等待期间如果观察到该进程已经在通过当前代理通信，就保持不动，否则只进行一次受控重启。开始菜单中的 **Codex (Managed Proxy)** 仍然是立即、明确地使用已验证代理的方式，但不再是普通用户每次启动 Codex 的必选动作。
+
+如果希望不考虑流量证据，只要发现 Codex 缺少当前代理参数就进行校正，可以在确认 `Safe` 模式运行稳定后改用 `Enforce`。简化理解如下：
+
+| 你的操作 | 是否需要额外动作 |
+|---|---|
+| 首次安装 | 运行一次 `Install.ps1` |
+| 直接点击原来的 Codex 图标 | 不需要；Safe 会先观察，必要时自动受控重启一次 |
+| 希望立即确定代理参数已经带上 | 点击开始菜单中的 **Codex (Managed Proxy)** |
+| 以后启动守护程序 | 不需要；它会登录后自动静默运行 |
+| 希望严格校正所有缺少代理参数的启动 | 稳定使用后改为 `Enforce` 模式 |
+
 安装时会进行联网自检。代理暂时离线默认只产生警告；如需把连通性作为安装的硬性条件：
 
 ```powershell
@@ -97,8 +117,10 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Install.ps1
 
 | 模式 | 行为 | 建议 |
 |---|---|---|
-| `Safe` | 已验证代理稳定变化后重启 Codex；不会强制替换普通方式启动的 Codex | 默认，适合绝大多数用户 |
-| `Enforce` | 还会检测 Codex 根进程是否缺少当前代理参数，缺失时经防抖后重新启动 | Safe 长期稳定后再按需开启 |
+| `Safe` | 普通 Codex 缺少代理参数时先等待 20 秒并观察实际代理流量；已经能通信就不动，否则受控重启一次 | 默认，适合绝大多数用户 |
+| `Enforce` | 普通 Codex 缺少当前代理参数时，经防抖后直接受控重启，不以流量证据豁免 | 需要严格、确定的启动参数时开启 |
+
+直观地说：**Safe 是“先证明有必要再接管”，Enforce 是“参数不一致就接管”。** 两种模式都受到防抖、冷却、重启次数限制和熔断保护。
 
 安装或更新时开启 Enforce：
 
@@ -107,6 +129,10 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Install.ps1
 ```
 
 项目通过匹配 Codex **根进程**的代理参数，而不是匹配短暂存在的启动器 PID，来规避早期脚本常见的误判重启问题。所有重启仍受到防抖、冷却、频率限制和熔断保护。
+
+Codex 更新后，Guardian 会重新读取当前用户的 MSIX 清单，根据应用 ID、常见可执行文件名和完整路径重新解析根进程，并在短时间内同时识别更新前后的路径。如果更新期间暂时找不到新的可执行文件，它会保留仍在运行的 Codex，而不是先关闭再尝试启动。`Status.ps1` 和脱敏 `Doctor.ps1` 报告会显示解析方式、Codex 版本、架构和外部启动策略，方便社区反馈不同机器上的真实结果。
+
+当前项目仍处于 Alpha 阶段，无法承诺未来 Codex 或 Windows 更新完全不改变启动行为；但解析失败会显示为明确状态，不会通过猜测路径去终止其他进程。
 
 ## 指定代理
 
@@ -117,6 +143,8 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Install.ps1
   "ExplicitProxy": "http://127.0.0.1:7890",
   "AllowNonLoopbackProxy": false,
   "ManageExternalCodexLaunches": false,
+  "SafeRepairExternalCodexLaunches": true,
+  "SafeExternalLaunchGraceSeconds": 20,
   "DebounceSeconds": 10,
   "RestartCooldownSeconds": 45
 }

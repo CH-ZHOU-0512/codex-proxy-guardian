@@ -39,6 +39,28 @@ function Read-GuardianConfig {
     return $config
 }
 
+function Get-GuardianVersion {
+    foreach ($versionPath in @(
+        (Join-Path $script:Root 'VERSION'),
+        (Join-Path (Split-Path -Parent $script:Root) 'VERSION')
+    )) {
+        if (Test-Path -LiteralPath $versionPath) {
+            $value = (Get-Content -Raw -LiteralPath $versionPath).Trim()
+            if (-not [string]::IsNullOrWhiteSpace($value)) { return $value }
+        }
+    }
+
+    $markerPath = Join-Path $script:Root '.cpg-install.json'
+    if (Test-Path -LiteralPath $markerPath) {
+        try {
+            $value = [string](Get-Content -Raw -LiteralPath $markerPath | ConvertFrom-Json).version
+            if (-not [string]::IsNullOrWhiteSpace($value)) { return $value }
+        }
+        catch { }
+    }
+    return 'development'
+}
+
 function Initialize-Logging {
     param($Config)
 
@@ -457,6 +479,10 @@ function Stop-CodexDesktop {
 function Restart-CodexManaged {
     param($Roots, [string]$ProxyUri, $Config, $CodexApp)
 
+    if ($null -eq $CodexApp -or -not (Test-Path -LiteralPath ([string]$CodexApp.ExecutablePath))) {
+        throw 'Codex was left running because a replacement MSIX executable could not be resolved.'
+    }
+
     $rootIds = @($Roots | ForEach-Object { [int]$_.ProcessId })
     Write-GuardianLog 'INFO' 'codex_restart' 'Restarting Codex after a stable proxy change.' @{
         old_pids = $rootIds
@@ -540,6 +566,7 @@ $stableSamples = [Math]::Max(1, [int](Get-CpgConfigValue $config 'StableSamples'
 $debounceSeconds = [Math]::Max(0, [int](Get-CpgConfigValue $config 'DebounceSeconds' 10))
 if ($RunOnce) { $stableSamples = 1; $debounceSeconds = 0 }
 $externalDebounceSeconds = [Math]::Max(0, [int](Get-CpgConfigValue $config 'ExternalLaunchDebounceSeconds' 15))
+$safeExternalGraceSeconds = [Math]::Max(10, [int](Get-CpgConfigValue $config 'SafeExternalLaunchGraceSeconds' 20))
 $restartCooldownSeconds = [Math]::Max(10, [int](Get-CpgConfigValue $config 'RestartCooldownSeconds' 45))
 $restartLimitCount = [Math]::Max(1, [int](Get-CpgConfigValue $config 'RestartLimitCount' 3))
 $restartLimitWindowMinutes = [Math]::Max(1, [int](Get-CpgConfigValue $config 'RestartLimitWindowMinutes' 10))
@@ -548,7 +575,11 @@ $recoveryLaunchRetrySeconds = [Math]::Max(5, [int](Get-CpgConfigValue $config 'R
 $codexResolveIntervalSeconds = [Math]::Max(10, [int](Get-CpgConfigValue $config 'CodexResolveIntervalSeconds' 60))
 $trafficEvidenceWindowSeconds = [Math]::Max(30, [int](Get-CpgConfigValue $config 'ProxyConnectionEvidenceWindowSeconds' 300))
 $unavailableLogSeconds = [Math]::Max(30, [int](Get-CpgConfigValue $config 'UnavailableLogIntervalSeconds' 300))
-$manageExternalLaunches = [bool](Get-CpgConfigValue $config 'ManageExternalCodexLaunches' $false) -and -not $ObserveOnly
+$guardianMode = [string](Get-CpgConfigValue $config 'Mode' 'Safe')
+$manageExternalLaunches = ($guardianMode -eq 'Enforce' -or [bool](Get-CpgConfigValue $config 'ManageExternalCodexLaunches' $false)) -and -not $ObserveOnly
+$safeRepairExternalLaunches = $guardianMode -eq 'Safe' -and [bool](Get-CpgConfigValue $config 'SafeRepairExternalCodexLaunches' $true) -and -not $ObserveOnly
+$externalLaunchPolicy = if ($ObserveOnly) { 'ObserveOnly' } elseif ($manageExternalLaunches) { 'Enforce' } elseif ($safeRepairExternalLaunches) { 'SafeEvidenceRepair' } else { 'ManagedShortcutOnly' }
+$guardianVersion = Get-GuardianVersion
 
 $persistentState = Read-PersistentState
 $previousActiveProxy = ''
@@ -561,6 +592,8 @@ $pendingSamples = 0
 $managedRootPid = 0
 $pendingExternalPid = 0
 $pendingExternalSince = [datetime]::MinValue
+$pendingExternalTrafficObserved = $false
+$externalLaunchState = 'NoCodex'
 $lastRestart = [datetime]::MinValue
 $script:RestartHistory = @()
 $script:CircuitBreakerUntil = [datetime]::MinValue
@@ -626,9 +659,10 @@ if (Test-Path -LiteralPath $script:AdoptRequestPath) {
 }
 
 Write-GuardianLog 'INFO' 'guardian_started' 'Codex Proxy Guardian started.' @{
-    version = '0.2.0-alpha'
+    version = $guardianVersion
     pid = $PID
-    mode = if ($ObserveOnly) { 'ObserveOnly' } else { [string](Get-CpgConfigValue $config 'Mode' 'Safe') }
+    mode = if ($ObserveOnly) { 'ObserveOnly' } else { $guardianMode }
+    external_launch_policy = $externalLaunchPolicy
     package_found = ($null -ne $codexApp)
 }
 
@@ -774,24 +808,63 @@ try {
                 }
             }
 
-            if ($manageExternalLaunches -and $proxyIsValid -and $roots.Count -gt 0 -and $matchingRoots.Count -eq 0 -and -not $restartRequired) {
+            $externalMismatch = $proxyIsValid -and $roots.Count -gt 0 -and $matchingRoots.Count -eq 0 -and -not $restartRequired
+            if (-not $ObserveOnly -and $externalMismatch -and $null -ne $codexApp) {
                 $externalPid = [int]$roots[0].ProcessId
                 if ($pendingExternalPid -ne $externalPid) {
                     $pendingExternalPid = $externalPid
                     $pendingExternalSince = Get-Date
-                    Write-GuardianLog 'INFO' 'unmanaged_codex' 'A Codex root missing the current proxy argument is being debounced.' @{ pid = $externalPid }
+                    $pendingExternalTrafficObserved = $trafficObservedNow
+                    Write-GuardianLog 'INFO' 'unmanaged_codex' 'A Codex root missing the current proxy argument is being evaluated by the external-launch policy.' @{
+                        pid = $externalPid
+                        policy = $externalLaunchPolicy
+                    }
                 }
-                elseif (((Get-Date) - $pendingExternalSince).TotalSeconds -ge $externalDebounceSeconds -and ((Get-Date) - $lastRestart).TotalSeconds -ge $restartCooldownSeconds -and (Test-GuardianRestartBudget)) {
-                    $lastRestart = Get-Date
-                    Register-GuardianRestart $lastRestart
-                    $script:RecoveryLaunchRequired = $true
-                    Save-PersistentState $activeProxy $activeSource $lastRestart
-                    $managedRootPid = Restart-CodexManaged $roots $activeProxy $config $codexApp
-                    $pendingExternalPid = 0
-                    Save-PersistentState $activeProxy $activeSource $lastRestart
+                elseif ($trafficObservedNow) { $pendingExternalTrafficObserved = $true }
+
+                $decisionMode = if ($manageExternalLaunches) { 'Enforce' } else { 'Safe' }
+                $externalDecision = Get-CpgExternalLaunchDecision -Mode $decisionMode `
+                    -SafeRepairEnabled:$safeRepairExternalLaunches -ProxyValid:$proxyIsValid `
+                    -ArgumentMatches:$false -TrafficObserved:$pendingExternalTrafficObserved `
+                    -PendingSeconds ((Get-Date) - $pendingExternalSince).TotalSeconds `
+                    -SafeGraceSeconds $safeExternalGraceSeconds -EnforceDebounceSeconds $externalDebounceSeconds
+
+                switch ([string]$externalDecision.Action) {
+                    'Wait' {
+                        $externalLaunchState = if ($decisionMode -eq 'Enforce') { 'EnforceDebounce' } else { 'SafeEvidenceGrace' }
+                    }
+                    'Keep' { $externalLaunchState = 'ProxyTrafficObserved' }
+                    'ManagedShortcut' { $externalLaunchState = 'ManagedShortcutRequired' }
+                    'Repair' {
+                        $externalLaunchState = 'WaitingForRestartBudget'
+                        if (((Get-Date) - $lastRestart).TotalSeconds -ge $restartCooldownSeconds -and (Test-GuardianRestartBudget)) {
+                            $lastRestart = Get-Date
+                            Register-GuardianRestart $lastRestart
+                            $script:RecoveryLaunchRequired = $true
+                            Save-PersistentState $activeProxy $activeSource $lastRestart
+                            Write-GuardianLog 'INFO' 'external_codex_repair' 'The external Codex launch is being replaced with a validated managed launch.' @{
+                                pid = $externalPid
+                                policy = $externalLaunchPolicy
+                                reason = [string]$externalDecision.Reason
+                            }
+                            $managedRootPid = Restart-CodexManaged $roots $activeProxy $config $codexApp
+                            $pendingExternalPid = 0
+                            $pendingExternalTrafficObserved = $false
+                            $externalLaunchState = 'Repairing'
+                            Save-PersistentState $activeProxy $activeSource $lastRestart
+                        }
+                    }
                 }
             }
-            elseif ($roots.Count -eq 0 -or $matchingRoots.Count -gt 0) { $pendingExternalPid = 0 }
+            else {
+                $pendingExternalPid = 0
+                $pendingExternalTrafficObserved = $false
+                if ($roots.Count -eq 0) { $externalLaunchState = 'NoCodex' }
+                elseif ($matchingRoots.Count -gt 0) { $externalLaunchState = 'Managed' }
+                elseif ($ObserveOnly) { $externalLaunchState = 'ObservedUnmanaged' }
+                elseif ($externalMismatch -and $null -eq $codexApp) { $externalLaunchState = 'CodexResolutionUnavailable' }
+                else { $externalLaunchState = 'WaitingForValidatedProxy' }
+            }
 
             if (-not $ObserveOnly -and (Test-Path -LiteralPath $script:LaunchRequestPath)) {
                 if ($proxyIsValid -and $matchingRoots.Count -gt 0) {
@@ -828,8 +901,11 @@ try {
             $guardianState = 'WaitingForProxy'
             if (-not $proxyIsValid -and -not [string]::IsNullOrWhiteSpace([string]$pendingProxy)) { $guardianState = 'Stabilizing' }
             if ($proxyIsValid) { $guardianState = 'Ready' }
+            if ($proxyIsValid -and $externalLaunchState -in @('SafeEvidenceGrace', 'EnforceDebounce', 'WaitingForRestartBudget')) { $guardianState = 'EvaluatingCodexLaunch' }
+            if ($proxyIsValid -and $externalLaunchState -eq 'ManagedShortcutRequired') { $guardianState = 'CodexNeedsManagedLaunch' }
+            if ($externalLaunchState -eq 'CodexResolutionUnavailable') { $guardianState = 'CodexResolutionUnavailable' }
             if ($script:RecoveryLaunchRequired) { $guardianState = 'RecoveringCodex' }
-            if ($script:RecoveryLaunchRequired -and $roots.Count -gt 0 -and $matchingRoots.Count -eq 0 -and -not $manageExternalLaunches) { $guardianState = 'RecoveryBlockedByCodex' }
+            if ($script:RecoveryLaunchRequired -and $roots.Count -gt 0 -and $matchingRoots.Count -eq 0 -and -not $manageExternalLaunches -and -not $safeRepairExternalLaunches) { $guardianState = 'RecoveryBlockedByCodex' }
             if ($script:CircuitBreakerUntil -gt (Get-Date)) { $guardianState = 'RestartCircuitOpen' }
 
             Write-JsonAtomically $script:StatusPath ([ordered]@{
@@ -837,7 +913,12 @@ try {
                 guardianPid = $PID
                 updatedUtc = (Get-Date).ToUniversalTime().ToString('o')
                 guardianState = $guardianState
-                mode = if ($ObserveOnly) { 'ObserveOnly' } else { [string](Get-CpgConfigValue $config 'Mode' 'Safe') }
+                mode = if ($ObserveOnly) { 'ObserveOnly' } else { $guardianMode }
+                externalLaunchPolicy = $externalLaunchPolicy
+                externalLaunchState = $externalLaunchState
+                safeRepairExternalLaunches = $safeRepairExternalLaunches
+                pendingExternalCodexPid = if ($pendingExternalPid -eq 0) { $null } else { $pendingExternalPid }
+                pendingExternalProxyTrafficObserved = $pendingExternalTrafficObserved
                 activeProxy = $activeProxy
                 activeSource = $activeSource
                 activeProxyValid = $proxyIsValid
@@ -851,6 +932,10 @@ try {
                 pendingSamples = $pendingSamples
                 codexInstalled = ($null -ne $codexApp)
                 codexPackageVersion = if ($null -eq $codexApp) { $null } else { $codexApp.Version }
+                codexPackageArchitecture = if ($null -eq $codexApp) { $null } else { $codexApp.PackageArchitecture }
+                codexApplicationId = if ($null -eq $codexApp) { $null } else { $codexApp.ApplicationId }
+                codexExecutableName = if ($null -eq $codexApp) { $null } else { $codexApp.ProcessName }
+                codexResolutionMethod = if ($null -eq $codexApp) { $null } else { $codexApp.ResolutionMethod }
                 codexRunning = ($roots.Count -gt 0)
                 codexRootPids = $rootIds
                 managedCodexRootPid = if ($managedRootPid -eq 0) { $null } else { $managedRootPid }

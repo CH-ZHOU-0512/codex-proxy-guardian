@@ -4,9 +4,18 @@ All notable changes are documented here. This project follows semantic versionin
 
 ## [未发布 / Unreleased]
 
+## [0.3.0-alpha] - 2026-08-03
+
+- Safe 模式增加证据驱动的普通 Codex 启动修复：先等待代理流量，确认未生效后才受控重启一次。
+- Enforce 模式继续严格校正缺少当前代理参数的 Codex，同时沿用防抖、冷却、频率限制与熔断。
+- 改进多应用 MSIX 清单解析，根据显式应用 ID、已知可执行文件名和完整路径选择 Codex 根进程。
+- Store 更新期间如果暂时无法解析替代可执行文件，保留仍在运行的 Codex，不执行先关闭后失败的重启。
+- 状态与 Doctor 报告增加外部启动策略、解析方式、应用 ID、架构和可执行文件名，便于兼容性反馈。
+- 安装说明增加“安装后怎么使用”，明确普通启动、Managed Proxy 快捷方式以及 Safe/Enforce 的区别。
 - 将简体中文设为默认 README 和主要用户入口，同时保留独立英文说明。
 - 增加中文仓库简介、Release 说明、Issue/PR 模板、兼容性矩阵、故障排查、安全策略和贡献指南。
 - Added Chinese-first repository discovery and support content while retaining dedicated English documentation.
+- 增加可复现的 GitHub 分享封面和 README 工作流程图。
 
 ## [0.2.0-alpha] - 2026-08-02
 

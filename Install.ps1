@@ -225,6 +225,7 @@ $payload = [ordered]@{
     (Join-Path $sourceRoot 'Doctor.ps1') = 'Doctor.ps1'
     (Join-Path $sourceRoot 'Control.ps1') = 'Control.ps1'
     (Join-Path $sourceRoot 'LICENSE') = 'LICENSE'
+    (Join-Path $sourceRoot 'VERSION') = 'VERSION'
     (Join-Path $sourceRoot 'config\config.schema.json') = 'config.schema.json'
 }
 foreach ($entry in $payload.GetEnumerator()) {
@@ -311,6 +312,26 @@ if (-not $NoStart) {
 
 $effectiveConfig = Get-Content -Raw -LiteralPath $installedConfigPath | ConvertFrom-Json
 $managedLaunchRecommended = $null -ne $runtimeStatus -and [bool]$runtimeStatus.codexRunning -and [bool]$runtimeStatus.activeProxyValid -and -not [bool]$runtimeStatus.codexProxyArgumentMatch
+$effectiveMode = [string](Get-CpgConfigValue $effectiveConfig 'Mode' 'Safe')
+$externalLaunchPolicy = if ($effectiveMode -eq 'Enforce' -or [bool](Get-CpgConfigValue $effectiveConfig 'ManageExternalCodexLaunches' $false)) {
+    'Enforce'
+} elseif ([bool](Get-CpgConfigValue $effectiveConfig 'SafeRepairExternalCodexLaunches' $true)) {
+    'SafeEvidenceRepair'
+} else {
+    'ManagedShortcutOnly'
+}
+$nextStep = $null
+if ($managedLaunchRecommended) {
+    if ($externalLaunchPolicy -eq 'SafeEvidenceRepair') {
+        $nextStep = 'Safe mode is evaluating the current Codex launch. Leave the guardian running, or open "Codex (Managed Proxy)" to apply the validated proxy immediately.'
+    }
+    elseif ($externalLaunchPolicy -eq 'Enforce') {
+        $nextStep = 'Enforce mode is waiting for its debounce and restart budget before correcting the current Codex launch.'
+    }
+    else {
+        $nextStep = 'Open the Start Menu shortcut "Codex (Managed Proxy)" to apply the validated proxy to the current Codex session.'
+    }
+}
 [pscustomobject]@{
     Installed = $true
     Version = $version
@@ -323,7 +344,8 @@ $managedLaunchRecommended = $null -ne $runtimeStatus -and [bool]$runtimeStatus.c
     GuardianState = if ($null -eq $runtimeStatus) { $null } else { [string]$runtimeStatus.guardianState }
     ActiveProxyValid = if ($null -eq $runtimeStatus) { $null } else { [bool]$runtimeStatus.activeProxyValid }
     EffectivenessEvidence = if ($null -eq $runtimeStatus) { $null } else { [string]$runtimeStatus.effectivenessEvidence }
+    ExternalLaunchPolicy = $externalLaunchPolicy
     ManagedLaunchRecommended = $managedLaunchRecommended
-    NextStep = if ($managedLaunchRecommended) { 'Open the Start Menu shortcut "Codex (Managed Proxy)" to apply the validated proxy to the current Codex session.' } else { $null }
+    NextStep = $nextStep
     SystemProxyModified = $false
 }
