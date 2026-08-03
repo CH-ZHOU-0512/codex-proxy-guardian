@@ -106,6 +106,17 @@ Invoke-Test 'Safe external launches are repaired only after an evidence grace pe
     Assert-Equal 'enforce_missing_proxy_argument' ([string]$enforced.Reason)
 }
 
+Invoke-Test 'Stale guardian PIDs cannot identify unrelated processes' {
+    $watcher = 'C:\Users\Example\AppData\Local\CodexProxyGuardian\Watch-CodexProxy.ps1'
+    $guardian = [pscustomobject]@{ CommandLine = "powershell.exe -File `"$watcher`"" }
+    $reusedPidProcess = [pscustomobject]@{ CommandLine = 'python.exe markitdown-mcp.exe' }
+    $lookalike = [pscustomobject]@{ CommandLine = "powershell.exe -File `"$watcher.backup`"" }
+    Assert-True (Test-CpgGuardianProcessIdentity -Process $guardian -WatcherPath $watcher)
+    Assert-False (Test-CpgGuardianProcessIdentity -Process $reusedPidProcess -WatcherPath $watcher)
+    Assert-False (Test-CpgGuardianProcessIdentity -Process $lookalike -WatcherPath $watcher)
+    Assert-False (Test-CpgGuardianProcessIdentity -Process $null -WatcherPath $watcher)
+}
+
 Invoke-Test 'Configuration migration adds defaults without replacing user choices' {
     $config = [pscustomobject]@{ Mode = 'Enforce'; PollSeconds = 12 }
     $defaults = [pscustomobject]@{ Mode = 'Safe'; PollSeconds = 5; CircuitBreakerMinutes = 15 }

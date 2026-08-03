@@ -171,24 +171,33 @@ if (-not $SkipConnectivityCheck) {
 
 if (Test-MarkerMatchesRoot $existingMarker $resolvedRoot) {
     $oldStatusPath = Join-Path $resolvedRoot 'status.json'
+    $expectedWatcher = Join-Path $resolvedRoot 'Watch-CodexProxy.ps1'
     $oldPid = 0
     if (Test-Path -LiteralPath $oldStatusPath) {
         try { $oldPid = [int](Get-Content -Raw -LiteralPath $oldStatusPath | ConvertFrom-Json).guardianPid } catch { $oldPid = 0 }
+    }
+    if ($oldPid -gt 0) {
+        $statusProcess = Get-CimInstance Win32_Process -Filter ("ProcessId={0}" -f $oldPid) -ErrorAction SilentlyContinue
+        if ($null -ne $statusProcess -and -not (Test-CpgGuardianProcessIdentity -Process $statusProcess -WatcherPath $expectedWatcher)) {
+            Write-Warning "The previous guardian PID $oldPid has been reused by another process. The stale status will be replaced without terminating that process."
+        }
     }
     New-Item -ItemType File -Path (Join-Path $resolvedRoot 'stop.request') -Force | Out-Null
     Start-Sleep -Seconds 1
     Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
     $deadline = (Get-Date).AddSeconds(19)
-    while ($oldPid -gt 0 -and $null -ne (Get-Process -Id $oldPid -ErrorAction SilentlyContinue) -and (Get-Date) -lt $deadline) {
+    $ownedGuardianProcesses = @()
+    do {
+        $ownedGuardianProcesses = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
+            Test-CpgGuardianProcessIdentity -Process $_ -WatcherPath $expectedWatcher
+        })
+        if ($ownedGuardianProcesses.Count -eq 0 -or (Get-Date) -ge $deadline) { break }
         Start-Sleep -Milliseconds 250
-    }
-    if ($oldPid -gt 0 -and $null -ne (Get-Process -Id $oldPid -ErrorAction SilentlyContinue)) {
-        $oldProcess = Get-CimInstance Win32_Process -Filter ("ProcessId={0}" -f $oldPid) -ErrorAction SilentlyContinue
-        $expectedWatcher = Join-Path $resolvedRoot 'Watch-CodexProxy.ps1'
-        if ($null -ne $oldProcess -and ([string]$oldProcess.CommandLine).IndexOf($expectedWatcher, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) {
-            Stop-Process -Id $oldPid -Force
+    } while ($true)
+    foreach ($ownedProcess in $ownedGuardianProcesses) {
+        if (Test-CpgGuardianProcessIdentity -Process $ownedProcess -WatcherPath $expectedWatcher) {
+            Stop-Process -Id ([int]$ownedProcess.ProcessId) -Force -ErrorAction SilentlyContinue
         }
-        else { throw 'The previous guardian did not stop and its process identity could not be verified.' }
     }
     Remove-Item -LiteralPath (Join-Path $resolvedRoot 'stop.request') -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $oldStatusPath -Force -ErrorAction SilentlyContinue

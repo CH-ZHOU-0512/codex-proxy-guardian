@@ -69,6 +69,20 @@ function Get-CpgExternalLaunchDecision {
     return [pscustomobject]@{ Action = 'Repair'; Reason = 'safe_missing_argument_without_proxy_traffic' }
 }
 
+function Test-CpgGuardianProcessIdentity {
+    [CmdletBinding()]
+    param(
+        $Process,
+        [Parameter(Mandatory = $true)][string]$WatcherPath
+    )
+
+    if ($null -eq $Process -or [string]::IsNullOrWhiteSpace($WatcherPath)) { return $false }
+    $commandLine = [string](Get-CpgConfigValue -Config $Process -Name 'CommandLine' -Default '')
+    if ([string]::IsNullOrWhiteSpace($commandLine)) { return $false }
+    $watcherToken = '(?i)(?:^|\s|")' + [regex]::Escape($WatcherPath) + '(?:"|\s|$)'
+    return $commandLine -match $watcherToken
+}
+
 function Test-CpgLoopbackHost {
     [CmdletBinding()]
     param([Parameter(Mandatory = $true)][string]$HostName)
@@ -417,6 +431,7 @@ Export-ModuleMember -Function @(
     'Get-CpgConfigValue',
     'Update-CpgConfigDefaults',
     'Get-CpgExternalLaunchDecision',
+    'Test-CpgGuardianProcessIdentity',
     'Test-CpgLoopbackHost',
     'ConvertTo-CpgHttpProxyUri',
     'ConvertFrom-CpgProxyServer',

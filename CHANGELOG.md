@@ -4,6 +4,11 @@ All notable changes are documented here. This project follows semantic versionin
 
 ## [未发布 / Unreleased]
 
+## [0.3.1-alpha] - 2026-08-03
+
+- 修复旧 Guardian 异常退出且 PID 被其他程序复用时，安装器为避免误杀而拒绝升级的问题。
+- 安装器现在按完整 watcher 路径识别实际 Guardian；过期 PID 只产生警告，绝不终止占用该 PID 的无关进程。
+
 ## [0.3.0-alpha] - 2026-08-03
 
 - Safe 模式增加证据驱动的普通 Codex 启动修复：先等待代理流量，确认未生效后才受控重启一次。
