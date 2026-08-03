@@ -2,14 +2,18 @@
 
 > 开源的 Windows 11 Codex 桌面版代理守护工具。它解决 Codex 没有使用当前有效代理、代理端口变化，以及 Codex 每次 Reconnecting 1/5 到 5/5 才开始响应等问题。
 
-Codex Proxy Guardian 持续发现并验证当前可用的 HTTP/HTTPS 代理。当 Clash、Mihomo、v2rayN、sing-box 等代理程序的监听地址或端口稳定变化后，它为 Codex 配置当前代理，并通过防抖、冷却、重启频率限制和熔断避免重启循环。
+Codex Proxy Guardian 持续发现并验证当前可用的 HTTP/HTTPS 代理。当 Clash、Mihomo、v2rayN、sing-box 等代理程序的监听地址或端口稳定变化后，它让 Codex 使用当前代理，并通过防抖、冷却、重启频率限制和熔断避免重启循环。
 
-它不是代理软件，不提供代理服务、订阅或节点。它不会修改 Windows 系统代理、WinHTTP、DNS、路由或永久环境变量。
+安装脚本只需要运行一次。除非安装时使用 `-NoStart`，Guardian 会在安装完成后立即启动，并在以后登录 Windows 时自动静默运行。用户之后可以直接从原图标打开 Codex，不需要先打开 PowerShell 或手动运行 Guardian。
+
+默认自动（Safe）模式会先等待 20 秒观察 Codex 的真实代理流量；已经能通过当前代理通信就保持不动，否则只进行一次受控修复。严格（Enforce）模式用于需要启动参数绝对一致的环境。
+
+本项目不是代理软件，不提供代理服务、订阅或节点。它不会修改 Windows 系统代理、WinHTTP、DNS、路由或永久环境变量。
 
 ## Official links
 
 - Project: https://github.com/CH-ZHOU-0512/codex-proxy-guardian
-- Stable release: https://github.com/CH-ZHOU-0512/codex-proxy-guardian/releases/tag/v1.0.0
+- Stable release: https://github.com/CH-ZHOU-0512/codex-proxy-guardian/releases/latest
 - Documentation: https://github.com/CH-ZHOU-0512/codex-proxy-guardian/wiki
 - Getting started: https://github.com/CH-ZHOU-0512/codex-proxy-guardian/wiki/Getting-Started
 - FAQ: https://github.com/CH-ZHOU-0512/codex-proxy-guardian/wiki/FAQ

@@ -1,73 +1,63 @@
 (() => {
   const root = document.documentElement;
-  const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+  const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+  const revealNodes = [...document.querySelectorAll('[data-reveal]')];
+  const timeline = document.querySelector('[data-timeline]');
 
-  const revealImmediately = () => {
-    document.querySelectorAll('[data-reveal]').forEach((element) => {
-      element.classList.add('is-visible');
-    });
+  const revealEverything = () => {
+    revealNodes.forEach((node) => node.classList.add('is-visible'));
+    if (timeline) {
+      timeline.classList.add('is-active');
+      timeline.style.setProperty('--timeline-progress', '1');
+    }
   };
 
-  if (prefersReducedMotion.matches || !('IntersectionObserver' in window)) {
-    revealImmediately();
+  if (reducedMotion.matches || !('IntersectionObserver' in window)) {
+    revealEverything();
   } else {
-    const observer = new IntersectionObserver((entries) => {
+    const revealObserver = new IntersectionObserver((entries) => {
       entries.forEach((entry) => {
         if (!entry.isIntersecting) return;
         entry.target.classList.add('is-visible');
-        observer.unobserve(entry.target);
+        revealObserver.unobserve(entry.target);
       });
     }, {
-      threshold: 0.14,
-      rootMargin: '0px 0px -7% 0px'
+      threshold: 0.12,
+      rootMargin: '0px 0px -6% 0px'
     });
 
-    document.querySelectorAll('[data-reveal]:not([data-reveal="hero"])').forEach((element) => {
-      observer.observe(element);
-    });
+    revealNodes.forEach((node) => revealObserver.observe(node));
 
-    requestAnimationFrame(() => {
-      document.querySelectorAll('[data-reveal="hero"]').forEach((element) => {
-        element.classList.add('is-visible');
-      });
-    });
-  }
-
-  const finePointer = window.matchMedia('(pointer: fine)');
-  if (!prefersReducedMotion.matches && finePointer.matches) {
-    const hero = document.querySelector('.parallax-zone');
-    const tiltCard = document.querySelector('[data-tilt]');
-
-    if (hero) {
-      let frame = 0;
-      hero.addEventListener('pointermove', (event) => {
-        if (frame) cancelAnimationFrame(frame);
-        frame = requestAnimationFrame(() => {
-          const rect = hero.getBoundingClientRect();
-          const x = (event.clientX - rect.left) / rect.width;
-          const y = (event.clientY - rect.top) / rect.height;
-          root.style.setProperty('--pointer-x', `${Math.round(x * 100)}%`);
-          root.style.setProperty('--pointer-y', `${Math.round(y * 100)}%`);
-
-          if (tiltCard) {
-            tiltCard.style.setProperty('--tilt-x', `${(0.5 - y) * 5}deg`);
-            tiltCard.style.setProperty('--tilt-y', `${(x - 0.5) * 7}deg`);
-          }
-        });
-      });
-
-      hero.addEventListener('pointerleave', () => {
-        if (!tiltCard) return;
-        tiltCard.style.setProperty('--tilt-x', '0deg');
-        tiltCard.style.setProperty('--tilt-y', '0deg');
-      });
+    if (timeline) {
+      const timelineObserver = new IntersectionObserver((entries) => {
+        if (!entries.some((entry) => entry.isIntersecting)) return;
+        timeline.classList.add('is-active');
+        timeline.style.setProperty('--timeline-progress', '1');
+        timelineObserver.disconnect();
+      }, { threshold: 0.25 });
+      timelineObserver.observe(timeline);
     }
   }
 
-  prefersReducedMotion.addEventListener?.('change', (event) => {
-    if (!event.matches) return;
-    revealImmediately();
-    root.style.removeProperty('--pointer-x');
-    root.style.removeProperty('--pointer-y');
+  let ticking = false;
+  const updateProgress = () => {
+    const available = document.documentElement.scrollHeight - window.innerHeight;
+    const progress = available > 0 ? Math.min(1, Math.max(0, window.scrollY / available)) : 0;
+    root.style.setProperty('--page-progress', progress.toFixed(4));
+    ticking = false;
+  };
+
+  const requestProgressUpdate = () => {
+    if (ticking) return;
+    ticking = true;
+    requestAnimationFrame(updateProgress);
+  };
+
+  updateProgress();
+  window.addEventListener('scroll', requestProgressUpdate, { passive: true });
+  window.addEventListener('resize', requestProgressUpdate, { passive: true });
+
+  reducedMotion.addEventListener?.('change', (event) => {
+    if (event.matches) revealEverything();
   });
 })();
