@@ -1,0 +1,311 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Codex 重连 5 次怎么办？Codex Proxy Guardian 自动跟随 Windows 代理</title>
+    <meta name="description" content="Codex Proxy Guardian 是开源的 Windows 11 Codex 桌面版代理守护工具：自动发现并验证 Clash、Mihomo、v2rayN、sing-box 等 HTTP/HTTPS 代理端口，减少 Codex Reconnecting 1/5 到 5/5、代理端口变化和反复重启问题。">
+    <meta name="keywords" content="Codex 重连 5 次,Codex Reconnecting 5/5,Codex 连接不上,Codex 代理,Windows 11,Clash,Mihomo,v2rayN,sing-box,代理端口,Codex Proxy Guardian">
+    <meta name="author" content="CH-ZHOU-0512">
+    <meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1,max-video-preview:-1">
+    <meta name="theme-color" content="#071b24">
+    <link rel="canonical" href="https://ch-zhou-0512.github.io/codex-proxy-guardian/">
+    <link rel="stylesheet" href="styles.css">
+
+    <meta property="og:type" content="website">
+    <meta property="og:locale" content="zh_CN">
+    <meta property="og:site_name" content="Codex Proxy Guardian">
+    <meta property="og:title" content="Codex 重连 5 次怎么办？让 Codex 自动跟随当前代理">
+    <meta property="og:description" content="Windows 11 Codex 桌面版代理守护工具：验证真实可用代理、跟随端口变化、安全防抖重启，不修改系统网络配置。">
+    <meta property="og:url" content="https://ch-zhou-0512.github.io/codex-proxy-guardian/">
+    <meta property="og:image" content="https://raw.githubusercontent.com/CH-ZHOU-0512/codex-proxy-guardian/main/assets/social-preview.png">
+    <meta property="og:image:alt" content="Codex Proxy Guardian：让 Codex 不再因为代理没有跟上而反复重连">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="Codex 重连 5 次怎么办？Codex Proxy Guardian">
+    <meta name="twitter:description" content="自动发现并验证 Windows 当前代理，让 Codex 跟随代理端口变化。">
+    <meta name="twitter:image" content="https://raw.githubusercontent.com/CH-ZHOU-0512/codex-proxy-guardian/main/assets/social-preview.png">
+
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@graph": [
+        {
+          "@type": "WebSite",
+          "@id": "https://ch-zhou-0512.github.io/codex-proxy-guardian/#website",
+          "url": "https://ch-zhou-0512.github.io/codex-proxy-guardian/",
+          "name": "Codex Proxy Guardian",
+          "inLanguage": "zh-CN",
+          "description": "解决 Windows 11 Codex 桌面端代理没有跟上、反复重连和代理端口变化的问题。"
+        },
+        {
+          "@type": "SoftwareApplication",
+          "@id": "https://ch-zhou-0512.github.io/codex-proxy-guardian/#software",
+          "name": "Codex Proxy Guardian",
+          "alternateName": "Codex 代理守护程序",
+          "softwareVersion": "1.0.0",
+          "operatingSystem": "Windows 11",
+          "applicationCategory": "UtilitiesApplication",
+          "isAccessibleForFree": true,
+          "license": "https://opensource.org/license/mit",
+          "codeRepository": "https://github.com/CH-ZHOU-0512/codex-proxy-guardian",
+          "downloadUrl": "https://github.com/CH-ZHOU-0512/codex-proxy-guardian/releases/tag/v1.0.0",
+          "releaseNotes": "https://github.com/CH-ZHOU-0512/codex-proxy-guardian/releases/tag/v1.0.0",
+          "description": "开源的 Windows 11 Codex 桌面版代理守护工具，自动发现并验证当前 HTTP/HTTPS 代理，在端口稳定变化后让 Codex 使用当前有效代理。",
+          "author": {
+            "@type": "Person",
+            "name": "CH-ZHOU-0512",
+            "url": "https://github.com/CH-ZHOU-0512"
+          },
+          "offers": {
+            "@type": "Offer",
+            "price": "0",
+            "priceCurrency": "CNY"
+          }
+        },
+        {
+          "@type": "FAQPage",
+          "@id": "https://ch-zhou-0512.github.io/codex-proxy-guardian/#faq",
+          "mainEntity": [
+            {
+              "@type": "Question",
+              "name": "Windows 11 上 Codex 每次都要重连 5 次才开始思考怎么办？",
+              "acceptedAnswer": {
+                "@type": "Answer",
+                "text": "如果问题来自 Codex 没有使用当前有效的本地 HTTP/HTTPS 代理，Codex Proxy Guardian 可以持续发现并实际验证代理，在端口稳定变化后让 Codex 使用当前代理，并通过防抖、冷却和熔断避免重启循环。"
+              }
+            },
+            {
+              "@type": "Question",
+              "name": "直接打开 Codex 时，Codex Proxy Guardian 会自动运行吗？",
+              "acceptedAnswer": {
+                "@type": "Answer",
+                "text": "会。安装一次后，Guardian 会立即启动，并在以后登录 Windows 时静默自启。默认自动模式会观察普通方式启动的 Codex，必要时只进行一次受控修复。"
+              }
+            },
+            {
+              "@type": "Question",
+              "name": "Codex Proxy Guardian 本身是代理软件吗？",
+              "acceptedAnswer": {
+                "@type": "Answer",
+                "text": "不是。它不提供代理服务器、订阅或节点。电脑上需要已经存在可用的 HTTP/HTTPS 代理，它负责让 Codex 稳定跟随这个代理。"
+              }
+            },
+            {
+              "@type": "Question",
+              "name": "Codex Proxy Guardian 会修改 Windows 系统代理吗？",
+              "acceptedAnswer": {
+                "@type": "Answer",
+                "text": "不会。它不会修改 Windows 系统代理、WinHTTP、DNS、路由或永久环境变量，只读取候选代理并为 Codex 进程配置经过验证的代理。"
+              }
+            }
+          ]
+        }
+      ]
+    }
+    </script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">跳到正文</a>
+
+    <header class="site-header">
+      <div class="shell header-inner">
+        <a class="brand" href="#top" aria-label="Codex Proxy Guardian 首页">
+          <span class="brand-mark" aria-hidden="true">CPG</span>
+          <span>Codex Proxy Guardian</span>
+        </a>
+        <nav aria-label="主要导航">
+          <a href="#how">工作方式</a>
+          <a href="#install">安装</a>
+          <a href="#faq">常见问题</a>
+          <a href="https://github.com/CH-ZHOU-0512/codex-proxy-guardian" rel="external">GitHub</a>
+        </nav>
+      </div>
+    </header>
+
+    <main id="main">
+      <section class="hero" id="top">
+        <div class="shell hero-grid">
+          <div class="hero-copy">
+            <p class="eyebrow">Windows 11 · 开源 · MIT License</p>
+            <h1>Codex 每次都要<br><span>重连 5 次</span>才开始思考？</h1>
+            <p class="lead">如果原因是 Codex 没有跟上当前代理，Codex Proxy Guardian 会持续发现并验证真正可用的端口，在变化稳定后让 Codex 使用当前代理。</p>
+            <div class="actions">
+              <a class="button primary" href="https://github.com/CH-ZHOU-0512/codex-proxy-guardian/releases/tag/v1.0.0">下载正式版 v1.0.0</a>
+              <a class="button secondary" href="https://github.com/CH-ZHOU-0512/codex-proxy-guardian/wiki/Getting-Started">查看安装说明</a>
+            </div>
+            <p class="microcopy">不提供节点，不修改 Windows 网络配置，不要求管理员权限。</p>
+          </div>
+
+          <aside class="status-card" aria-label="Guardian 有效性状态示例">
+            <div class="status-topline">
+              <span class="signal" aria-hidden="true"></span>
+              <span>Guardian status</span>
+              <strong>READY</strong>
+            </div>
+            <dl>
+              <div>
+                <dt>ValidatedProxy</dt>
+                <dd>True</dd>
+              </div>
+              <div>
+                <dt>LaunchConfigured</dt>
+                <dd>True</dd>
+              </div>
+              <div>
+                <dt>TrafficObserved</dt>
+                <dd>True</dd>
+              </div>
+            </dl>
+            <p>不是只看“端口开没开”，而是验证代理能否完成真实 HTTPS 请求，并观察 Codex 是否实际连接该端口。</p>
+          </aside>
+        </div>
+      </section>
+
+      <section class="plain-language">
+        <div class="shell statement">
+          <span>一句人话</span>
+          <p>你只需要安装一次。以后照常打开 Codex，Guardian 会在后台静默运行；代理软件换端口时，它负责重新找到正确的路。</p>
+        </div>
+      </section>
+
+      <section class="section" aria-labelledby="problem-title">
+        <div class="shell">
+          <div class="section-heading">
+            <p class="eyebrow">它解决什么</p>
+            <h2 id="problem-title">浏览器能联网，不代表 Codex 拿到了同一个代理</h2>
+            <p>Clash、Mihomo、v2rayN、sing-box 等程序重启、切换配置或更新后，本地监听端口可能变化。已经运行的 Codex 仍可能记着旧地址，于是出现 Reconnecting、任务中断或内容加载失败。</p>
+          </div>
+          <div class="feature-grid">
+            <article>
+              <span class="feature-number">01</span>
+              <h3>寻找候选代理</h3>
+              <p>读取当前用户系统代理、显式配置、进程环境和常见代理程序的本地监听端口。</p>
+            </article>
+            <article>
+              <span class="feature-number">02</span>
+              <h3>验证真实可用</h3>
+              <p>同时检查 TCP 监听和经代理发起的 HTTPS 请求，不把“端口存在”误当成“代理有效”。</p>
+            </article>
+            <article>
+              <span class="feature-number">03</span>
+              <h3>受控修复</h3>
+              <p>变化经过防抖确认后才处理，并使用冷却、频率限制和熔断避免 Codex 重启循环。</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="section section-dark" id="how" aria-labelledby="how-title">
+        <div class="shell">
+          <div class="section-heading compact">
+            <p class="eyebrow">工作方式</p>
+            <h2 id="how-title">发现 → 验证 → 稳定 → 生效</h2>
+          </div>
+          <ol class="flow">
+            <li><strong>发现</strong><span>收集本机 HTTP/HTTPS 代理候选</span></li>
+            <li><strong>验证</strong><span>确认端口和真实 HTTPS 连通性</span></li>
+            <li><strong>稳定</strong><span>等待变化稳定，过滤短暂波动</span></li>
+            <li><strong>生效</strong><span>为 Codex 配置代理，必要时受控重启</span></li>
+          </ol>
+          <div class="boundary-grid">
+            <div>
+              <h3>适合</h3>
+              <p>Windows 11、Microsoft Store/MSIX 版 Codex，以及提供 HTTP 或混合端口的 Clash/Mihomo、v2rayN/Xray、sing-box、Shadowsocks、NekoRay、Hiddify、FlClash 等程序。</p>
+            </div>
+            <div>
+              <h3>暂不自动支持</h3>
+              <p>PAC/WPAD、纯 SOCKS、只有 TUN 而没有 HTTP/混合端口，以及企业策略禁止未签名 PowerShell 脚本的环境。</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="install" aria-labelledby="install-title">
+        <div class="shell install-grid">
+          <div class="section-heading compact">
+            <p class="eyebrow">开始使用</p>
+            <h2 id="install-title">安装一次，以后自动运行</h2>
+            <p>从正式 Release 下载 ZIP 并解压，在普通权限 PowerShell 中运行安装脚本。安装后会立即启动，并在以后登录 Windows 时静默自启。</p>
+            <a class="text-link" href="https://github.com/CH-ZHOU-0512/codex-proxy-guardian/wiki/Getting-Started">阅读面向新用户的完整说明 →</a>
+          </div>
+          <div class="code-card" aria-label="PowerShell 安装命令">
+            <div class="code-label">PowerShell</div>
+            <pre><code>Unblock-File .\Install.ps1
+.\Install.ps1</code></pre>
+            <p>默认使用“自动（Safe）”模式。你仍然可以像以前一样从原图标打开 Codex。</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="section evidence" aria-labelledby="evidence-title">
+        <div class="shell evidence-grid">
+          <div>
+            <p class="eyebrow">如何确认真的有效</p>
+            <h2 id="evidence-title">给出证据，而不是只显示“正在运行”</h2>
+          </div>
+          <div class="evidence-list">
+            <div><strong>ValidatedProxy</strong><span>代理完成了配置要求的 HTTPS 验证。</span></div>
+            <div><strong>LaunchConfigured</strong><span>Codex 根进程带有同一个规范化代理参数。</span></div>
+            <div><strong>TrafficObserved</strong><span>近期观察到 Codex 进程树实际连接该代理端口。</span></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="faq" aria-labelledby="faq-title">
+        <div class="shell faq-shell">
+          <div class="section-heading compact">
+            <p class="eyebrow">常见问题</p>
+            <h2 id="faq-title">先回答最容易困惑的地方</h2>
+          </div>
+          <div class="faq-list">
+            <details open>
+              <summary>Windows 11 上 Codex 每次都要重连 5 次才开始思考怎么办？</summary>
+              <p>先确认问题是否来自 Codex 没有使用当前有效的本地 HTTP/HTTPS 代理。如果是，Codex Proxy Guardian 可以持续发现并实际验证代理，在端口稳定变化后让 Codex 使用当前代理，并通过防抖、冷却和熔断避免重启循环。</p>
+            </details>
+            <details>
+              <summary>直接打开 Codex，工具会自动运行吗？</summary>
+              <p>会。安装一次后，Guardian 会立即启动，并在以后登录 Windows 时静默自启。默认自动模式会观察普通方式启动的 Codex，必要时只进行一次受控修复。</p>
+            </details>
+            <details>
+              <summary>这个工具等于代理软件吗？</summary>
+              <p>不是。它不提供代理服务器、订阅或节点。电脑上需要已经存在可用的 HTTP/HTTPS 代理，它负责让 Codex 稳定跟随这个代理。</p>
+            </details>
+            <details>
+              <summary>它会修改 Windows 系统代理吗？</summary>
+              <p>不会。它不会修改 Windows 系统代理、WinHTTP、DNS、路由或永久环境变量，只读取候选代理并为 Codex 进程配置经过验证的代理。</p>
+            </details>
+            <details>
+              <summary>还有问题，去哪里问？</summary>
+              <p>可以在 <a href="https://github.com/CH-ZHOU-0512/codex-proxy-guardian/discussions">GitHub Discussions</a> 提问或留下兼容性反馈；确定是程序错误时，也可以提交脱敏后的 <a href="https://github.com/CH-ZHOU-0512/codex-proxy-guardian/issues">Issue</a>。</p>
+            </details>
+          </div>
+        </div>
+      </section>
+
+      <section class="final-cta">
+        <div class="shell final-cta-inner">
+          <div>
+            <p class="eyebrow">Codex Proxy Guardian v1.0.0</p>
+            <h2>让代理变化成为后台小事</h2>
+            <p>开源、免费、可卸载；安装前可以先查看源码、测试、兼容范围和安全边界。</p>
+          </div>
+          <div class="actions">
+            <a class="button primary" href="https://github.com/CH-ZHOU-0512/codex-proxy-guardian/releases/tag/v1.0.0">下载正式版</a>
+            <a class="button secondary" href="https://github.com/CH-ZHOU-0512/codex-proxy-guardian">查看源码</a>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <div class="shell footer-inner">
+        <p>Codex Proxy Guardian 是独立社区项目，与 OpenAI 没有隶属、认可或支持关系。</p>
+        <div>
+          <a href="https://github.com/CH-ZHOU-0512/codex-proxy-guardian/wiki">Wiki</a>
+          <a href="https://github.com/CH-ZHOU-0512/codex-proxy-guardian/discussions">Discussions</a>
+          <a href="https://github.com/CH-ZHOU-0512/codex-proxy-guardian/blob/main/LICENSE">MIT License</a>
+        </div>
+      </div>
+    </footer>
+  </body>
+</html>
