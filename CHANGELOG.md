@@ -7,6 +7,7 @@ All notable changes are documented here. This project follows semantic versionin
 - 将简体中文设为默认 README 和主要用户入口，同时保留独立英文说明。
 - 增加中文仓库简介、Release 说明、Issue/PR 模板、兼容性矩阵、故障排查、安全策略和贡献指南。
 - Added Chinese-first repository discovery and support content while retaining dedicated English documentation.
+- 增加可复现的 GitHub 分享封面、README 工作流程图和中文首发文章模板。
 
 ## [0.2.0-alpha] - 2026-08-02
 

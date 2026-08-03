@@ -2,6 +2,8 @@
 
 [简体中文](README.md) | [English](docs/README.en.md)
 
+![Codex Proxy Guardian：让 Codex 不再因为代理没有跟上而反复重连](assets/social-preview.png)
+
 [![CI](https://github.com/CH-ZHOU-0512/codex-proxy-guardian/actions/workflows/ci.yml/badge.svg)](https://github.com/CH-ZHOU-0512/codex-proxy-guardian/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/CH-ZHOU-0512/codex-proxy-guardian?include_prereleases)](https://github.com/CH-ZHOU-0512/codex-proxy-guardian/releases)
 [![License](https://img.shields.io/github/license/CH-ZHOU-0512/codex-proxy-guardian)](LICENSE)
@@ -20,6 +22,8 @@
 
 > [!NOTE]
 > 本项目本身**不是代理软件，也不提供代理服务或节点**。使用前需要电脑上已经存在一个可用的 HTTP/HTTPS 代理；它解决的是“怎样让 Codex 稳定跟随这个代理”的问题。
+
+![Codex Proxy Guardian 工作流程：发现、验证、稳定、生效](assets/how-it-works.png)
 
 > [!IMPORTANT]
 > 本项目是独立的社区项目，与 OpenAI 没有隶属、认可或支持关系。项目使用的是基于实际行为的兼容方案，并非 Codex 桌面端公开且承诺长期稳定的代理 API。
@@ -199,6 +203,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Install.ps1
 - 报告问题：使用中文 [Bug report](https://github.com/CH-ZHOU-0512/codex-proxy-guardian/issues/new?template=bug_report.yml)
 - 建议新功能：使用中文 [Feature request](https://github.com/CH-ZHOU-0512/codex-proxy-guardian/issues/new?template=feature_request.yml)
 - 贡献代码：参阅 [CONTRIBUTING.md](CONTRIBUTING.md)
+- 发布与分享：使用[中文传播素材](docs/PROMOTION.zh-CN.md)
 
 本地构建与测试：
 
