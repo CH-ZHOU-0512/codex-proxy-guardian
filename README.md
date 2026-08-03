@@ -36,15 +36,16 @@
 - 代理地址或端口变化时先防抖，再受控重启 Codex；端口来回波动时不会立即反复重启。
 - 提供重启冷却、十分钟重启次数限制、熔断和启动失败恢复，避免形成 Codex 重启循环。
 - 自动适配 Microsoft Store / MSIX 版 Codex 更新后的安装路径，并支持 x64 和 ARM64。
+- 每日检查本项目 GitHub Release，只有版本、文件名和 SHA-256 全部匹配时才静默原位升级。
 - 以当前用户身份静默运行、登录后自启，不要求管理员权限。
-- 提供状态、日志、在线诊断、单实例保护和安全卸载脚本。
+- 提供开始菜单设置窗口、状态、日志、在线诊断、单实例保护和安全卸载脚本。
 
 ## 先看安全边界
 
 - **不会修改** Windows 系统代理、WinHTTP 代理、DNS、路由或永久用户/系统环境变量。
 - 只接受带明确端口的 HTTP/HTTPS 代理；拒绝 URL 中包含账号密码的代理地址。
 - 候选代理必须同时通过 TCP 监听检查和经代理发起的 HTTPS 请求验证。
-- 默认使用 `Safe` 模式：只有在代理已经验证、Codex 缺少当前代理参数，而且证据等待期内没有观察到该进程正在使用当前代理时，才会进行一次受控修复。
+- 默认使用“自动（Safe）”模式：只有在代理已经验证、Codex 缺少当前代理参数，而且证据等待期内没有观察到该进程正在使用当前代理时，才会进行一次受控修复。
 - 卸载时会核对安装标记、计划任务动作和快捷方式目标，只删除本项目拥有的资源。
 - 诊断报告默认脱敏，不包含原始代理 URL、用户名路径或日志正文；提交 Issue 前仍建议人工检查一次。
 
@@ -83,23 +84,26 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Install.ps1
 默认安装到 `%LOCALAPPDATA%\CodexProxyGuardian`，并创建：
 
 - 当前用户计划任务 `Codex Proxy Guardian`，用于登录后静默启动；
-- 开始菜单快捷方式 **Codex (Managed Proxy)**，用于明确地以当前有效代理启动 Codex。
+- 每日计划任务 `Codex Proxy Guardian Update`，用于检查并校验 GitHub Release；
+- 开始菜单快捷方式 **Codex (Managed Proxy)**，用于明确地以当前有效代理启动 Codex；
+- 开始菜单快捷方式 **Codex Proxy Guardian Settings**，用于切换模式、自动更新和更新通道。
 
 ### 安装后怎么使用
 
 **只需要先运行一次安装脚本。** 除非安装时使用了 `-NoStart`，守护程序会在安装完成后立即启动，并在以后登录 Windows 时自动静默运行；不需要每次打开 PowerShell，也不需要手动先启动守护程序。
 
-默认 `Safe` 模式也会检查从原图标打开的 Codex：如果它缺少当前代理参数，Guardian 会先等待证据；等待期间如果观察到该进程已经在通过当前代理通信，就保持不动，否则只进行一次受控重启。开始菜单中的 **Codex (Managed Proxy)** 仍然是立即、明确地使用已验证代理的方式，但不再是普通用户每次启动 Codex 的必选动作。
+默认“自动（Safe）”模式也会检查从原图标打开的 Codex：如果它缺少当前代理参数，Guardian 会先等待证据；等待期间如果观察到该进程已经在通过当前代理通信，就保持不动，否则只进行一次受控重启。开始菜单中的 **Codex (Managed Proxy)** 仍然是立即、明确地使用已验证代理的方式，但不再是普通用户每次启动 Codex 的必选动作。
 
-如果希望不考虑流量证据，只要发现 Codex 缺少当前代理参数就进行校正，可以在确认 `Safe` 模式运行稳定后改用 `Enforce`。简化理解如下：
+模式不再需要手改 `config.json`。从开始菜单打开 **Codex Proxy Guardian Settings**，选择“自动（推荐）”或“严格”并应用即可。简化理解如下：
 
 | 你的操作 | 是否需要额外动作 |
 |---|---|
 | 首次安装 | 运行一次 `Install.ps1` |
-| 直接点击原来的 Codex 图标 | 不需要；Safe 会先观察，必要时自动受控重启一次 |
+| 直接点击原来的 Codex 图标 | 不需要；自动模式会先观察，必要时受控重启一次 |
 | 希望立即确定代理参数已经带上 | 点击开始菜单中的 **Codex (Managed Proxy)** |
 | 以后启动守护程序 | 不需要；它会登录后自动静默运行 |
-| 希望严格校正所有缺少代理参数的启动 | 稳定使用后改为 `Enforce` 模式 |
+| 希望严格校正所有缺少代理参数的启动 | 在设置窗口选择“严格” |
+| 项目发布新版本 | 默认每日自动检查，SHA-256 校验通过后原位升级 |
 
 安装时会进行联网自检。代理暂时离线默认只产生警告；如需把连通性作为安装的硬性条件：
 
@@ -113,20 +117,24 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Install.ps1
 .\Install.ps1 -AllowMissingCodex -NoStart
 ```
 
-## Safe 与 Enforce 模式
+## 自动与严格模式
 
-| 模式 | 行为 | 建议 |
-|---|---|---|
-| `Safe` | 普通 Codex 缺少代理参数时先等待 20 秒并观察实际代理流量；已经能通信就不动，否则受控重启一次 | 默认，适合绝大多数用户 |
-| `Enforce` | 普通 Codex 缺少当前代理参数时，经防抖后直接受控重启，不以流量证据豁免 | 需要严格、确定的启动参数时开启 |
+| 用户看到的模式 | 内部模式 | 行为 | 建议 |
+|---|---|---|---|
+| 自动 | `Safe` | 缺少参数时先等待 20 秒并观察实际代理流量；已经能通信就不动，否则受控修复一次 | 默认，适合绝大多数用户 |
+| 严格 | `Enforce` | 缺少当前代理参数时，经防抖后直接受控修复，不以流量证据豁免 | 需要严格、确定的启动参数时开启 |
 
-直观地说：**Safe 是“先证明有必要再接管”，Enforce 是“参数不一致就接管”。** 两种模式都受到防抖、冷却、重启次数限制和熔断保护。
+直观地说：**自动是“先证明有必要再接管”，严格是“参数不一致就接管”。** 两种模式都受到防抖、冷却、重启次数限制和熔断保护。程序不会自行把用户的长期策略从自动改成严格；“自动”是在每次 Codex 启动时根据真实证据做决定。
 
-安装或更新时开启 Enforce：
+无需打开设置窗口时，也可以一条命令切换：
 
 ```powershell
-.\Install.ps1 -Mode Enforce
+.\Control.ps1 -Action SetMode -Mode Auto
+.\Control.ps1 -Action SetMode -Mode Strict
+.\Control.ps1 -Action ToggleMode
 ```
+
+模式变化会由 Guardian 在后台自动重新加载，不需要重启 Guardian，也不会主动关闭当前 Codex。
 
 项目通过匹配 Codex **根进程**的代理参数，而不是匹配短暂存在的启动器 PID，来规避早期脚本常见的误判重启问题。所有重启仍受到防抖、冷却、频率限制和熔断保护。
 
@@ -141,6 +149,8 @@ Codex 更新后，Guardian 会重新读取当前用户的 MSIX 清单，根据�
 ```json
 {
   "ExplicitProxy": "http://127.0.0.1:7890",
+  "AutomaticUpdates": true,
+  "UpdateChannel": "Prerelease",
   "AllowNonLoopbackProxy": false,
   "ManageExternalCodexLaunches": false,
   "SafeRepairExternalCodexLaunches": true,
@@ -159,6 +169,19 @@ Codex 更新后，Guardian 会重新读取当前用户的 MSIX 清单，根据�
 ```
 
 这只会重启守护程序，不会修改 Windows 网络配置。
+
+## 自动更新
+
+默认每天由当前用户计划任务检查一次 GitHub Release。更新器只信任固定仓库 `CH-ZHOU-0512/codex-proxy-guardian`，要求 Release 标签、ZIP 文件名、包内 `VERSION` 完全一致，并使用同一 Release 附带的 `.sha256`（以及 GitHub 提供时的资产摘要）校验下载内容。安装前会快照现有文件，拒绝路径异常或展开规模超限的压缩包；安装中断会尝试恢复原版本并重新启动原 Guardian。结果写入 `logs\update-*.jsonl`。
+
+在设置窗口可以关闭自动更新，或在命令行检查/立即更新：
+
+```powershell
+.\Control.ps1 -Action CheckUpdate
+.\Control.ps1 -Action Update
+```
+
+Alpha 阶段默认使用 `Prerelease` 通道；不希望跟随预发布版本时，可在设置窗口改为“仅稳定版本”。原位升级会保留现有配置，并优先接管正在运行的 Codex 会话而不是重启它。
 
 ## 如何确认它真的有效
 
@@ -188,7 +211,7 @@ Codex 更新后，Guardian 会重新读取当前用户的 MSIX 清单，根据�
 
 重启频率达到上限后，熔断器会阻止继续重启。建议：
 
-1. 保持或切回默认的 `Safe` 模式；
+1. 保持或切回默认的“自动（Safe）”模式；
 2. 运行 `.\Status.ps1` 查看 `GuardianState` 和最近重启原因；
 3. 运行 `.\Doctor.ps1 -Online` 检查代理验证和 Codex 启动参数；
 4. 按[故障排查文档](docs/TROUBLESHOOTING.md)处理；
@@ -200,6 +223,8 @@ Codex 更新后，Guardian 会重新读取当前用户的 MSIX 清单，根据�
 .\Control.ps1 -Action Start
 .\Control.ps1 -Action Stop
 .\Control.ps1 -Action Restart
+.\Control.ps1 -Action SetMode -Mode Auto
+.\Control.ps1 -Action CheckUpdate
 ```
 
 运行状态保存在安装目录的 `status.json`，每日 JSON Lines 日志位于 `logs`。日志按大小、保留天数和文件数轮转。项目不会接受或记录代理账号密码。

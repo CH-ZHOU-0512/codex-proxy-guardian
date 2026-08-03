@@ -7,6 +7,8 @@
   "properties": {
     "SchemaVersion": { "const": 1 },
     "Mode": { "enum": ["Safe", "Enforce"] },
+    "AutomaticUpdates": { "type": "boolean" },
+    "UpdateChannel": { "enum": ["Stable", "Prerelease"] },
     "PollSeconds": { "type": "integer", "minimum": 2, "maximum": 300 },
     "StableSamples": { "type": "integer", "minimum": 1, "maximum": 100 },
     "DebounceSeconds": { "type": "integer", "minimum": 0, "maximum": 600 },

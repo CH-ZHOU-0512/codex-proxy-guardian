@@ -19,6 +19,7 @@ $script:StatePath = Join-Path $script:Root 'state.json'
 $script:StopRequestPath = Join-Path $script:Root 'stop.request'
 $script:LaunchRequestPath = Join-Path $script:Root 'launch.request'
 $script:AdoptRequestPath = Join-Path $script:Root 'adopt-current-once.request'
+$script:ConfigReloadRequestPath = Join-Path $script:Root 'config.reload.request'
 $script:ValidationCache = @{}
 $script:ProxyAddressCache = @{}
 $script:InheritedProxyEnvironment = @{}
@@ -673,6 +674,29 @@ try {
                 Remove-Item -LiteralPath $script:StopRequestPath -Force -ErrorAction SilentlyContinue
                 Write-GuardianLog 'INFO' 'guardian_stop' 'Stop request received.' @{}
                 break
+            }
+
+            if (Test-Path -LiteralPath $script:ConfigReloadRequestPath) {
+                $updatedConfig = Read-GuardianConfig
+                $updatedMode = [string](Get-CpgConfigValue $updatedConfig 'Mode' 'Safe')
+                $updatedManageExternal = ($updatedMode -eq 'Enforce' -or [bool](Get-CpgConfigValue $updatedConfig 'ManageExternalCodexLaunches' $false)) -and -not $ObserveOnly
+                $updatedSafeRepair = $updatedMode -eq 'Safe' -and [bool](Get-CpgConfigValue $updatedConfig 'SafeRepairExternalCodexLaunches' $true) -and -not $ObserveOnly
+                $updatedPolicy = if ($ObserveOnly) { 'ObserveOnly' } elseif ($updatedManageExternal) { 'Enforce' } elseif ($updatedSafeRepair) { 'SafeEvidenceRepair' } else { 'ManagedShortcutOnly' }
+                $config.Mode = $updatedMode
+                $config.ManageExternalCodexLaunches = [bool](Get-CpgConfigValue $updatedConfig 'ManageExternalCodexLaunches' $false)
+                $config.SafeRepairExternalCodexLaunches = [bool](Get-CpgConfigValue $updatedConfig 'SafeRepairExternalCodexLaunches' $true)
+                $guardianMode = $updatedMode
+                $manageExternalLaunches = $updatedManageExternal
+                $safeRepairExternalLaunches = $updatedSafeRepair
+                $externalLaunchPolicy = $updatedPolicy
+                $pendingExternalPid = 0
+                $pendingExternalSince = [datetime]::MinValue
+                $pendingExternalTrafficObserved = $false
+                Remove-Item -LiteralPath $script:ConfigReloadRequestPath -Force -ErrorAction SilentlyContinue
+                Write-GuardianLog 'INFO' 'mode_reloaded' 'The selected user mode was reloaded without restarting Guardian or Codex.' @{
+                    mode = $guardianMode
+                    external_launch_policy = $externalLaunchPolicy
+                }
             }
 
             if ($null -eq $codexApp -or -not (Test-Path -LiteralPath ([string]$codexApp.ExecutablePath)) -or ((Get-Date) - $lastCodexResolve).TotalSeconds -ge $codexResolveIntervalSeconds) {

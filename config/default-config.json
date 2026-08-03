@@ -1,6 +1,8 @@
 {
   "SchemaVersion": 1,
   "Mode": "Safe",
+  "AutomaticUpdates": true,
+  "UpdateChannel": "Prerelease",
   "PollSeconds": 5,
   "StableSamples": 3,
   "DebounceSeconds": 10,

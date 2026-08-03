@@ -49,7 +49,14 @@ if ($null -ne $marker) {
 }
 $statusPath = Join-Path $resolvedRoot 'status.json'
 $status = if (Test-Path -LiteralPath $statusPath) { Get-Content -Raw -LiteralPath $statusPath | ConvertFrom-Json } else { $null }
+$updateStatusPath = Join-Path $resolvedRoot 'update-status.json'
+$updateStatus = if (Test-Path -LiteralPath $updateStatusPath) { Get-Content -Raw -LiteralPath $updateStatusPath | ConvertFrom-Json } else { $null }
 $task = if ($markerValid) { Get-ScheduledTask -TaskName ([string]$marker.taskName) -ErrorAction SilentlyContinue } else { $null }
+$updateTaskProperty = if (-not $markerValid) { $null } else { $marker.PSObject.Properties['updateTaskName'] }
+$updateTaskName = if ($null -eq $updateTaskProperty) { 'Codex Proxy Guardian Update' } else { [string]$updateTaskProperty.Value }
+$updateTask = if ($markerValid) { Get-ScheduledTask -TaskName $updateTaskName -ErrorAction SilentlyContinue } else { $null }
+$updateTaskInfo = if ($null -eq $updateTask) { $null } else { Get-ScheduledTaskInfo -TaskName $updateTaskName -ErrorAction SilentlyContinue }
+$updateTaskHasRun = $null -ne $updateTaskInfo -and $updateTaskInfo.LastRunTime.Year -ge 2001
 
 $os = Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue
 $computer = Get-CimInstance Win32_ComputerSystem -ErrorAction SilentlyContinue
@@ -135,6 +142,10 @@ if ($markerValid -and [string]$marker.startupMode -eq 'ScheduledTask' -and $null
     $issues += 'scheduled_task_missing'
     $recommendations += 'Re-run Install.ps1 against the same marked installation directory to repair startup registration.'
 }
+if ($markerValid -and $null -ne $config -and [bool](Get-CpgConfigValue $config 'AutomaticUpdates' $true) -and $null -eq $updateTask) {
+    $issues += 'automatic_update_task_missing'
+    $recommendations += 'Re-run Install.ps1 to restore the daily verified-release update task, or disable AutomaticUpdates in Settings.'
+}
 if (-not $proxyEnabled -and @($environmentProxyNames).Count -eq 0 -and @($recognizedListeners).Count -eq 0 -and @($tunnelAdapters).Count -gt 0) {
     $issues += 'tun_only_likely'
     $recommendations += 'A tunnel adapter is present without a discoverable HTTP endpoint. Codex may already be transparently routed; use a mixed/HTTP inbound for explicit verification.'
@@ -175,7 +186,7 @@ if (@($issues).Count -gt 0) { $health = 'NeedsAttention' }
 if ($issues -contains 'unsupported_os' -or $issues -contains 'powershell_too_old' -or $issues -contains 'constrained_language_mode' -or $issues -contains 'codex_msix_not_found') { $health = 'Blocked' }
 
 $report = [ordered]@{
-    reportSchema = 2
+    reportSchema = 3
     generatedUtc = (Get-Date).ToUniversalTime().ToString('o')
     safeForSharing = $true
     health = $health
@@ -220,6 +231,7 @@ $report = [ordered]@{
         alive = $guardianAlive
         state = Get-SafeProperty $status 'guardianState' $null
         mode = Get-SafeProperty $status 'mode' $null
+        modeProfile = if ($null -eq $config) { $null } else { Get-CpgModeProfile $config }
         externalLaunchPolicy = Get-SafeProperty $status 'externalLaunchPolicy' $null
         externalLaunchState = Get-SafeProperty $status 'externalLaunchState' $null
         activeProxyValid = [bool](Get-SafeProperty $status 'activeProxyValid' $false)
@@ -229,6 +241,16 @@ $report = [ordered]@{
         restartCircuitOpen = [bool](Get-SafeProperty $status 'restartCircuitOpen' $false)
         recentRestartCount = [int](Get-SafeProperty $status 'recentRestartCount' 0)
         recoveryLaunchRequired = [bool](Get-SafeProperty $status 'recoveryLaunchRequired' $false)
+    }
+    updates = [ordered]@{
+        automatic = if ($null -eq $config) { $null } else { [bool](Get-CpgConfigValue $config 'AutomaticUpdates' $true) }
+        channel = if ($null -eq $config) { $null } else { [string](Get-CpgConfigValue $config 'UpdateChannel' 'Prerelease') }
+        taskPresent = ($null -ne $updateTask)
+        taskState = if ($null -eq $updateTask) { $null } else { [string]$updateTask.State }
+        lastCheckUtc = if ($null -eq $updateStatus) { $null } else { [string](Get-SafeProperty $updateStatus 'time' '') }
+        lastEvent = if ($null -eq $updateStatus) { $null } else { [string](Get-SafeProperty $updateStatus 'event' '') }
+        lastRunTime = if ($updateTaskHasRun) { $updateTaskInfo.LastRunTime.ToUniversalTime().ToString('o') } else { $null }
+        lastResult = if ($updateTaskHasRun) { $updateTaskInfo.LastTaskResult } else { $null }
     }
     onlineTest = $onlineResult
 }

@@ -19,7 +19,7 @@ try {
     $releaseItems = @(
         'assets', 'CHANGELOG.md', 'CODE_OF_CONDUCT.md', 'CONTRIBUTING.md', 'Control.ps1',
         'DISCLAIMER.md', 'Doctor.ps1', 'Install.ps1', 'LICENSE', 'README.md',
-        'SECURITY.md', 'Status.ps1', 'Uninstall.ps1', 'VERSION',
+        'SECURITY.md', 'Settings.ps1', 'Status.ps1', 'Uninstall.ps1', 'Update.ps1', 'VERSION',
         'config', 'docs', 'src', 'tests', 'tools'
     )
     foreach ($name in $releaseItems) {

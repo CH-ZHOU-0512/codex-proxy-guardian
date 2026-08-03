@@ -30,6 +30,117 @@ function Update-CpgConfigDefaults {
     return $Config
 }
 
+function Set-CpgModeProfile {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]$Config,
+        [Parameter(Mandatory = $true)][ValidateSet('Auto', 'Safe', 'Strict', 'Enforce')][string]$Profile
+    )
+
+    $strict = $Profile -in @('Strict', 'Enforce')
+    foreach ($entry in ([ordered]@{
+        Mode = if ($strict) { 'Enforce' } else { 'Safe' }
+        ManageExternalCodexLaunches = $strict
+        SafeRepairExternalCodexLaunches = $true
+    }).GetEnumerator()) {
+        $Config | Add-Member -MemberType NoteProperty -Name $entry.Key -Value $entry.Value -Force
+    }
+    return $Config
+}
+
+function Get-CpgModeProfile {
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)]$Config)
+
+    $mode = [string](Get-CpgConfigValue -Config $Config -Name 'Mode' -Default 'Safe')
+    $managed = [bool](Get-CpgConfigValue -Config $Config -Name 'ManageExternalCodexLaunches' -Default $false)
+    if ($mode -eq 'Enforce' -or $managed) { return 'Strict' }
+    return 'Automatic'
+}
+
+function Compare-CpgSemanticVersion {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$Left,
+        [Parameter(Mandatory = $true)][string]$Right
+    )
+
+    $pattern = '^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$'
+    $leftMatch = [regex]::Match($Left.Trim(), $pattern)
+    $rightMatch = [regex]::Match($Right.Trim(), $pattern)
+    if (-not $leftMatch.Success -or -not $rightMatch.Success) { throw "Invalid semantic version comparison: '$Left' and '$Right'." }
+
+    for ($index = 1; $index -le 3; $index++) {
+        $leftNumber = [int64]$leftMatch.Groups[$index].Value
+        $rightNumber = [int64]$rightMatch.Groups[$index].Value
+        if ($leftNumber -lt $rightNumber) { return -1 }
+        if ($leftNumber -gt $rightNumber) { return 1 }
+    }
+
+    $leftPre = [string]$leftMatch.Groups[4].Value
+    $rightPre = [string]$rightMatch.Groups[4].Value
+    if ([string]::IsNullOrWhiteSpace($leftPre) -and [string]::IsNullOrWhiteSpace($rightPre)) { return 0 }
+    if ([string]::IsNullOrWhiteSpace($leftPre)) { return 1 }
+    if ([string]::IsNullOrWhiteSpace($rightPre)) { return -1 }
+
+    $leftParts = @($leftPre -split '\.')
+    $rightParts = @($rightPre -split '\.')
+    $count = [Math]::Max($leftParts.Count, $rightParts.Count)
+    for ($index = 0; $index -lt $count; $index++) {
+        if ($index -ge $leftParts.Count) { return -1 }
+        if ($index -ge $rightParts.Count) { return 1 }
+        $leftNumeric = $leftParts[$index] -match '^\d+$'
+        $rightNumeric = $rightParts[$index] -match '^\d+$'
+        if ($leftNumeric -and $rightNumeric) {
+            $leftNumber = [int64]$leftParts[$index]
+            $rightNumber = [int64]$rightParts[$index]
+            if ($leftNumber -lt $rightNumber) { return -1 }
+            if ($leftNumber -gt $rightNumber) { return 1 }
+        }
+        elseif ($leftNumeric) { return -1 }
+        elseif ($rightNumeric) { return 1 }
+        else {
+            $comparison = [string]::Compare($leftParts[$index], $rightParts[$index], [System.StringComparison]::Ordinal)
+            if ($comparison -lt 0) { return -1 }
+            if ($comparison -gt 0) { return 1 }
+        }
+    }
+    return 0
+}
+
+function Select-CpgUpdateRelease {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]$Releases,
+        [Parameter(Mandatory = $true)][string]$CurrentVersion,
+        [ValidateSet('Stable', 'Prerelease')][string]$Channel = 'Prerelease'
+    )
+
+    $selected = $null
+    foreach ($release in @($Releases)) {
+        if ($null -eq $release -or [bool](Get-CpgConfigValue $release 'draft' $false)) { continue }
+        if ($Channel -eq 'Stable' -and [bool](Get-CpgConfigValue $release 'prerelease' $false)) { continue }
+        $tag = [string](Get-CpgConfigValue $release 'tag_name' '')
+        if ($tag -notmatch '^v?\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$') { continue }
+        $candidateVersion = $tag.TrimStart('v')
+        if ((Compare-CpgSemanticVersion $candidateVersion $CurrentVersion) -le 0) { continue }
+        $selectedVersion = if ($null -eq $selected) { '' } else { ([string]$selected.tag_name).TrimStart('v') }
+        if ($null -eq $selected -or (Compare-CpgSemanticVersion $candidateVersion $selectedVersion) -gt 0) {
+            $selected = $release
+        }
+    }
+    return $selected
+}
+
+function Get-CpgDeclaredSha256 {
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)][string]$ChecksumText)
+
+    $match = [regex]::Match($ChecksumText.Trim(), '(?i)^([a-f0-9]{64})(?:\s|$)')
+    if (-not $match.Success) { return $null }
+    return $match.Groups[1].Value.ToLowerInvariant()
+}
+
 function Get-CpgExternalLaunchDecision {
     [CmdletBinding()]
     param(
@@ -430,6 +541,11 @@ function Test-CpgInstallMarker {
 Export-ModuleMember -Function @(
     'Get-CpgConfigValue',
     'Update-CpgConfigDefaults',
+    'Set-CpgModeProfile',
+    'Get-CpgModeProfile',
+    'Compare-CpgSemanticVersion',
+    'Select-CpgUpdateRelease',
+    'Get-CpgDeclaredSha256',
     'Get-CpgExternalLaunchDecision',
     'Test-CpgGuardianProcessIdentity',
     'Test-CpgLoopbackHost',

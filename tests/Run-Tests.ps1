@@ -57,6 +57,11 @@ Invoke-Test 'All PowerShell files parse on this runtime' {
     Assert-Equal 0 $errors.Count ($errors -join [Environment]::NewLine)
 }
 
+Invoke-Test 'Localized settings UI has a Windows PowerShell compatible UTF-8 BOM' {
+    $bytes = [System.IO.File]::ReadAllBytes((Join-Path $repoRoot 'Settings.ps1'))
+    Assert-True ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF)
+}
+
 Invoke-Test 'Silent VBS launchers parse and use the inbox PowerShell path' {
     $cscript = Join-Path $env:SystemRoot 'System32\cscript.exe'
     foreach ($name in @('Run-Guardian.vbs', 'Run-ManagedCodex.vbs')) {
@@ -76,6 +81,8 @@ Invoke-Test 'Configuration JSON files are valid' {
 Invoke-Test 'Default configuration is conservative' {
     $config = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'config\default-config.json') | ConvertFrom-Json
     Assert-Equal 'Safe' ([string]$config.Mode)
+    Assert-True $config.AutomaticUpdates
+    Assert-Equal 'Prerelease' ([string]$config.UpdateChannel)
     Assert-False $config.ManageExternalCodexLaunches
     Assert-True $config.SafeRepairExternalCodexLaunches
     Assert-True ([int]$config.SafeExternalLaunchGraceSeconds -ge 10)
@@ -115,6 +122,56 @@ Invoke-Test 'Stale guardian PIDs cannot identify unrelated processes' {
     Assert-False (Test-CpgGuardianProcessIdentity -Process $reusedPidProcess -WatcherPath $watcher)
     Assert-False (Test-CpgGuardianProcessIdentity -Process $lookalike -WatcherPath $watcher)
     Assert-False (Test-CpgGuardianProcessIdentity -Process $null -WatcherPath $watcher)
+}
+
+Invoke-Test 'User mode profiles map to safe automatic and strict enforcement settings' {
+    $config = [pscustomobject]@{ Mode = 'Enforce'; ManageExternalCodexLaunches = $true; SafeRepairExternalCodexLaunches = $false }
+    $automatic = Set-CpgModeProfile -Config $config -Profile Auto
+    Assert-Equal 'Safe' ([string]$automatic.Mode)
+    Assert-False $automatic.ManageExternalCodexLaunches
+    Assert-True $automatic.SafeRepairExternalCodexLaunches
+    Assert-Equal 'Automatic' (Get-CpgModeProfile $automatic)
+
+    $strict = Set-CpgModeProfile -Config $automatic -Profile Strict
+    Assert-Equal 'Enforce' ([string]$strict.Mode)
+    Assert-True $strict.ManageExternalCodexLaunches
+    Assert-Equal 'Strict' (Get-CpgModeProfile $strict)
+}
+
+Invoke-Test 'Mode changes use background reload without restarting Guardian' {
+    $control = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'Control.ps1')
+    $watcher = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'src\Watch-CodexProxy.ps1')
+    Assert-True $control.Contains("'config.reload.request'") 'Control does not request a background mode reload.'
+    Assert-True $watcher.Contains("'mode_reloaded'") 'Watcher does not apply a requested mode reload.'
+    $configurationStart = $control.IndexOf('function Set-GuardianConfiguration', [System.StringComparison]::Ordinal)
+    $switchStart = $control.IndexOf('switch ($Action)', [System.StringComparison]::Ordinal)
+    Assert-True ($configurationStart -ge 0 -and $switchStart -gt $configurationStart) 'Could not isolate mode configuration control flow.'
+    $configurationFlow = $control.Substring($configurationStart, $switchStart - $configurationStart)
+    Assert-False $configurationFlow.Contains('Stop-Guardian') 'A settings-only mode change still stops Guardian.'
+    Assert-False $configurationFlow.Contains('Start-Guardian') 'A settings-only mode change still starts Guardian.'
+}
+
+Invoke-Test 'Semantic update selection respects version order and release channel' {
+    Assert-True ((Compare-CpgSemanticVersion '0.4.0-alpha' '0.3.1-alpha') -gt 0)
+    Assert-True ((Compare-CpgSemanticVersion '1.0.0' '1.0.0-rc.1') -gt 0)
+    Assert-True ((Compare-CpgSemanticVersion '1.0.0-alpha.2' '1.0.0-alpha.10') -lt 0)
+    Assert-Equal 0 (Compare-CpgSemanticVersion 'v1.2.3' '1.2.3')
+
+    $releases = @(
+        [pscustomobject]@{ tag_name = 'v0.4.0-alpha'; draft = $false; prerelease = $true },
+        [pscustomobject]@{ tag_name = 'v0.3.2'; draft = $false; prerelease = $false },
+        [pscustomobject]@{ tag_name = 'not-a-version'; draft = $false; prerelease = $false }
+    )
+    Assert-Equal 'v0.4.0-alpha' ([string](Select-CpgUpdateRelease $releases '0.3.1-alpha' Prerelease).tag_name)
+    Assert-Equal 'v0.3.2' ([string](Select-CpgUpdateRelease $releases '0.3.1-alpha' Stable).tag_name)
+    Assert-Null (Select-CpgUpdateRelease $releases '0.4.0-alpha' Prerelease)
+}
+
+Invoke-Test 'Release checksum parser accepts only a leading SHA-256 digest' {
+    $hash = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
+    Assert-Equal $hash (Get-CpgDeclaredSha256 "$hash  CodexProxyGuardian.zip")
+    Assert-Null (Get-CpgDeclaredSha256 'sha256: invalid')
+    Assert-Null (Get-CpgDeclaredSha256 "prefix $hash")
 }
 
 Invoke-Test 'Configuration migration adds defaults without replacing user choices' {
@@ -256,6 +313,26 @@ Invoke-Test 'Mandatory connectivity is staged before an existing guardian is sto
     Assert-True ($stopIndex -gt $stagingIndex) 'The installer can stop an existing guardian before staged connectivity is checked.'
 }
 
+Invoke-Test 'Installer provisions settings and a verified-release update task' {
+    $installer = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'Install.ps1')
+    foreach ($required in @('Settings.ps1', 'Update.ps1', 'settingsShortcutPath', 'Codex Proxy Guardian Update', '-Install -Silent')) {
+        Assert-True $installer.Contains($required) "Installer is missing update/settings payload: $required"
+    }
+    $updater = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'Update.ps1')
+    Assert-True $updater.Contains('Get-FileHash') 'Updater does not calculate the downloaded archive hash.'
+    Assert-True $updater.Contains('Get-CpgDeclaredSha256') 'Updater does not parse the published checksum.'
+    Assert-True $updater.Contains('https://api.github.com/repos/$repository/releases') 'Updater is not bound to the expected GitHub Releases API.'
+    Assert-True $updater.Contains('$repository = ''CH-ZHOU-0512/codex-proxy-guardian''') 'Updater repository identity is not fixed.'
+    Assert-True $updater.Contains('previous-installation') 'Updater does not snapshot the current installation before replacement.'
+    Assert-True $updater.Contains('Restore-PreviousInstallation') 'Updater does not expose a failed-install rollback path.'
+    Assert-True $updater.Contains('The release archive exceeds the safe extraction limits.') 'Updater does not cap expanded release archives.'
+    Assert-True $updater.Contains('The release archive contains an unsafe path:') 'Updater does not reject unsafe archive paths.'
+    Assert-True $updater.Contains("'-PreserveUpdateTask'") 'Updater can replace its own running scheduled task during installation.'
+    Assert-False $updater.Contains('::Replace($statusTemporaryPath, $updateStatusPath, $null') 'Windows PowerShell cannot bind an empty File.Replace backup path safely.'
+    $control = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'Control.ps1')
+    Assert-False $control.Contains('::Replace($temporaryPath, $configPath, $null') 'Mode changes use an invalid File.Replace backup path.'
+}
+
 Invoke-Test 'Watcher publishes explicit lifecycle states' {
     $watcher = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'src\Watch-CodexProxy.ps1')
     foreach ($state in @('WaitingForProxy', 'Stabilizing', 'Ready', 'EvaluatingCodexLaunch', 'CodexNeedsManagedLaunch', 'CodexResolutionUnavailable', 'RecoveringCodex', 'RecoveryBlockedByCodex', 'RestartCircuitOpen')) {
@@ -302,7 +379,7 @@ Invoke-Test 'Doctor emits a redacted, share-safe JSON report' {
     $reportText = & (Join-Path $repoRoot 'Doctor.ps1') -InstallRoot $diagnosticRoot -Json
     $report = $reportText | ConvertFrom-Json
     Assert-True $report.safeForSharing
-    Assert-Equal 2 ([int]$report.reportSchema)
+    Assert-Equal 3 ([int]$report.reportSchema)
     Assert-False (($reportText -join '') -match [regex]::Escape($env:USERPROFILE)) 'The diagnostic report exposed the user profile path.'
     Assert-False (($reportText -join '') -match '(?i)"(?:activeProxy|systemProxy|proxyUri|proxyServer)"\s*:') 'The diagnostic report exposed a raw proxy field.'
 }

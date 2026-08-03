@@ -8,7 +8,7 @@
    Stop-ScheduledTask -TaskName 'Codex Proxy Guardian'
    ```
 
-2. Set `Mode` to `Safe`, and set both `ManageExternalCodexLaunches` and `SafeRepairExternalCodexLaunches` to `false` in the installed `config.json` to temporarily disable takeover of ordinary Codex launches.
+2. Select Automatic (`Safe`) in **Codex Proxy Guardian Settings**. To disable ordinary-launch repair completely, also set `SafeRepairExternalCodexLaunches` to `false` in the installed `config.json`.
 3. Inspect `status.json` and the newest `logs\guardian-*.jsonl` file. Repeated `proxy_changed` events indicate an unstable candidate selection; repeated `unmanaged_codex` or `external_codex_repair` events indicate that an ordinary Codex launch did not carry the current proxy argument.
 4. Set `ExplicitProxy` to the stable HTTP/mixed inbound endpoint if automatic discovery sees multiple listeners.
 5. Increase `DebounceSeconds`, `StableSamples`, or `RestartCooldownSeconds` for a proxy application that recreates listeners during profile switches.
@@ -20,6 +20,10 @@ The watchdog intentionally matches `--proxy-server=<validated URI>` on the curre
 ## Codex stayed closed after a managed restart
 
 Version 0.2 and later persists a `RecoveryLaunchRequired` flag before stopping Codex. If launch fails, `GuardianState` becomes `RecoveringCodex` and the guardian retries while the proxy remains valid. Starting with 0.3, Safe mode observes a separately launched Codex that lacks the current proxy argument: it leaves the process alone if current-proxy traffic appears during the evidence window, and otherwise performs one controlled repair. Such a process can produce `RecoveryBlockedByCodex` only when both `SafeRepairExternalCodexLaunches` and `ManageExternalCodexLaunches` are disabled; in that case, close it and use **Codex (Managed Proxy)**. Failed attempts share the normal restart budget; after the limit, `RestartCircuitOpen` prevents an unbounded loop. Check the newest `codex_started`, `loop_error`, and `restart_circuit_opened` log events. Do not delete `state.json` merely to bypass the limit; correct the launch or package-resolution failure first.
+
+## Automatic update failed
+
+Run `Control.ps1 -Action CheckUpdate` to inspect the configured channel. Update logs are under `logs\update-*.jsonl`. GitHub reachability, incomplete Release assets, a SHA-256 mismatch, or a missing task can block an update; each failure retains the current version rather than partially overwriting it. Re-run the newest `Install.ps1` to restore a missing `Codex Proxy Guardian Update` task.
 
 ## No proxy is selected
 

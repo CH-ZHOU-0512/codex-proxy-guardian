@@ -5,11 +5,14 @@ param(
     [ValidateNotNullOrEmpty()][string]$TaskName = 'Codex Proxy Guardian',
     [ValidateNotNullOrEmpty()][string]$RunValueName = 'CodexProxyGuardian',
     [ValidateNotNullOrEmpty()][string]$ShortcutName = 'Codex (Managed Proxy).lnk',
+    [ValidateNotNullOrEmpty()][string]$SettingsShortcutName = 'Codex Proxy Guardian Settings.lnk',
+    [ValidateNotNullOrEmpty()][string]$UpdateTaskName = 'Codex Proxy Guardian Update',
     [switch]$AllowMissingCodex,
     [switch]$RequireConnectivity,
     [switch]$SkipConnectivityCheck,
     [switch]$NoShortcut,
     [switch]$NoStart,
+    [switch]$PreserveUpdateTask,
     [switch]$PreflightOnly
 )
 
@@ -122,11 +125,29 @@ if ($null -ne $existingTask -and (Test-MarkerMatchesRoot $existingMarker $resolv
 
 $programs = [Environment]::GetFolderPath('Programs')
 $shortcutPath = Join-Path $programs $ShortcutName
+$settingsShortcutPath = Join-Path $programs $SettingsShortcutName
 if ([System.IO.Path]::GetFileName($ShortcutName) -ne $ShortcutName -or -not $ShortcutName.EndsWith('.lnk', [System.StringComparison]::OrdinalIgnoreCase)) {
     throw '-ShortcutName must be a .lnk file name without directory components.'
 }
+if ([System.IO.Path]::GetFileName($SettingsShortcutName) -ne $SettingsShortcutName -or -not $SettingsShortcutName.EndsWith('.lnk', [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw '-SettingsShortcutName must be a .lnk file name without directory components.'
+}
 if (-not $NoShortcut -and (Test-Path -LiteralPath $shortcutPath) -and -not (Test-MarkerMatchesRoot $existingMarker $resolvedRoot)) {
     throw "A shortcut already exists and is not owned by this installation: $shortcutPath"
+}
+if (-not $NoShortcut -and (Test-Path -LiteralPath $settingsShortcutPath) -and -not (Test-MarkerMatchesRoot $existingMarker $resolvedRoot)) {
+    throw "A settings shortcut already exists and is not owned by this installation: $settingsShortcutPath"
+}
+
+$existingUpdateTask = Get-ScheduledTask -TaskName $UpdateTaskName -ErrorAction SilentlyContinue
+if ($null -ne $existingUpdateTask) {
+    $expectedUpdater = Join-Path $resolvedRoot 'Update.ps1'
+    $ownedUpdateAction = @($existingUpdateTask.Actions | Where-Object {
+        ([string]$_.Arguments).IndexOf($expectedUpdater, [System.StringComparison]::OrdinalIgnoreCase) -ge 0
+    }).Count -gt 0
+    if (-not (Test-MarkerMatchesRoot $existingMarker $resolvedRoot) -or -not $ownedUpdateAction) {
+        throw "A scheduled task named '$UpdateTaskName' exists and is not owned by this installation."
+    }
 }
 
 $preflight = [pscustomobject]@{
@@ -208,14 +229,17 @@ New-Item -ItemType Directory -Path (Join-Path $resolvedRoot 'logs') -Force | Out
 
 $marker = [ordered]@{
     productId = 'CodexProxyGuardian'
-    markerSchema = 1
+    markerSchema = 2
     version = $version
     installRoot = $resolvedRoot
     taskName = $TaskName
     runValueName = $RunValueName
     shortcutPath = if ($NoShortcut) { $null } else { $shortcutPath }
+    settingsShortcutPath = if ($NoShortcut) { $null } else { $settingsShortcutPath }
+    updateTaskName = $UpdateTaskName
     startupMode = $null
     startupError = $null
+    updateTaskError = $null
     installedUtc = (Get-Date).ToUniversalTime().ToString('o')
     systemProxyModified = $false
     winHttpModified = $false
@@ -233,6 +257,8 @@ $payload = [ordered]@{
     (Join-Path $sourceRoot 'Status.ps1') = 'Status.ps1'
     (Join-Path $sourceRoot 'Doctor.ps1') = 'Doctor.ps1'
     (Join-Path $sourceRoot 'Control.ps1') = 'Control.ps1'
+    (Join-Path $sourceRoot 'Settings.ps1') = 'Settings.ps1'
+    (Join-Path $sourceRoot 'Update.ps1') = 'Update.ps1'
     (Join-Path $sourceRoot 'LICENSE') = 'LICENSE'
     (Join-Path $sourceRoot 'VERSION') = 'VERSION'
     (Join-Path $sourceRoot 'config\config.schema.json') = 'config.schema.json'
@@ -276,6 +302,21 @@ catch {
     New-ItemProperty -LiteralPath $runKey -Name $RunValueName -PropertyType String -Value $runCommand -Force | Out-Null
 }
 
+$updateTaskError = $null
+try {
+    if (-not ($PreserveUpdateTask -and $null -ne $existingUpdateTask)) {
+        $updateAction = New-ScheduledTaskAction -Execute $powershellPath -Argument ('-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File "{0}" -Install -Silent' -f (Join-Path $resolvedRoot 'Update.ps1')) -WorkingDirectory $resolvedRoot
+        $updateTrigger = New-ScheduledTaskTrigger -Daily -At '12:00'
+        $updatePrincipal = New-ScheduledTaskPrincipal -UserId $identity -LogonType Interactive -RunLevel Limited
+        $updateSettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Hours 2)
+        Register-ScheduledTask -TaskName $UpdateTaskName -Action $updateAction -Trigger $updateTrigger -Principal $updatePrincipal -Settings $updateSettings -Description 'Checks the project GitHub Releases, verifies the release SHA-256, and safely updates Codex Proxy Guardian.' -Force | Out-Null
+    }
+}
+catch {
+    $updateTaskError = $_.Exception.Message
+    Write-Warning "Automatic update task registration failed. Manual updates remain available through Control.ps1. Error: $updateTaskError"
+}
+
 if (-not $NoShortcut) {
     $shell = New-Object -ComObject WScript.Shell
     $shortcut = $shell.CreateShortcut($shortcutPath)
@@ -285,10 +326,19 @@ if (-not $NoShortcut) {
     if ($null -ne $codexApp) { $shortcut.IconLocation = "$($codexApp.ExecutablePath),0" }
     $shortcut.Description = 'Launch Codex through Codex Proxy Guardian'
     $shortcut.Save()
+
+    $settingsShortcut = $shell.CreateShortcut($settingsShortcutPath)
+    $settingsShortcut.TargetPath = $powershellPath
+    $settingsShortcut.Arguments = '-NoLogo -NoProfile -STA -ExecutionPolicy Bypass -WindowStyle Hidden -File "{0}"' -f (Join-Path $resolvedRoot 'Settings.ps1')
+    $settingsShortcut.WorkingDirectory = $resolvedRoot
+    if ($null -ne $codexApp) { $settingsShortcut.IconLocation = "$($codexApp.ExecutablePath),0" }
+    $settingsShortcut.Description = 'Configure Codex Proxy Guardian mode and automatic updates'
+    $settingsShortcut.Save()
 }
 
 $marker.startupMode = $startupMode
 $marker.startupError = $startupError
+$marker.updateTaskError = $updateTaskError
 $marker | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $resolvedRoot $markerName) -Encoding UTF8
 
 $runtimeStatus = $null
@@ -348,7 +398,12 @@ if ($managedLaunchRecommended) {
     Mode = [string]$effectiveConfig.Mode
     StartupMode = $startupMode
     TaskName = if ($startupMode -eq 'ScheduledTask') { $TaskName } else { $null }
+    UpdateTaskName = if ($null -eq $updateTaskError) { $UpdateTaskName } else { $null }
     ManagedShortcut = if ($NoShortcut) { $null } else { $shortcutPath }
+    SettingsShortcut = if ($NoShortcut) { $null } else { $settingsShortcutPath }
+    AutomaticUpdates = [bool](Get-CpgConfigValue $effectiveConfig 'AutomaticUpdates' $true)
+    UpdateChannel = [string](Get-CpgConfigValue $effectiveConfig 'UpdateChannel' 'Prerelease')
+    UpdateTaskPreserved = ($PreserveUpdateTask -and $null -ne $existingUpdateTask)
     ConnectivityCheck = $connectivityState
     GuardianState = if ($null -eq $runtimeStatus) { $null } else { [string]$runtimeStatus.guardianState }
     ActiveProxyValid = if ($null -eq $runtimeStatus) { $null } else { [bool]$runtimeStatus.activeProxyValid }

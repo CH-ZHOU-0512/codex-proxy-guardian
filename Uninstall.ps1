@@ -28,6 +28,10 @@ if (-not [string]::Equals($markedRoot, $resolvedRoot, [System.StringComparison]:
 $taskName = [string]$marker.taskName
 $runValueName = [string]$marker.runValueName
 $shortcutPath = [string]$marker.shortcutPath
+$settingsShortcutProperty = $marker.PSObject.Properties['settingsShortcutPath']
+$settingsShortcutPath = if ($null -eq $settingsShortcutProperty) { '' } else { [string]$settingsShortcutProperty.Value }
+$updateTaskProperty = $marker.PSObject.Properties['updateTaskName']
+$updateTaskName = if ($null -eq $updateTaskProperty) { '' } else { [string]$updateTaskProperty.Value }
 $task = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
 if ($null -ne $task) {
     $expectedWatcher = Join-Path $resolvedRoot 'Watch-CodexProxy.ps1'
@@ -35,6 +39,15 @@ if ($null -ne $task) {
         ([string]$_.Arguments).IndexOf($expectedWatcher, [System.StringComparison]::OrdinalIgnoreCase) -ge 0
     }).Count -gt 0
     if (-not $ownedAction) { throw "Refusing to unregister scheduled task '$taskName' because its action is not owned by '$resolvedRoot'." }
+}
+
+$updateTask = if ([string]::IsNullOrWhiteSpace($updateTaskName)) { $null } else { Get-ScheduledTask -TaskName $updateTaskName -ErrorAction SilentlyContinue }
+if ($null -ne $updateTask) {
+    $expectedUpdater = Join-Path $resolvedRoot 'Update.ps1'
+    $ownedUpdateAction = @($updateTask.Actions | Where-Object {
+        ([string]$_.Arguments).IndexOf($expectedUpdater, [System.StringComparison]::OrdinalIgnoreCase) -ge 0
+    }).Count -gt 0
+    if (-not $ownedUpdateAction) { throw "Refusing to unregister scheduled task '$updateTaskName' because it is not owned by '$resolvedRoot'." }
 }
 
 if (-not $PSCmdlet.ShouldProcess($resolvedRoot, 'Uninstall Codex Proxy Guardian and remove its files')) { return }
@@ -49,6 +62,10 @@ New-Item -ItemType File -Path (Join-Path $resolvedRoot 'stop.request') -Force | 
 if ($null -ne $task) {
     Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
     Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
+}
+if ($null -ne $updateTask) {
+    Stop-ScheduledTask -TaskName $updateTaskName -ErrorAction SilentlyContinue
+    Unregister-ScheduledTask -TaskName $updateTaskName -Confirm:$false
 }
 
 $deadline = (Get-Date).AddSeconds(20)
@@ -80,6 +97,19 @@ if (-not [string]::IsNullOrWhiteSpace($shortcutPath) -and (Test-Path -LiteralPat
     else { Write-Warning "The recorded shortcut was not removed because it no longer points to this installation: $shortcutPath" }
 }
 
+if (-not [string]::IsNullOrWhiteSpace($settingsShortcutPath) -and (Test-Path -LiteralPath $settingsShortcutPath)) {
+    $settingsShortcutOwned = $false
+    try {
+        $shell = New-Object -ComObject WScript.Shell
+        $settingsShortcut = $shell.CreateShortcut($settingsShortcutPath)
+        $expectedSettingsScript = Join-Path $resolvedRoot 'Settings.ps1'
+        $settingsShortcutOwned = (([string]$settingsShortcut.Arguments).IndexOf($expectedSettingsScript, [System.StringComparison]::OrdinalIgnoreCase) -ge 0)
+    }
+    catch { $settingsShortcutOwned = $false }
+    if ($settingsShortcutOwned) { Remove-Item -LiteralPath $settingsShortcutPath -Force }
+    else { Write-Warning "The recorded settings shortcut was not removed because it no longer points to this installation: $settingsShortcutPath" }
+}
+
 $keptLogsPath = $null
 if ($KeepLogs -and (Test-Path -LiteralPath (Join-Path $resolvedRoot 'logs'))) {
     $keptLogsPath = Join-Path $env:LOCALAPPDATA ("CodexProxyGuardian-logs-{0}-{1}" -f (Get-Date -Format 'yyyyMMdd-HHmmss'), [Guid]::NewGuid().ToString('N').Substring(0, 8))
@@ -97,7 +127,9 @@ Remove-Item -LiteralPath $resolvedRoot -Recurse -Force
     AlreadyAbsent = $false
     RemovedPath = $resolvedRoot
     RemovedTask = if ($null -eq $task) { $null } else { $taskName }
+    RemovedUpdateTask = if ($null -eq $updateTask) { $null } else { $updateTaskName }
     RemovedShortcut = if ([string]::IsNullOrWhiteSpace($shortcutPath)) { $null } else { $shortcutPath }
+    RemovedSettingsShortcut = if ([string]::IsNullOrWhiteSpace($settingsShortcutPath)) { $null } else { $settingsShortcutPath }
     KeptLogsPath = $keptLogsPath
     SystemProxyModified = $false
 }

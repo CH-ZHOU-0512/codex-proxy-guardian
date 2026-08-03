@@ -4,6 +4,14 @@ All notable changes are documented here. This project follows semantic versionin
 
 ## [未发布 / Unreleased]
 
+## [0.4.0-alpha] - 2026-08-03
+
+- 增加开始菜单设置窗口，将技术模式显示为“自动（Safe）”和“严格（Enforce）”，无需手改 JSON。
+- `Control.ps1` 增加 `SetMode`、`ToggleMode`、`Configure`、`CheckUpdate` 和 `Update` 操作；模式切换由 Guardian 后台热加载，不重启 Guardian 或 Codex。
+- 增加每日当前用户自动更新任务；更新器固定到本项目 GitHub Release，并核对通道、语义版本、资产名称、包内 `VERSION` 和 SHA-256。
+- 自动更新增加安装前快照、失败回滚、GitHub 资产摘要核对与安全解压限制，并写入独立更新日志；设置窗口可关闭自动更新或选择 Stable/Prerelease 通道。
+- 状态与 Doctor 报告增加用户模式、自动更新配置、任务状态和最近运行结果。
+
 ## [0.3.1-alpha] - 2026-08-03
 
 - 修复旧 Guardian 异常退出且 PID 被其他程序复用时，安装器为避免误杀而拒绝升级的问题。

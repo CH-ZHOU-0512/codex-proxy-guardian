@@ -47,6 +47,12 @@ In Safe mode, an ordinary Codex root missing the launch argument enters an evide
 
 A recovery flag is written before the old Codex process is stopped and cleared only after a matching new root is observed. A failed launch is retried only while the proxy is still valid. A sliding restart window opens a persistent circuit breaker after the configured limit; while open, the guardian performs no further lifecycle action. This converts a bad detection or launch environment into a diagnosable degraded state instead of an endless restart loop or an unreported closed application.
 
+## Mode and update control plane
+
+`Settings.ps1` is a current-user WinForms front end. It delegates changes to `Control.ps1`, which maps the user-facing Automatic/Strict profiles to the internal Safe/Enforce fields, writes `config.json` atomically, and restarts only the guardian when the mode changes.
+
+`Update.ps1` runs independently from the guardian under a daily current-user scheduled task. It selects a newer release from the fixed GitHub repository and configured channel, requires exact tag/archive/staged-version agreement, verifies the attached SHA-256, and only then invokes the staged installer. The existing installer owns migration, task repair, current-Codex adoption, and rollback-by-retention behavior; an update failure leaves the installed tree untouched until verification has completed.
+
 ## Effectiveness evidence
 
 1. **ValidatedProxy**: the chosen endpoint has a listener and reaches the configured HTTPS quorum through an explicit .NET `WebProxy` transport.

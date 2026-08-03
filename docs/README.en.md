@@ -31,7 +31,8 @@ The manual workaround is to find the current port, close Codex, set proxy enviro
 - Candidate ordering is deterministic and keeps the current endpoint within the same priority tier, avoiding port flip-flop.
 - The MSIX manifest is periodically re-read, so a Store update can move the executable without leaving the guardian on a stale version path.
 - Uninstall removes only resources whose installation marker and target paths match.
-- `Safe` is the default mode. For a normally launched Codex process missing the current proxy argument, it waits for traffic evidence before performing one controlled repair; a process already observed using the validated proxy is left untouched.
+- Automatic (`Safe`) is the default mode. For a normally launched Codex process missing the current proxy argument, it waits for traffic evidence before performing one controlled repair; a process already observed using the validated proxy is left untouched.
+- A daily current-user task checks this project's GitHub Releases and installs an update only after tag, filename, staged `VERSION`, and SHA-256 checks agree.
 
 ## Supported baseline
 
@@ -61,7 +62,7 @@ If your local execution policy does not allow direct invocation:
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Install.ps1
 ```
 
-The default installation is `%LOCALAPPDATA%\CodexProxyGuardian`. Setup creates a current-user scheduled task and a Start Menu shortcut named **Codex (Managed Proxy)**. If Task Scheduler registration is unavailable, it falls back to the current user's `Run` key.
+The default installation is `%LOCALAPPDATA%\CodexProxyGuardian`. Setup creates the guardian and update tasks, a **Codex (Managed Proxy)** shortcut, and a **Codex Proxy Guardian Settings** shortcut. The settings window switches mode, automatic updates, and update channel without editing JSON. If guardian Task Scheduler registration is unavailable, startup falls back to the current user's `Run` key.
 
 Setup checks connectivity but treats a temporarily offline proxy as a warning. Use `-RequireConnectivity` to make that check mandatory:
 
@@ -75,20 +76,22 @@ To stage on a machine without Codex installed:
 .\Install.ps1 -AllowMissingCodex -NoStart
 ```
 
-## Modes
+## Automatic and Strict modes
 
-| Mode | Behavior | Recommendation |
-|---|---|---|
-| `Safe` | For an ordinary Codex launch missing the current proxy argument, waits 20 seconds for proxy-traffic evidence; leaves a working process alone or performs one controlled repair | Default for public installs |
-| `Enforce` | Relaunches a Codex root missing the current proxy argument after debounce, without the Safe traffic-evidence exemption | Opt in when exact launch arguments must be enforced |
+| User profile | Internal mode | Behavior | Recommendation |
+|---|---|---|---|
+| Automatic | `Safe` | Waits 20 seconds for proxy-traffic evidence; leaves a working process alone or performs one controlled repair | Default for public installs |
+| Strict | `Enforce` | Repairs a missing proxy argument after debounce, without the Safe traffic-evidence exemption | Opt in when exact launch arguments must be enforced |
 
-Enable Enforce mode during installation or update:
+Use the Start Menu settings window, or switch with one command:
 
 ```powershell
-.\Install.ps1 -Mode Enforce
+.\Control.ps1 -Action SetMode -Mode Auto
+.\Control.ps1 -Action SetMode -Mode Strict
+.\Control.ps1 -Action ToggleMode
 ```
 
-The earlier restart-loop class is avoided by matching the root process's proxy argument, not a short-lived launcher PID. In short, Safe means “prove a repair is needed first,” while Enforce means “repair any argument mismatch.” Explicitly opening **Codex (Managed Proxy)** remains the immediate deterministic path, and the same cooldown/circuit protection applies to every repair. During a Store update, an existing Codex process is left running if the replacement MSIX executable cannot yet be resolved.
+The earlier restart-loop class is avoided by matching the root process's proxy argument, not a short-lived launcher PID. In short, Automatic means “prove a repair is needed first,” while Strict means “repair any argument mismatch.” The program does not silently change a user's long-term profile from Automatic to Strict; the automatic decision is made per Codex launch from traffic evidence. Mode changes are reloaded by the guardian in the background without restarting Guardian or the current Codex process. Explicitly opening **Codex (Managed Proxy)** remains the immediate deterministic path, and the same cooldown/circuit protection applies to every repair. During a Store update, an existing Codex process is left running if the replacement MSIX executable cannot yet be resolved.
 
 ## Configuration
 
@@ -97,6 +100,8 @@ Edit `%LOCALAPPDATA%\CodexProxyGuardian\config.json`, then restart the scheduled
 ```json
 {
   "ExplicitProxy": "http://127.0.0.1:7890",
+  "AutomaticUpdates": true,
+  "UpdateChannel": "Prerelease",
   "AllowNonLoopbackProxy": false,
   "ManageExternalCodexLaunches": false,
   "SafeRepairExternalCodexLaunches": true,
@@ -107,6 +112,17 @@ Edit `%LOCALAPPDATA%\CodexProxyGuardian\config.json`, then restart the scheduled
 ```
 
 `ExplicitProxy` has the highest priority. Leave it empty to inspect the current Windows proxy and recognized proxy-process listeners. See [default-config.json](../config/default-config.json) and [config.schema.json](../config/config.schema.json).
+
+## Automatic updates
+
+The daily updater is bound to `CH-ZHOU-0512/codex-proxy-guardian`. It requires the Release tag, archive name, staged `VERSION`, attached `.sha256`, and the GitHub asset digest when available to agree before invoking the installer. It rejects unsafe archive paths and extraction limits, snapshots the current files, and attempts to restore the previous version and guardian after an interrupted install. Results are written to `logs\update-*.jsonl`.
+
+```powershell
+.\Control.ps1 -Action CheckUpdate
+.\Control.ps1 -Action Update
+```
+
+Alpha builds default to the `Prerelease` channel. Choose Stable in the settings window to ignore prereleases, or disable automatic updates entirely. An in-place update preserves configuration and asks the guardian to adopt the current Codex session.
 
 ## Status and logs
 
@@ -134,6 +150,8 @@ Control the guardian itself without touching Codex or Windows networking:
 .\Control.ps1 -Action Restart
 .\Control.ps1 -Action Stop
 .\Control.ps1 -Action Start
+.\Control.ps1 -Action SetMode -Mode Auto
+.\Control.ps1 -Action CheckUpdate
 ```
 
 Runtime status is in `status.json`; daily JSON Lines logs are under `logs`. Logs rotate by size, age, and count. Proxy credentials are never accepted or logged.
