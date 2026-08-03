@@ -39,6 +39,7 @@
 - 提供重启冷却、十分钟重启次数限制、熔断和启动失败恢复，避免形成 Codex 重启循环。
 - 自动适配 Microsoft Store / MSIX 版 Codex 更新后的安装路径，并支持 x64 和 ARM64。
 - 每日检查本项目 GitHub Release，只有版本、文件名和 SHA-256 全部匹配时才静默原位升级。
+- 提供单文件图形化安装器，普通用户双击即可安装或升级；无需管理员权限。
 - 以当前用户身份静默运行、登录后自启，不要求管理员权限。
 - 提供开始菜单设置窗口、状态、日志、在线诊断、单实例保护和安全卸载脚本。
 
@@ -68,9 +69,27 @@
 
 ## 下载与安装
 
-从 [Releases 发布页面](https://github.com/CH-ZHOU-0512/codex-proxy-guardian/releases)下载最新 ZIP 并解压。不要直接下载 GitHub 自动生成的 `Source code` 压缩包，因为正式 Release ZIP 已经过测试、打包并附带 SHA-256 校验文件。
+### 推荐：双击 EXE 一键安装
 
-在**普通权限、非管理员** PowerShell 中进入解压目录并执行：
+1. 打开[最新正式版下载页](https://github.com/CH-ZHOU-0512/codex-proxy-guardian/releases/latest)，下载名称以 `CodexProxyGuardian-Setup-` 开头、以 `.exe` 结尾的文件；
+2. 双击 EXE，确认界面显示的项目地址为 `CH-ZHOU-0512/codex-proxy-guardian`；
+3. 点击“立即安装”。完成后 Guardian 已在后台运行，以后照常点击原来的 Codex 图标即可。
+
+一键安装器只安装到当前用户，不会请求管理员权限，也不会修改 Windows 系统代理、WinHTTP、DNS、路由或永久环境变量。它内嵌经过同一次 CI 构建的正式 Release ZIP，并在运行前检查版本和必需文件。
+
+> [!WARNING]
+> 当前项目没有商业代码签名证书，因此 Windows SmartScreen 可能显示“Windows 已保护你的电脑”。请只从本仓库的正式 Release 下载；介意此提示或无法确认来源时，请使用下面的 ZIP 手动安装方式。不要关闭系统安全功能。
+
+需要核对下载完整性时，同时下载 EXE 对应的 `.sha256` 文件，并比较以下命令输出的哈希：
+
+```powershell
+Get-FileHash .\CodexProxyGuardian-Setup-*.exe -Algorithm SHA256
+Get-Content .\CodexProxyGuardian-Setup-*.exe.sha256
+```
+
+### 备用：ZIP 手动安装
+
+从同一 Release 下载 `CodexProxyGuardian-版本号.zip` 及对应 `.sha256`，解压后在**普通权限、非管理员** PowerShell 中进入目录并执行。不要使用 GitHub 自动生成的 `Source code` 压缩包。
 
 ```powershell
 Unblock-File .\Install.ps1
@@ -92,7 +111,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Install.ps1
 
 ### 安装后怎么使用
 
-**只需要先运行一次安装脚本。** 除非安装时使用了 `-NoStart`，守护程序会在安装完成后立即启动，并在以后登录 Windows 时自动静默运行；不需要每次打开 PowerShell，也不需要手动先启动守护程序。
+**只需要安装一次。** 守护程序会在安装完成后立即启动，并在以后登录 Windows 时自动静默运行；不需要每次打开 PowerShell，也不需要手动先启动守护程序。ZIP 高级安装只有在使用 `-NoStart` 时才不会立即启动。
 
 默认“自动（Safe）”模式也会检查从原图标打开的 Codex：如果它缺少当前代理参数，Guardian 会先等待证据；等待期间如果观察到该进程已经在通过当前代理通信，就保持不动，否则只进行一次受控重启。开始菜单中的 **Codex (Managed Proxy)** 仍然是立即、明确地使用已验证代理的方式，但不再是普通用户每次启动 Codex 的必选动作。
 
@@ -100,7 +119,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Install.ps1
 
 | 你的操作 | 是否需要额外动作 |
 |---|---|
-| 首次安装 | 运行一次 `Install.ps1` |
+| 首次安装 | 推荐双击 Release 中的 Setup EXE；也可运行一次 `Install.ps1` |
 | 直接点击原来的 Codex 图标 | 不需要；自动模式会先观察，必要时受控重启一次 |
 | 希望立即确定代理参数已经带上 | 点击开始菜单中的 **Codex (Managed Proxy)** |
 | 以后启动守护程序 | 不需要；它会登录后自动静默运行 |

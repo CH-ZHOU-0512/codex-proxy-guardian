@@ -7,6 +7,7 @@
 | OS | Windows 11 | Current-user interactive desktop only |
 | Architecture | x64, ARM64 | Executable is resolved from the MSIX manifest |
 | Codex distribution | Microsoft Store / Store-signed MSIX | Package name defaults to `OpenAI.Codex` and is configurable |
+| One-click setup | Windows 11 inbox .NET Framework 4.8 | Current-user graphical setup; use the ZIP where unsigned-app policy blocks it |
 | Shell | Windows PowerShell 5.1 | PowerShell 7 can run setup/tests, but the task uses inbox Windows PowerShell |
 | Proxy scheme | HTTP, HTTPS | An explicit port is required |
 | Windows proxy | Manual `ProxyServer` | Supports one endpoint or `http=...;https=...` forms |

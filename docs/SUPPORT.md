@@ -9,6 +9,7 @@
 | 操作系统 | Windows 11 | 仅当前用户的交互式桌面会话 |
 | 架构 | x64、ARM64 | 从 MSIX 清单解析可执行文件，不写死版本路径 |
 | Codex 来源 | Microsoft Store / Store 签名 MSIX | 默认包名为 `OpenAI.Codex`，可以配置其他精确包名 |
+| 一键安装器 | Windows 11 自带 .NET Framework 4.8 | 当前用户图形化安装；受企业未签名程序策略限制时使用 ZIP |
 | PowerShell | Windows PowerShell 5.1 | PowerShell 7 可运行安装与测试；后台任务使用系统自带 Windows PowerShell |
 | 代理协议 | HTTP、HTTPS | 必须包含明确端口 |
 | Windows 代理 | 手动 `ProxyServer` | 支持单一端点以及 `http=...;https=...` 形式 |
