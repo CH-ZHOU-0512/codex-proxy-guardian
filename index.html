@@ -3,13 +3,14 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Codex 重连 5 次怎么办？Codex Proxy Guardian 自动跟随 Windows 代理</title>
-    <meta name="description" content="Codex Proxy Guardian 是开源的 Windows 11 Codex 桌面版代理守护工具：自动发现并验证 Clash、Mihomo、v2rayN、sing-box 等 HTTP/HTTPS 代理端口，减少 Codex Reconnecting 1/5 到 5/5、代理端口变化和反复重启问题。">
-    <meta name="keywords" content="Codex 重连 5 次,Codex Reconnecting 5/5,Codex 连接不上,Codex 代理,Windows 11,Clash,Mihomo,v2rayN,sing-box,代理端口,Codex Proxy Guardian">
+    <title>Codex 重连 5 次怎么办？Windows、macOS、Linux 代理守护</title>
+    <meta name="description" content="Codex Proxy Guardian 是开源的跨平台 Codex 代理守护工具，支持 Windows 11、macOS 与 Linux：发现并验证 Clash、Mihomo、v2rayN、sing-box 等 HTTP/HTTPS 代理端口，减少 Codex Reconnecting 1/5 到 5/5、端口变化和反复重启问题。">
+    <meta name="keywords" content="Codex 重连 5 次,Codex Reconnecting 5/5,Codex 连接不上,Codex 代理,Windows 11,macOS,Linux,Codex CLI,Clash,Mihomo,v2rayN,sing-box,代理端口,Codex Proxy Guardian">
     <meta name="author" content="CH-ZHOU-0512">
     <meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1,max-video-preview:-1">
     <meta name="theme-color" content="#f3f1e8">
     <link rel="canonical" href="https://ch-zhou-0512.github.io/codex-proxy-guardian/">
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%23111510'/%3E%3Ctext x='32' y='44' text-anchor='middle' font-size='38' font-family='Arial' font-weight='700' fill='%23f3f1e8'%3EC%3C/text%3E%3C/svg%3E">
     <link rel="stylesheet" href="styles.css">
     <script>document.documentElement.classList.add('js')</script>
     <script src="app.js" defer></script>
@@ -18,13 +19,13 @@
     <meta property="og:locale" content="zh_CN">
     <meta property="og:site_name" content="Codex Proxy Guardian">
     <meta property="og:title" content="别再重连五次，才开始思考。">
-    <meta property="og:description" content="让 Codex 自动跟随真正有效的本地代理。端口变化时安全修复，不修改 Windows 网络配置。">
+    <meta property="og:description" content="让 Windows、macOS 和 Linux 上的 Codex 跟随真正有效的本地代理。端口变化时安全修复，不修改系统网络配置。">
     <meta property="og:url" content="https://ch-zhou-0512.github.io/codex-proxy-guardian/">
     <meta property="og:image" content="https://raw.githubusercontent.com/CH-ZHOU-0512/codex-proxy-guardian/main/assets/social-preview.png">
     <meta property="og:image:alt" content="Codex Proxy Guardian：让 Codex 不再因为代理没有跟上而反复重连">
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:title" content="别再重连五次，才开始思考。">
-    <meta name="twitter:description" content="Codex Proxy Guardian 自动发现、验证并跟随 Windows 当前有效代理。">
+    <meta name="twitter:description" content="Codex Proxy Guardian 自动发现、验证并跟随 Windows、macOS、Linux 当前有效代理。">
     <meta name="twitter:image" content="https://raw.githubusercontent.com/CH-ZHOU-0512/codex-proxy-guardian/main/assets/social-preview.png">
 
     <script type="application/ld+json">
@@ -37,21 +38,21 @@
           "url": "https://ch-zhou-0512.github.io/codex-proxy-guardian/",
           "name": "Codex Proxy Guardian",
           "inLanguage": "zh-CN",
-          "description": "解决 Windows 11 Codex 桌面端代理没有跟上、反复重连和代理端口变化的问题。"
+          "description": "解决 Windows、macOS 和 Linux 上 Codex 代理没有跟上、反复重连和代理端口变化的问题。"
         },
         {
           "@type": "SoftwareApplication",
           "@id": "https://ch-zhou-0512.github.io/codex-proxy-guardian/#software",
           "name": "Codex Proxy Guardian",
           "alternateName": "Codex 代理守护程序",
-          "softwareVersion": "1.1.0",
-          "operatingSystem": "Windows 11",
+          "softwareVersion": "1.2.0",
+          "operatingSystem": "Windows 11, macOS, Linux",
           "applicationCategory": "UtilitiesApplication",
           "isAccessibleForFree": true,
           "license": "https://opensource.org/license/mit",
           "codeRepository": "https://github.com/CH-ZHOU-0512/codex-proxy-guardian",
           "downloadUrl": "https://github.com/CH-ZHOU-0512/codex-proxy-guardian/releases/latest",
-          "description": "开源的 Windows 11 Codex 桌面版代理守护工具，自动发现并验证当前 HTTP/HTTPS 代理，在端口稳定变化后让 Codex 使用当前有效代理。",
+          "description": "开源的跨平台 Codex 代理守护工具，自动发现并验证当前 HTTP/HTTPS 代理，在端口稳定变化后让桌面应用或 Codex CLI 使用当前有效代理。",
           "author": {
             "@type": "Person",
             "name": "CH-ZHOU-0512",
@@ -69,18 +70,18 @@
           "mainEntity": [
             {
               "@type": "Question",
-              "name": "直接打开 Codex 时，Codex Proxy Guardian 会自动运行吗？",
+              "name": "安装后直接使用 Codex，Codex Proxy Guardian 会自动运行吗？",
               "acceptedAnswer": {
                 "@type": "Answer",
-                "text": "会。安装一次后，Guardian 会立即启动，并在以后登录 Windows 时静默自启。之后照常从原图标打开 Codex，不需要先打开 PowerShell。"
+                "text": "Windows 和 macOS 安装后会自动运行，用户照常从原图标打开 Codex。Linux 守护服务也会自动运行，但官方 Codex CLI 应通过 codex-guard 启动，这样代理只注入该次命令并保留交互终端。"
               }
             },
             {
               "@type": "Question",
-              "name": "Codex Proxy Guardian 会修改 Windows 系统代理吗？",
+              "name": "Codex Proxy Guardian 会修改系统网络配置吗？",
               "acceptedAnswer": {
                 "@type": "Answer",
-                "text": "不会。它不修改 Windows 系统代理、WinHTTP、DNS、路由或永久环境变量，只读取候选代理并管理 Codex 进程。"
+                "text": "不会。它只读取代理候选并管理 Codex 的启动环境，不修改系统代理、WinHTTP、DNS、路由或永久环境变量。"
               }
             },
             {
@@ -116,6 +117,7 @@
         </a>
         <nav class="main-nav" aria-label="主要导航">
           <a href="#why">为什么有效</a>
+          <a href="#platforms">支持平台</a>
           <a href="#workflow">工作方式</a>
           <a href="#install">安装</a>
           <a href="#faq">常见问题</a>
@@ -128,9 +130,9 @@
       <section class="hero" id="top">
         <div class="shell hero-grid">
           <div class="hero-copy" data-reveal>
-            <p class="eyebrow">Windows 11 · Codex Desktop · Open Source</p>
+            <p class="eyebrow">Windows · macOS · Linux · Open Source</p>
             <h1>别再重连五次，<br>才开始思考。</h1>
-            <p class="lead">Codex Proxy Guardian 会持续确认真正可用的本地代理，在端口变化时安全更新并重启 Codex。</p>
+            <p class="lead">Codex Proxy Guardian 会持续确认真正可用的本地代理，在端口变化时让桌面应用或 Codex CLI 安全跟上。</p>
             <div class="actions">
               <a class="button button-primary" href="https://github.com/CH-ZHOU-0512/codex-proxy-guardian/releases/latest">3 分钟开始使用 <span aria-hidden="true">→</span></a>
               <a class="text-link" href="#workflow">先看看它怎么工作</a>
@@ -227,19 +229,51 @@
         </div>
       </section>
 
+      <section class="section platforms" id="platforms" aria-labelledby="platforms-title">
+        <div class="shell">
+          <div class="section-intro" data-reveal>
+            <div>
+              <p class="eyebrow">Native on three platforms</p>
+              <h2 id="platforms-title">同一个目标，<br>按平台做正确的事。</h2>
+            </div>
+            <p>桌面应用可以受控修复，终端会话不能被粗暴重启。三套适配共享验证与安全边界，但尊重每个平台的真实行为。</p>
+          </div>
+          <div class="platform-grid">
+            <article data-reveal>
+              <span>01 · Windows 11</span>
+              <h3>Store / MSIX 桌面端</h3>
+              <p>继续点击原图标。Guardian 随登录静默自启，必要时在防抖和熔断保护下受控修复。</p>
+              <strong>x64 · ARM64 · Setup EXE</strong>
+            </article>
+            <article data-reveal>
+              <span>02 · macOS</span>
+              <h3>ChatGPT / Codex 桌面应用</h3>
+              <p>当前用户 LaunchAgent 后台运行，精确识别应用根进程；Intel 与 Apple Silicon 都有原生包。</p>
+              <strong>Intel · Apple Silicon · LaunchAgent</strong>
+            </article>
+            <article data-reveal>
+              <span>03 · Linux</span>
+              <h3>官方 Codex CLI</h3>
+              <p>使用 <code>codex-guard</code> 注入已验证代理并保留 TTY。绝不强杀或自动重启交互式终端会话。</p>
+              <strong>x64 · ARM64 · systemd user / XDG</strong>
+            </article>
+          </div>
+        </div>
+      </section>
+
       <section class="section workflow" id="workflow" aria-labelledby="workflow-title">
         <div class="shell">
           <div class="section-intro" data-reveal>
             <div>
               <p class="eyebrow">After installation</p>
-              <h2 id="workflow-title">以后直接打开 Codex，<br>别的什么也不用做。</h2>
+              <h2 id="workflow-title">安装一次，<br>以后按原来的习惯使用。</h2>
             </div>
-            <p>安装只需要完成一次。Guardian 随 Windows 登录静默自启，默认自动模式会先观察、再判断，避免没必要的重启。</p>
+            <p>Windows/macOS 继续正常打开桌面应用；Linux 使用 <code>codex-guard</code>。Guardian 登录后静默自启，先验证、再判断。</p>
           </div>
 
           <ol class="timeline" data-timeline>
-            <li data-reveal><span>01</span><strong>安装一次</strong><p>双击 Setup EXE</p></li>
-            <li data-reveal><span>02</span><strong>照常使用</strong><p>从原图标打开 Codex</p></li>
+            <li data-reveal><span>01</span><strong>安装一次</strong><p>选择当前系统安装包</p></li>
+            <li data-reveal><span>02</span><strong>照常使用</strong><p>桌面原图标 / codex-guard</p></li>
             <li data-reveal><span>03</span><strong>后台判断</strong><p>验证代理与实际流量</p></li>
             <li data-reveal><span>04</span><strong>必要时修复</strong><p>端口变化才安全接管</p></li>
           </ol>
@@ -255,19 +289,19 @@
       <section class="install" id="install" aria-labelledby="install-title">
         <div class="shell install-grid">
           <div data-reveal>
-            <p class="eyebrow">Install · Windows 11</p>
-            <h2 id="install-title">下载、双击、安装。<br>一分钟开始守护。</h2>
-            <p>无需管理员权限；默认安装到当前用户目录。安装器不会修改 Windows 系统代理、DNS、路由或永久环境变量。</p>
+            <p class="eyebrow">Install · v1.2.0 stable</p>
+            <h2 id="install-title">选对系统包，<br>安装一次即可。</h2>
+            <p>Windows 双击 Setup EXE；macOS/Linux 解压后运行 <code>./install.sh</code>。全部安装到当前用户，不使用管理员权限或 sudo。</p>
             <a class="button button-accent" href="https://github.com/CH-ZHOU-0512/codex-proxy-guardian/releases/latest">下载最新正式版 <span aria-hidden="true">↓</span></a>
-            <small>需要：Windows 11 · Codex Desktop · HTTP / HTTPS 或混合代理端口</small>
+            <small>需要：Windows 11 / macOS / Linux · 已有 HTTP、HTTPS 或混合代理端口</small>
           </div>
 
           <div class="terminal" data-reveal aria-label="一键安装步骤">
-            <div class="terminal-head"><strong>Codex Proxy Guardian Setup</strong><span aria-hidden="true">● ● ●</span></div>
+            <div class="terminal-head"><strong>Choose your platform</strong><span aria-hidden="true">● ● ●</span></div>
             <ol>
-              <li><span>01</span>下载正式版 Setup EXE</li>
-              <li><span>02</span>双击并确认官方仓库地址</li>
-              <li><span>03</span><code>点击“立即安装”<br>无需管理员权限</code></li>
+              <li><span>WIN</span><code>CodexProxyGuardian-Setup-1.2.0.exe</code></li>
+              <li><span>MAC</span><code>darwin-arm64 / darwin-amd64<br>./install.sh</code></li>
+              <li><span>LNX</span><code>linux-arm64 / linux-amd64<br>./install.sh && codex-guard</code></li>
             </ol>
             <div class="terminal-success">✓ 安装完成 · Guardian 正在后台运行</div>
           </div>
@@ -301,7 +335,7 @@
           <div class="faq-list" data-reveal>
             <details open>
               <summary>直接用 Codex，Guardian 会自动运行吗？</summary>
-              <p>会。安装一次后，它随 Windows 登录静默启动。以后照常点击原来的 Codex 图标即可，不需要先打开 PowerShell，也不需要手动运行 Guardian。</p>
+              <p>Windows/macOS 会。安装一次后它随登录静默启动，继续照常打开桌面应用。Linux 后台也会自启，但请用 <code>codex-guard</code> 启动 Codex CLI，后台进程无法改写另一个已启动终端的环境。</p>
               <a href="https://github.com/CH-ZHOU-0512/codex-proxy-guardian/discussions/5">查看详细问答 ↗</a>
             </details>
             <details>
@@ -349,7 +383,7 @@
           <a href="https://github.com/CH-ZHOU-0512/codex-proxy-guardian/discussions/4">使用指南</a>
           <a href="https://github.com/CH-ZHOU-0512/codex-proxy-guardian/discussions">Discussions</a>
         </nav>
-        <p>MIT License · v1.1.0 · <a href="https://github.com/CH-ZHOU-0512">CH-ZHOU-0512</a></p>
+        <p>MIT License · v1.2.0 · <a href="https://github.com/CH-ZHOU-0512">CH-ZHOU-0512</a></p>
       </div>
     </footer>
   </body>

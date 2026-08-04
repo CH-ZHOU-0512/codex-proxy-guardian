@@ -1,16 +1,16 @@
 # Codex Proxy Guardian
 
-> 开源的 Windows 11 Codex 桌面版代理守护工具。它解决 Codex 没有使用当前有效代理、代理端口变化，以及 Codex 每次 Reconnecting 1/5 到 5/5 才开始响应等问题。
+> 开源的 Windows、macOS、Linux Codex 代理守护工具。它解决 Codex 没有使用当前有效代理、代理端口变化，以及 Codex 每次 Reconnecting 1/5 到 5/5 才开始响应等问题。
 
 Codex Proxy Guardian 持续发现并验证当前可用的 HTTP/HTTPS 代理。当 Clash、Mihomo、v2rayN、sing-box 等代理程序的监听地址或端口稳定变化后，它让 Codex 使用当前代理，并通过防抖、冷却、重启频率限制和熔断避免重启循环。
 
-推荐从正式 Release 下载 `CodexProxyGuardian-Setup-版本号.exe`，双击并点击“立即安装”。无需管理员权限，也不需要先打开 PowerShell。Guardian 会在安装完成后立即启动，并在以后登录 Windows 时自动静默运行；用户之后可以直接从原图标打开 Codex。
+Windows 推荐下载 `CodexProxyGuardian-Setup-版本号.exe` 双击安装。macOS/Linux 下载与架构匹配的 tar.gz，解压后以普通用户运行 `./install.sh`，不要使用 sudo。Guardian 安装后立即启动并在登录后静默自启；Windows/macOS 继续正常打开桌面应用，Linux 使用 `codex-guard` 启动官方 Codex CLI。
 
 项目没有商业代码签名证书，Windows SmartScreen 可能提示新 EXE 无法识别。用户应只从 `CH-ZHOU-0512/codex-proxy-guardian` 正式 Release 下载并核对 `.sha256`；受策略限制时可改用可直接审阅的 ZIP 与 `Install.ps1`。项目不要求用户关闭系统安全功能。
 
 默认自动（Safe）模式会先等待 20 秒观察 Codex 的真实代理流量；已经能通过当前代理通信就保持不动，否则只进行一次受控修复。严格（Enforce）模式用于需要启动参数绝对一致的环境。
 
-本项目不是代理软件，不提供代理服务、订阅或节点。它不会修改 Windows 系统代理、WinHTTP、DNS、路由或永久环境变量。
+本项目不是代理软件，不提供代理服务、订阅或节点。它不会修改系统代理、WinHTTP、DNS、路由、防火墙或永久环境变量。Linux 当前没有官方 Codex 桌面端，因此 Linux 版只包装官方 Codex CLI，并且不会强杀或自动重启交互式终端会话。
 
 ## Official links
 
@@ -27,4 +27,4 @@ Codex Proxy Guardian 持续发现并验证当前可用的 HTTP/HTTPS 代理。�
 
 ## Current stable version
 
-Version 1.1.0. Windows 11, Microsoft Store/MSIX Codex desktop app, x64 and ARM64. Stable Release includes a one-click EXE plus the auditable ZIP, each with SHA-256.
+Version 1.2.0. Windows 11 Store/MSIX desktop (x64/ARM64), macOS ChatGPT/Codex desktop (Intel/Apple Silicon), and Linux Codex CLI (x64/ARM64). Stable Release includes Windows EXE/ZIP and four native macOS/Linux archives, each with SHA-256.
