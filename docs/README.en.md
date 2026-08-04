@@ -95,7 +95,7 @@ Running plain `codex` still depends on that shell's environment: a guardian cann
 2. Double-click it and confirm that the window links to `CH-ZHOU-0512/codex-proxy-guardian`.
 3. Select **Install now**. Guardian starts in the background when setup completes; keep opening Codex normally afterward.
 
-The installer is current-user only, does not request elevation, and does not change the Windows system proxy, WinHTTP, DNS, routes, or persistent environment variables. It embeds the exact ZIP produced by the same Release build and validates its version and required files before installation.
+The installer is current-user only, does not request elevation, and does not change the Windows system proxy, WinHTTP, DNS, routes, or persistent environment variables. It embeds the exact ZIP produced by the same Release build and validates its version and required files before installation. During setup, the window shows the current stage and determinate 0–100% progress instead of an indefinite spinner.
 
 > [!WARNING]
 > This community project does not currently have a commercial code-signing certificate, so Windows SmartScreen may show an unrecognized-app warning. Download only from this repository's official Releases. Use the ZIP method below if the source cannot be confirmed or your policy blocks unsigned software; do not disable Windows security features.

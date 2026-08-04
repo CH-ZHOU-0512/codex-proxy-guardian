@@ -384,10 +384,13 @@ Invoke-Test 'One-click installer embeds and safely verifies the exact release pa
         'CodexProxyGuardian.Payload.zip', '--verify', 'MaximumEntries', 'MaximumExpandedBytes',
         'MaximumEntryBytes', 'FileMode.CreateNew', 'GetManifestResourceStream',
         'The embedded payload VERSION does not match the installer.',
-        'WindowsPowerShell\v1.0\powershell.exe', 'ExecutionPolicy Bypass'
+        'WindowsPowerShell\v1.0\powershell.exe', 'ExecutionPolicy Bypass',
+        'ProgressBarStyle.Continuous', 'WorkerReportsProgress = true', 'TryParseProgress',
+        'CPG_PROGRESS|', '-ProgressProtocol'
     )) {
         Assert-True $bootstrapper.Contains($required) "One-click installer is missing safety behavior: $required"
     }
+    Assert-False $bootstrapper.Contains('ProgressBarStyle.Marquee') 'One-click installer still uses an indeterminate spinner.'
     Assert-True $bootstrapper.Contains('targetPath.StartsWith(rootPrefix, StringComparison.OrdinalIgnoreCase)') 'One-click installer does not reject paths outside its temporary root.'
     Assert-True $bootstrapper.Contains('process.WaitForExit(10 * 60 * 1000)') 'One-click installer has no bounded wait for Install.ps1.'
     Assert-False ($bootstrapper -match '(?i)SetEnvironmentVariable|ProxyEnable|netsh\s+winhttp') 'One-click installer directly mutates network or persistent environment configuration.'
@@ -401,6 +404,32 @@ Invoke-Test 'One-click installer embeds and safely verifies the exact release pa
     $releaseWorkflow = Get-Content -Raw -LiteralPath (Join-Path $repoRoot '.github\workflows\release.yml')
 	Assert-True $releaseWorkflow.Contains('Get-ChildItem -LiteralPath .\artifacts -File') 'GitHub Release does not publish all generated assets.'
 	Assert-True $releaseWorkflow.Contains('Expected at least 12 release assets') 'GitHub Release does not enforce the complete cross-platform asset set.'
+}
+
+Invoke-Test 'Installer progress protocol reports determinate stages' {
+    $installer = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'Install.ps1')
+    foreach ($required in @('[switch]$ProgressProtocol', 'Write-CpgInstallProgress', 'CPG_PROGRESS|{0}|{1}', "Write-CpgInstallProgress 100 '")) {
+        Assert-True $installer.Contains($required) "Installer progress protocol is missing: $required"
+    }
+
+    $windowsPowerShell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    $testId = [Guid]::NewGuid().ToString('N')
+    $testRoot = Join-Path $env:TEMP ('cpg-progress-preflight-' + $testId)
+    $output = @(& $windowsPowerShell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $repoRoot 'Install.ps1') -InstallRoot $testRoot -TaskName "CPG Test $testId" -RunValueName "CPGTest-$testId" -ShortcutName "CPG Test $testId.lnk" -SettingsShortcutName "CPG Settings Test $testId.lnk" -UpdateTaskName "CPG Update Test $testId" -AllowMissingCodex -PreflightOnly -ProgressProtocol 2>&1)
+    $exitCode = $LASTEXITCODE
+    Assert-Equal 0 $exitCode 'Installer progress preflight failed.'
+
+    $progressLines = @($output | ForEach-Object { [string]$_ } | Where-Object { $_ -match '^CPG_PROGRESS\|\d+\|' })
+    Assert-True ($progressLines.Count -ge 3) 'Installer did not emit enough progress stages.'
+    foreach ($percent in @(30, 38, 100)) {
+        Assert-Equal 1 @($progressLines | Where-Object { $_ -like "CPG_PROGRESS|$percent|*" }).Count "Installer did not emit progress stage $percent."
+    }
+    $progressPercents = @($progressLines | ForEach-Object { [int](($_ -split '\|', 3)[1]) })
+    Assert-Equal '30,34,38,100' ($progressPercents -join ',') 'Installer preflight progress is incomplete or not monotonic.'
+
+    $plainOutput = @(& $windowsPowerShell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $repoRoot 'Install.ps1') -InstallRoot $testRoot -TaskName "CPG Test $testId" -RunValueName "CPGTest-$testId" -ShortcutName "CPG Test $testId.lnk" -SettingsShortcutName "CPG Settings Test $testId.lnk" -UpdateTaskName "CPG Update Test $testId" -AllowMissingCodex -PreflightOnly 2>&1)
+    Assert-Equal 0 $LASTEXITCODE 'Plain installer preflight failed.'
+    Assert-False (($plainOutput -join [Environment]::NewLine).Contains('CPG_PROGRESS|')) 'Manual script execution exposed the private installer progress protocol.'
 }
 
 Invoke-Test 'Watcher publishes explicit lifecycle states' {
@@ -423,7 +452,7 @@ Invoke-Test 'Injected Codex proxy variables cannot feed back into discovery' {
 Invoke-Test 'Source contains no original-machine fingerprints' {
     $forbidden = @('Gzhou', 'POTATO', 'C:\VPN', '26.727.6591.0')
     $hits = @()
-    foreach ($file in @(Get-ChildItem -LiteralPath $repoRoot -Recurse -File | Where-Object { $_.FullName -notlike '*\.git\*' -and $_.FullName -notlike '*\artifacts\*' -and $_.FullName -notlike '*\tests\*' })) {
+    foreach ($file in @(Get-ChildItem -LiteralPath $repoRoot -Recurse -File | Where-Object { $_.Extension -ne '.exe' -and $_.FullName -notlike '*\.git\*' -and $_.FullName -notlike '*\artifacts\*' -and $_.FullName -notlike '*\tests\*' })) {
         $content = Get-Content -Raw -LiteralPath $file.FullName -ErrorAction SilentlyContinue
         foreach ($pattern in $forbidden) {
             if ($content -like "*$pattern*") { $hits += "$($file.FullName): $pattern" }

@@ -1,4 +1,5 @@
 artifacts/
+codex-proxy-guardian.exe
 *.zip
 *.sha256
 .cpg-install.json

@@ -32,7 +32,7 @@ Codex Proxy Guardian 是一个非官方、跨平台的 **Codex 代理守护工�
 2. 下载 `CodexProxyGuardian-Setup-版本号.exe`。
 3. 双击安装，以后照常点原来的 Codex 图标。
 
-Guardian 会安装到当前用户、立即启动并随登录静默运行，不需要管理员权限。
+Guardian 会安装到当前用户、立即启动并随登录静默运行，不需要管理员权限。安装时窗口会显示当前阶段和 0–100% 进度，不再只是一直转圈。
 
 > [!WARNING]
 > 项目暂无商业代码签名证书，SmartScreen 可能显示“无法识别”。请只从本仓库 Release 下载；不确定时使用下方 ZIP 方式，不要关闭 Windows 安全功能。

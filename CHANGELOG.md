@@ -4,6 +4,12 @@ All notable changes are documented here. This project follows semantic versionin
 
 ## [未发布 / Unreleased]
 
+## [1.4.0] - 2026-08-04
+
+- Windows 图形安装器由无限旋转改为 0–100% 确定进度条，同步显示解压、预检、连通性、文件复制、自启、更新任务和 Guardian 健康验证等当前阶段。
+- EXE 按内嵌 ZIP 实际展开字节计算解压进度，`Install.ps1` 仅在安装器显式启用时通过私有协议回报已完成阶段；进度只前进不倒退，手动运行脚本不会输出内部标记。
+- 增加 Windows PowerShell 5.1 安装预检协议回归测试，正式打包继续编译并自检单文件 EXE。
+
 ## [1.3.1] - 2026-08-04
 
 - 修复 Windows PowerShell 5.1 将 GitHub Releases 顶层 JSON 数组保留为单个管道对象，导致更新器误报 `update_not_available` 的兼容问题。
