@@ -5,25 +5,33 @@
 ```mermaid
 flowchart LR
     A["Explicit config"] --> D["Candidate ranking"]
-    B["Windows manual proxy"] --> D
+    B["Platform system proxy"] --> D
     C["Recognized process listeners"] --> D
     D --> E["TCP listener check"]
     E --> F["Multi-target HTTPS-through-proxy quorum"]
     F --> G["Sampling and debounce"]
     G --> H["Active endpoint state"]
-    H --> I["Process-scoped environment"]
-    H --> J["Chromium proxy argument"]
-    I --> K["Codex MSIX executable"]
-    J --> K
+    H --> I["Platform adapter"]
+    I --> J["Windows MSIX desktop"]
+    I --> K["macOS desktop app"]
+    I --> L["Linux codex-guard CLI"]
 ```
 
-The guardian reads but never writes Windows proxy configuration. Candidate priority is an explicit override, explicit configuration, Windows manual proxy, inherited HTTP-compatible proxy variables, then recognized local listeners. A candidate becomes active only after validation and debounce. Ordering is deterministic, and the current endpoint wins ties within its priority tier.
+The guardian reads but never writes platform proxy configuration. Candidate priority is explicit configuration, the current platform proxy, inherited HTTP-compatible proxy variables, recognized local listeners, then common loopback ports. A candidate becomes active only after TCP and explicit proxied-request validation plus debounce. Ordering is deterministic, and the current endpoint wins ties within its priority tier.
+
+The Windows implementation remains PowerShell-based. macOS/Linux share a small statically linked Go core and platform adapters:
+
+- macOS reads `scutil --proxy`, discovers listeners with `lsof`, resolves configured app bundle executables, observes an exact root process, and launches with process-scoped proxy variables plus the Chromium proxy argument.
+- Linux reads GNOME `gsettings` when available and discovers listeners with `ss`. The daemon maintains validated state; `codex-guard` uses `exec` to replace itself with the official Codex CLI while preserving the TTY and arguments.
+- Linux deliberately has no restart state machine for Codex itself. An interactive terminal session cannot be safely reconstructed by a background service, and OpenAI currently ships no official Linux Codex desktop app.
 
 ## Codex resolution
 
 `Get-AppxPackage` locates a configured package name for the current user. `Get-AppxPackageManifest` supplies the application ID and relative executable. This avoids version-, username-, architecture-, and WindowsApps-path assumptions.
 
 Root processes are matched by exact resolved executable path and absence of an Electron child-process `--type=` argument. A managed root is recognized by the normalized `--proxy-server` command-line value, which remains meaningful across launcher PID handoff.
+
+On macOS the same exact-path/root-process rule is applied to configured ChatGPT/Codex application bundle executables; Electron child processes are excluded. A graceful AppleScript quit is attempted before a signal is sent, and the signal is allowed only for the same verified root PID. Linux never enumerates and kills Codex CLI processes.
 
 ## Restart state machine
 
@@ -53,6 +61,8 @@ A recovery flag is written before the old Codex process is stopped and cleared o
 
 `Update.ps1` runs independently from the guardian under a daily current-user scheduled task. It selects a newer release from the fixed GitHub repository and configured channel, requires exact tag/archive/staged-version agreement, verifies the attached SHA-256, and only then invokes the staged installer. The existing installer owns migration, task repair, current-Codex adoption, and rollback-by-retention behavior; an update failure leaves the installed tree untouched until verification has completed.
 
+The macOS/Linux daemon performs the same fixed-repository and channel selection once per day. It accepts only the current OS/architecture asset, verifies its attached SHA-256, safely extracts only regular files/directories within bounded size and count, checks the staged `VERSION`, atomically replaces the path recorded by the install marker, and executes the new binary in place. The previous binary is retained as `.previous`.
+
 ## Effectiveness evidence
 
 1. **ValidatedProxy**: the chosen endpoint has a listener and reaches the configured HTTPS quorum through an explicit .NET `WebProxy` transport.
@@ -71,6 +81,8 @@ The [official Codex network-isolation documentation](https://learn.chatgpt.com/d
 - JSONL logs rotate by date, size, retention, and file count.
 - A mutex derived from the normalized install path gives each installation a distinct single-instance boundary.
 - Proxy variables are written only to the guardian process immediately before it launches Codex. They are inherited by that process tree and never persisted to User or Machine scope.
+- macOS uses a current-user LaunchAgent. Linux prefers a systemd user unit and falls back to XDG Autostart; neither requires root.
+- The POSIX daemon records its PID, but Linux uninstall sends `SIGTERM` only after `/proc/<pid>/exe` resolves to the exact installed binary, preventing stale-PID termination of unrelated processes.
 
 ## Security boundaries
 

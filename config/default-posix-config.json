@@ -1,0 +1,46 @@
+{
+  "SchemaVersion": 1,
+  "Mode": "Safe",
+  "AutomaticUpdates": true,
+  "UpdateChannel": "Stable",
+  "PollSeconds": 5,
+  "StableSamples": 3,
+  "DebounceSeconds": 10,
+  "SafeRepairExternalCodexLaunches": true,
+  "SafeExternalLaunchGraceSeconds": 20,
+  "ExternalLaunchDebounceSeconds": 15,
+  "RestartCooldownSeconds": 45,
+  "RestartLimitCount": 3,
+  "RestartLimitWindowMinutes": 10,
+  "CircuitBreakerMinutes": 15,
+  "GracefulCloseSeconds": 10,
+  "TCPTimeoutMilliseconds": 1500,
+  "HTTPTimeoutSeconds": 8,
+  "HTTPValidationIntervalSeconds": 30,
+  "ProxyTestUrls": [
+    "https://api.openai.com/v1/models",
+    "https://chatgpt.com/",
+    "https://auth.openai.com/"
+  ],
+  "MinimumSuccessfulProxyTests": 2,
+  "ExplicitProxy": "",
+  "AllowNonLoopbackProxy": false,
+  "EnableEnvironmentProxyDiscovery": true,
+  "PreferredProxyProcesses": [
+    "clash", "mihomo", "v2ray", "xray", "sing-box", "singbox",
+    "shadowsocks", "nekoray", "nekobox", "hiddify", "flclash"
+  ],
+  "PreferredProxyPorts": [7890, 7891, 7892, 7893, 7894, 7895, 7896, 7897, 1080, 10808, 10809, 2080, 8080],
+  "NoProxy": "localhost,127.0.0.1,::1",
+  "MacApplicationPaths": [
+    "/Applications/ChatGPT.app/Contents/MacOS/ChatGPT",
+    "~/Applications/ChatGPT.app/Contents/MacOS/ChatGPT",
+    "/Applications/Codex.app/Contents/MacOS/Codex",
+    "~/Applications/Codex.app/Contents/MacOS/Codex"
+  ],
+  "CodexCommand": "codex",
+  "LaunchMacApplicationWhenNotRunning": false,
+  "LogRetentionDays": 14,
+  "MaxLogFiles": 20,
+  "MaxLogFileMB": 5
+}

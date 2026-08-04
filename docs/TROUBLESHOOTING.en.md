@@ -1,5 +1,34 @@
 # Troubleshooting
 
+## macOS/Linux first checks
+
+```sh
+codex-proxy-guardian version
+codex-proxy-guardian status
+codex-proxy-guardian doctor
+```
+
+If the command is missing, add `~/.local/bin` to `PATH` or invoke `~/.local/lib/codex-proxy-guardian/codex-proxy-guardian` directly. Logs are under `~/Library/Application Support/CodexProxyGuardian/logs` on macOS or `${XDG_STATE_HOME:-~/.local/state}/codex-proxy-guardian/logs` on Linux.
+
+### Plain `codex` on Linux does not use Guardian
+
+This is an intentional platform boundary: a background process cannot safely rewrite an already-started terminal's environment. Start with `codex-guard`, which injects the currently validated endpoint and passes all arguments through. Guardian never terminates or restarts interactive CLI sessions.
+
+### Linux remains at `WaitingForProxy`
+
+Make sure the proxy application exposes an HTTP or mixed listener, not only SOCKS/TUN. A non-GNOME desktop may not expose a common system-proxy API; set `ExplicitProxy` in `${XDG_CONFIG_HOME:-~/.config}/codex-proxy-guardian/config.json`.
+
+### macOS cannot find the desktop app
+
+If status shows `CodexApplicationUnavailable`, make sure ChatGPT/Codex is under `/Applications` or `~/Applications`. Add custom locations to `MacApplicationPaths`. Guardian will not use a fuzzy process-name match to terminate an unknown application.
+
+### macOS/Linux startup is missing
+
+- macOS: run `launchctl print gui/$(id -u)/io.github.ch-zhou-0512.codex-proxy-guardian`; rerun `./install.sh` to repair the user LaunchAgent.
+- Linux: run `systemctl --user status codex-proxy-guardian.service`; without user systemd, inspect `~/.config/autostart/codex-proxy-guardian.desktop`.
+
+Do not use `sudo` for install, repair, or uninstall.
+
 ## Codex repeatedly restarts
 
 1. Stop the task immediately without changing network settings:

@@ -1,4 +1,4 @@
-# Codex Proxy Guardian for Windows
+# Codex Proxy Guardian for Windows, macOS, and Linux
 
 [简体中文](../README.md) | [English](README.en.md)
 
@@ -6,11 +6,17 @@
 
 > **In one sentence:** If Codex often reconnects four or five times before it starts thinking because it did not pick up the working proxy, this tool is designed to fix that.
 
-An unofficial, current-user watchdog for the Store/MSIX Codex desktop app on Windows 11. It validates an HTTP/HTTPS proxy against multiple OpenAI/ChatGPT HTTPS targets, launches Codex with process-scoped proxy variables and a Chromium proxy argument, and relaunches Codex only after a stable proxy endpoint change.
+An unofficial current-user watchdog that validates a changing HTTP/HTTPS proxy against multiple OpenAI/ChatGPT targets before applying it to Codex.
+
+| Platform | Protected target | Normal use after setup |
+|---|---|---|
+| Windows 11 | Store/MSIX Codex desktop | Open Codex normally; Guardian performs a controlled repair only when needed |
+| macOS (Intel / Apple Silicon) | ChatGPT/Codex desktop app | Open the app normally; Guardian performs a controlled repair only when needed |
+| Linux (x64 / ARM64) | Official Codex CLI | Start with `codex-guard`; interactive terminal sessions are never killed or restarted |
 
 ## Why this exists
 
-Many Windows proxy applications expose a local HTTP endpoint such as `127.0.0.1:7890`. Other applications must connect to that endpoint to use the proxy. A working browser does not necessarily mean that an already-running Codex process received the same proxy configuration. When the proxy application restarts, changes profiles, or updates, its port may change while Codex keeps using the old address, resulting in sign-in failures, content that does not load, or interrupted tasks.
+Many proxy applications expose a local HTTP endpoint such as `127.0.0.1:7890`. A working browser does not necessarily mean that an already-running Codex process received the same endpoint. When the proxy application restarts, changes profiles, or updates, its port may change while Codex keeps using the old address, resulting in sign-in failures, content that does not load, or interrupted tasks.
 
 The manual workaround is to find the current port, close Codex, set proxy environment variables or launch arguments, and start Codex again—then repeat whenever the endpoint changes. Codex Proxy Guardian automates that sequence: it discovers candidates, proves that the proxy can carry real HTTPS requests, applies only a stable change, and uses debounce, cooldown, and a circuit breaker to avoid restart loops. The default `Safe` mode is intended to work without requiring users to understand ports, environment variables, or Task Scheduler.
 
@@ -22,7 +28,7 @@ The manual workaround is to find the current port, close Codex, set proxy enviro
 
 ## Safety first
 
-- It never changes Windows system proxy, WinHTTP proxy, DNS, routes, or persistent user/machine environment variables.
+- It never changes system proxy, WinHTTP proxy, DNS, routes, firewall rules, or persistent user/machine environment variables.
 - It accepts only HTTP/HTTPS proxy endpoints with explicit ports. Credentials embedded in proxy URLs are rejected.
 - A candidate must have a live TCP listener and pass an HTTPS request through the proxy before it can become active.
 - Changes are debounced, restarts have a cooldown, and one mutex is used per installation.
@@ -37,20 +43,52 @@ The manual workaround is to find the current port, close Codex, set proxy enviro
 
 ## Supported baseline
 
-- Windows 11, interactive current-user session
-- Windows PowerShell 5.1 or PowerShell 7 for setup; the background task uses Windows PowerShell 5.1
-- Codex installed from Microsoft Store or an enterprise-distributed Store-signed MSIX
-- Explicit Windows Internet Settings proxy (`ProxyEnable` + `ProxyServer`)
-- A manually configured HTTP/HTTPS endpoint
-- Inherited `HTTPS_PROXY`, `HTTP_PROXY`, or HTTP-compatible `ALL_PROXY` values
-- Loopback listeners owned by common Clash/Mihomo, V2Ray/Xray, sing-box, Shadowsocks, NekoRay, Hiddify, or FlClash processes
-- x64 and ARM64, resolved from the installed package manifest rather than a hard-coded path
+| Area | Windows 11 | macOS | Linux |
+|---|---|---|---|
+| Architectures | x64, ARM64 | Intel, Apple Silicon | x64, ARM64 |
+| Codex target | Store/MSIX desktop | ChatGPT/Codex desktop | Official Codex CLI |
+| System discovery | Internet Settings | `scutil --proxy` | GNOME `gsettings`; use explicit config elsewhere |
+| Current-user startup | Scheduled Task / HKCU Run | LaunchAgent | systemd user / XDG Autostart |
+| Lifecycle action | Controlled desktop relaunch | Controlled app relaunch | No automatic CLI restart |
 
-PAC/WPAD, pure SOCKS proxies, TUN-only configurations, WinHTTP-only proxy settings, services running in another user session, and enforced script restrictions are not automatically supported. See the [support matrix](SUPPORT.en.md).
+All platforms support an explicit HTTP/HTTPS endpoint, inherited `HTTPS_PROXY` / `HTTP_PROXY` / HTTP-compatible `ALL_PROXY`, and recognized loopback proxy listeners. PAC/WPAD, pure SOCKS, TUN-only configurations with no HTTP/mixed listener, and credential-bearing proxy URLs are not automatically supported. See the [support matrix](SUPPORT.en.md).
+
+> [!IMPORTANT]
+> OpenAI currently provides desktop apps for macOS/Windows and the Codex CLI for Linux. There is no official Linux Codex desktop app, so the Linux edition deliberately wraps the CLI instead of claiming desktop support. See the official [Codex app](https://learn.chatgpt.com/docs/app) and [Codex CLI quickstart](https://learn.chatgpt.com/docs/quickstart).
 
 ## Install
 
-### Recommended: one-click EXE
+### macOS
+
+Download the matching stable Release asset:
+
+- Apple Silicon: `CodexProxyGuardian-VERSION-darwin-arm64.tar.gz`
+- Intel: `CodexProxyGuardian-VERSION-darwin-amd64.tar.gz`
+
+Extract it, enter the `CodexProxyGuardian` directory, and run as your normal user:
+
+```sh
+./install.sh
+codex-proxy-guardian doctor
+```
+
+The installer copies the binary under `~/.local/lib`, registers a current-user LaunchAgent, and starts it silently. Keep opening ChatGPT/Codex normally.
+
+### Linux
+
+Download `linux-amd64.tar.gz` or `linux-arm64.tar.gz`, extract it, then run:
+
+```sh
+./install.sh
+codex-proxy-guardian doctor
+codex-guard
+```
+
+Setup prefers a systemd user service and falls back to XDG Autostart. Do not use `sudo`. `codex-guard` obtains the last validated proxy and replaces itself with the official Codex CLI while preserving the terminal and all arguments, for example `codex-guard resume --last`.
+
+Running plain `codex` still depends on that shell's environment: a guardian cannot retroactively edit another terminal process. Use `codex-guard` when the validated endpoint must be applied. Linux terminal sessions are never killed or restarted automatically.
+
+### Windows 11: recommended one-click EXE
 
 1. Open the [latest stable Release](https://github.com/CH-ZHOU-0512/codex-proxy-guardian/releases/latest) and download the `.exe` whose name starts with `CodexProxyGuardian-Setup-`.
 2. Double-click it and confirm that the window links to `CH-ZHOU-0512/codex-proxy-guardian`.
@@ -112,11 +150,20 @@ Use the Start Menu settings window, or switch with one command:
 .\Control.ps1 -Action ToggleMode
 ```
 
+On macOS/Linux:
+
+```sh
+codex-proxy-guardian mode auto
+codex-proxy-guardian mode strict
+```
+
 The earlier restart-loop class is avoided by matching the root process's proxy argument, not a short-lived launcher PID. In short, Automatic means “prove a repair is needed first,” while Strict means “repair any argument mismatch.” The program does not silently change a user's long-term profile from Automatic to Strict; the automatic decision is made per Codex launch from traffic evidence. Mode changes are reloaded by the guardian in the background without restarting Guardian or the current Codex process. Explicitly opening **Codex (Managed Proxy)** remains the immediate deterministic path, and the same cooldown/circuit protection applies to every repair. During a Store update, an existing Codex process is left running if the replacement MSIX executable cannot yet be resolved.
 
 ## Configuration
 
-Edit `%LOCALAPPDATA%\CodexProxyGuardian\config.json`, then restart the scheduled task. Common options:
+Configuration locations are `%LOCALAPPDATA%\CodexProxyGuardian\config.json` on Windows, `~/Library/Application Support/CodexProxyGuardian/config.json` on macOS, and `${XDG_CONFIG_HOME:-~/.config}/codex-proxy-guardian/config.json` on Linux.
+
+Common options:
 
 ```json
 {
@@ -132,20 +179,37 @@ Edit `%LOCALAPPDATA%\CodexProxyGuardian\config.json`, then restart the scheduled
 }
 ```
 
-`ExplicitProxy` has the highest priority. Leave it empty to inspect the current Windows proxy and recognized proxy-process listeners. See [default-config.json](../config/default-config.json) and [config.schema.json](../config/config.schema.json).
+`ExplicitProxy` has the highest priority. Leave it empty to inspect the current platform proxy and recognized proxy-process listeners. See the Windows [default-config.json](../config/default-config.json), its [config.schema.json](../config/config.schema.json), and the [macOS/Linux defaults](../config/default-posix-config.json).
 
 ## Automatic updates
 
 The daily updater is bound to `CH-ZHOU-0512/codex-proxy-guardian`. It requires the Release tag, archive name, staged `VERSION`, attached `.sha256`, and the GitHub asset digest when available to agree before invoking the installer. It rejects unsafe archive paths and extraction limits, snapshots the current files, and attempts to restore the previous version and guardian after an interrupted install. Results are written to `logs\update-*.jsonl`.
+
+On macOS/Linux the daemon selects only the `.tar.gz` for the current OS and architecture, checks the tag, semantic version, filename, staged `VERSION`, SHA-256, entry types, extraction size, and paths, then atomically replaces and executes the new binary. A failed update keeps the current binary or its `.previous` backup.
 
 ```powershell
 .\Control.ps1 -Action CheckUpdate
 .\Control.ps1 -Action Update
 ```
 
+```sh
+codex-proxy-guardian update
+codex-proxy-guardian update --install
+```
+
 New installations default to the `Stable` channel. Users who deliberately want early Alpha/Beta builds can opt into `Prerelease` in Settings. An in-place update preserves the existing channel and other configuration, then asks the guardian to adopt the current Codex session.
 
 ## Status and logs
+
+macOS/Linux:
+
+```sh
+codex-proxy-guardian status
+codex-proxy-guardian status --json
+codex-proxy-guardian doctor
+```
+
+Windows:
 
 ```powershell
 .\Status.ps1
@@ -181,7 +245,15 @@ If Codex starts restarting unexpectedly, the circuit breaker will stop further r
 
 ## Uninstall
 
-From the release directory or installed directory:
+On macOS/Linux, from the extracted package:
+
+```sh
+./uninstall.sh
+```
+
+This keeps configuration and logs by default. Use `./uninstall.sh --purge` only when you deliberately want both removed.
+
+On Windows, from the release or installation directory:
 
 ```powershell
 .\Uninstall.ps1 -Confirm:$false
@@ -202,7 +274,7 @@ Uninstall does not restore network settings because the project never modifies t
 .\tools\Package-Release.ps1
 ```
 
-The release tool runs tests, creates a ZIP in `artifacts`, and writes a SHA-256 checksum. Store/MSIX integration tests require a real Windows user session and are intentionally separate from CI. See [compatibility and effectiveness testing](COMPATIBILITY-TESTING.md) for the online proof and soak-test gates.
+The release tool runs PowerShell and Go tests, creates the Windows EXE/ZIP plus four macOS/Linux archives in `artifacts`, and writes a SHA-256 for every asset. CI also tests and compiles the native guardian on Windows, macOS, and Linux. Store/MSIX and desktop integration tests still require real user sessions. See [compatibility and effectiveness testing](COMPATIBILITY-TESTING.md) for the online proof and soak-test gates.
 
 Architecture and threat boundaries are documented in [ARCHITECTURE.md](ARCHITECTURE.md).
 

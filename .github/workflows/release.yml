@@ -15,6 +15,10 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
       - name: Verify tag matches VERSION
         shell: powershell
         run: |
@@ -31,16 +35,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $version = (Get-Content -Raw -LiteralPath .\VERSION).Trim()
-          $archive = ".\artifacts\CodexProxyGuardian-$version.zip"
-          $checksum = "$archive.sha256"
-          $installer = ".\artifacts\CodexProxyGuardian-Setup-$version.exe"
-          $installerChecksum = "$installer.sha256"
-          $arguments = @(
-            'release', 'create', $env:GITHUB_REF_NAME,
-            $installer, $installerChecksum, $archive, $checksum,
-            '--verify-tag',
-            '--title', "Codex Proxy Guardian $env:GITHUB_REF_NAME"
-          )
+          $assets = @(Get-ChildItem -LiteralPath .\artifacts -File | Sort-Object Name | Select-Object -ExpandProperty FullName)
+          if ($assets.Count -lt 12) { throw "Expected at least 12 release assets, found $($assets.Count)." }
+          $arguments = @('release', 'create', $env:GITHUB_REF_NAME) + $assets + @('--verify-tag', '--title', "Codex Proxy Guardian $env:GITHUB_REF_NAME")
           $notesFile = ".\docs\releases\v$version.md"
           if (Test-Path -LiteralPath $notesFile) {
             $arguments += @('--notes-file', $notesFile)

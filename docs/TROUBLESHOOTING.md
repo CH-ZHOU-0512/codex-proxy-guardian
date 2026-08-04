@@ -2,6 +2,39 @@
 
 [简体中文](TROUBLESHOOTING.md) | [English](TROUBLESHOOTING.en.md)
 
+## macOS/Linux 先运行这三条
+
+```sh
+codex-proxy-guardian version
+codex-proxy-guardian status
+codex-proxy-guardian doctor
+```
+
+如果命令不存在，把 `~/.local/bin` 加入当前 shell 的 `PATH`，或者直接运行 `~/.local/lib/codex-proxy-guardian/codex-proxy-guardian`。日志位于 macOS 的 `~/Library/Application Support/CodexProxyGuardian/logs`，或 Linux 的 `${XDG_STATE_HOME:-~/.local/state}/codex-proxy-guardian/logs`。
+
+### Linux 直接运行 `codex` 没有走 Guardian
+
+这是预期的平台边界。一个后台进程不能安全地改写已经启动的终端进程环境。请运行 `codex-guard`，它会把 Guardian 当前已验证的代理注入新启动的 Codex CLI，并透传参数。Guardian 不会结束或重启交互式 CLI 会话。
+
+### Linux 显示 `WaitingForProxy`
+
+确认代理软件开放 HTTP 或混合端口，而不是只有 SOCKS/TUN。非 GNOME 桌面可能没有统一的系统代理读取方式，可编辑 `${XDG_CONFIG_HOME:-~/.config}/codex-proxy-guardian/config.json` 设置：
+
+```json
+{ "ExplicitProxy": "http://127.0.0.1:7890" }
+```
+
+### macOS 找不到桌面应用
+
+`doctor` 或 `status` 显示 `CodexApplicationUnavailable` 时，确认 ChatGPT/Codex 位于 `/Applications` 或 `~/Applications`。自定义位置需要加入配置的 `MacApplicationPaths`。Guardian 不会通过模糊进程名去关闭未知程序。
+
+### macOS/Linux 后台没有自启
+
+- macOS：运行 `launchctl print gui/$(id -u)/io.github.ch-zhou-0512.codex-proxy-guardian`；重新执行 `./install.sh` 可修复当前用户 LaunchAgent。
+- Linux systemd：运行 `systemctl --user status codex-proxy-guardian.service`；没有用户 systemd 时检查 `~/.config/autostart/codex-proxy-guardian.desktop`。
+
+安装、修复和卸载都不要使用 `sudo`。
+
 ## Codex 反复重启
 
 1. 立即停止守护任务；此操作不会改变任何网络设置：
