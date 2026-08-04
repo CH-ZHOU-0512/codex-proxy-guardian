@@ -291,6 +291,25 @@ summary:focus-visible {
   font-size: 14px;
 }
 
+.scope-note {
+  max-width: 720px;
+  margin: 24px 0 0;
+  padding: 16px 18px;
+  border-left: 3px solid var(--acid);
+  background: rgba(210, 239, 84, .12);
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 1.75;
+}
+
+.scope-note strong {
+  color: var(--green-dark);
+}
+
+.scope-note code {
+  font-size: .9em;
+}
+
 .status-panel {
   position: relative;
   overflow: hidden;
