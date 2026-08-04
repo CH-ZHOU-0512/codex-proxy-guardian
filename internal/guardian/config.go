@@ -32,8 +32,16 @@ type Config struct {
 	ProxyTestURLs                      []string `json:"ProxyTestUrls"`
 	MinimumSuccessfulProxyTests        int      `json:"MinimumSuccessfulProxyTests"`
 	ExplicitProxy                      string   `json:"ExplicitProxy"`
+	ExplicitPAC                        string   `json:"ExplicitPAC"`
 	AllowNonLoopbackProxy              bool     `json:"AllowNonLoopbackProxy"`
+	AllowSystemNonLoopbackProxy        bool     `json:"AllowSystemNonLoopbackProxy"`
 	EnableEnvironmentProxyDiscovery    bool     `json:"EnableEnvironmentProxyDiscovery"`
+	EnablePACDiscovery                 bool     `json:"EnablePACDiscovery"`
+	EnableWPADDiscovery                bool     `json:"EnableWPADDiscovery"`
+	PACFetchTimeoutSeconds             int      `json:"PacFetchTimeoutSeconds"`
+	PACExecutionTimeoutMilliseconds    int      `json:"PacExecutionTimeoutMilliseconds"`
+	PACMaxBytes                        int      `json:"PacMaxBytes"`
+	PACCacheMinutes                    int      `json:"PacCacheMinutes"`
 	PreferredProxyProcesses            []string `json:"PreferredProxyProcesses"`
 	PreferredProxyPorts                []int    `json:"PreferredProxyPorts"`
 	NoProxy                            string   `json:"NoProxy"`
@@ -56,6 +64,10 @@ func DefaultConfig() Config {
 		HTTPValidationIntervalSeconds: 30,
 		ProxyTestURLs:                 []string{"https://api.openai.com/v1/models", "https://chatgpt.com/", "https://auth.openai.com/"},
 		MinimumSuccessfulProxyTests:   2, EnableEnvironmentProxyDiscovery: true,
+		AllowSystemNonLoopbackProxy: true,
+		EnablePACDiscovery:          true, EnableWPADDiscovery: true,
+		PACFetchTimeoutSeconds: 5, PACExecutionTimeoutMilliseconds: 500,
+		PACMaxBytes: 1048576, PACCacheMinutes: 5,
 		PreferredProxyProcesses: []string{"clash", "mihomo", "v2ray", "xray", "sing-box", "singbox", "shadowsocks", "nekoray", "nekobox", "hiddify", "flclash"},
 		PreferredProxyPorts:     []int{7890, 7891, 7892, 7893, 7894, 7895, 7896, 7897, 1080, 10808, 10809, 2080, 8080},
 		NoProxy:                 "localhost,127.0.0.1,::1",
@@ -110,6 +122,12 @@ func (cfg Config) Validate() error {
 	}
 	if cfg.RestartLimitCount < 1 || cfg.RestartLimitWindowMinutes < 1 || cfg.CircuitBreakerMinutes < 1 {
 		return errors.New("restart circuit breaker values must be positive")
+	}
+	if cfg.PACFetchTimeoutSeconds < 1 || cfg.PACFetchTimeoutSeconds > 30 ||
+		cfg.PACExecutionTimeoutMilliseconds < 50 || cfg.PACExecutionTimeoutMilliseconds > 5000 ||
+		cfg.PACMaxBytes < 1024 || cfg.PACMaxBytes > 8*1024*1024 ||
+		cfg.PACCacheMinutes < 1 || cfg.PACCacheMinutes > 1440 {
+		return errors.New("PAC safety limits are outside the supported range")
 	}
 	return nil
 }

@@ -6,7 +6,7 @@
 
 > **In one sentence:** If Codex often reconnects four or five times before it starts thinking because it did not pick up the working proxy, this tool is designed to fix that.
 
-An unofficial current-user watchdog that validates a changing HTTP/HTTPS proxy against multiple OpenAI/ChatGPT targets before applying it to Codex.
+An unofficial current-user watchdog that validates changing HTTP, HTTPS, or SOCKS5 proxies—and the effective routes selected by PAC/WPAD—against multiple OpenAI/ChatGPT targets before applying them to Codex.
 
 | Platform | Protected target | Normal use after setup |
 |---|---|---|
@@ -21,7 +21,7 @@ Many proxy applications expose a local HTTP endpoint such as `127.0.0.1:7890`. A
 The manual workaround is to find the current port, close Codex, set proxy environment variables or launch arguments, and start Codex again—then repeat whenever the endpoint changes. Codex Proxy Guardian automates that sequence: it discovers candidates, proves that the proxy can carry real HTTPS requests, applies only a stable change, and uses debounce, cooldown, and a circuit breaker to avoid restart loops. The default `Safe` mode is intended to work without requiring users to understand ports, environment variables, or Task Scheduler.
 
 > [!NOTE]
-> This project is **not a proxy application and does not provide a proxy service or endpoints**. A working HTTP/HTTPS proxy must already exist on the computer. The guardian solves the narrower problem of keeping Codex aligned with that proxy.
+> This project is **not a proxy application and does not provide a proxy service or endpoints**. A working HTTP, HTTPS, or SOCKS5 endpoint—or PAC/WPAD that selects one for OpenAI targets—must already exist on the computer.
 
 > [!IMPORTANT]
 > This is an independent community project. It is not affiliated with, endorsed by, or supported by OpenAI. The proxy behavior used here is a best-effort compatibility technique, not a documented Codex desktop API.
@@ -29,7 +29,8 @@ The manual workaround is to find the current port, close Codex, set proxy enviro
 ## Safety first
 
 - It never changes system proxy, WinHTTP proxy, DNS, routes, firewall rules, or persistent user/machine environment variables.
-- It accepts only HTTP/HTTPS proxy endpoints with explicit ports. Credentials embedded in proxy URLs are rejected.
+- It accepts HTTP, HTTPS, SOCKS5, and SOCKS5H endpoints with explicit ports. SOCKS4 and credential-bearing URLs are rejected.
+- Windows delegates PAC/WPAD policy to WinHTTP. The macOS/Linux PAC runtime separately bounds source size, fetches, DNS helpers, JavaScript execution, and cache lifetime. WPAD is used only when the OS has auto-discovery enabled.
 - A candidate must have a live TCP listener and pass an HTTPS request through the proxy before it can become active.
 - Changes are debounced, restarts have a cooldown, and one mutex is used per installation.
 - A restart-rate circuit breaker opens after three restarts in ten minutes by default, preventing an unstable environment from relaunching Codex indefinitely.
@@ -51,7 +52,7 @@ The manual workaround is to find the current port, close Codex, set proxy enviro
 | Current-user startup | Scheduled Task / HKCU Run | LaunchAgent | systemd user / XDG Autostart |
 | Lifecycle action | Controlled desktop relaunch | Controlled app relaunch | No automatic CLI restart |
 
-All platforms support an explicit HTTP/HTTPS endpoint, inherited `HTTPS_PROXY` / `HTTP_PROXY` / HTTP-compatible `ALL_PROXY`, and recognized loopback proxy listeners. PAC/WPAD, pure SOCKS, TUN-only configurations with no HTTP/mixed listener, and credential-bearing proxy URLs are not automatically supported. See the [support matrix](SUPPORT.en.md).
+All platforms support explicit HTTP/HTTPS/SOCKS5 endpoints, inherited `HTTPS_PROXY` / `HTTP_PROXY` / `ALL_PROXY`, system PAC/WPAD, and recognized loopback listeners. PAC directives are evaluated for the configured OpenAI targets; a resolved endpoint must still pass the normal multi-target quorum. Mutually incompatible per-target routes safely produce no takeover. SOCKS4, credential-bearing URLs, and TUN-only configurations with no discoverable endpoint remain unsupported. See the [support matrix](SUPPORT.en.md).
 
 > [!IMPORTANT]
 > OpenAI currently provides desktop apps for macOS/Windows and the Codex CLI for Linux. There is no official Linux Codex desktop app, so the Linux edition deliberately wraps the CLI instead of claiming desktop support. See the official [Codex app](https://learn.chatgpt.com/docs/app) and [Codex CLI quickstart](https://learn.chatgpt.com/docs/quickstart).
@@ -168,9 +169,11 @@ Common options:
 ```json
 {
   "ExplicitProxy": "http://127.0.0.1:7890",
+  "ExplicitPAC": "",
   "AutomaticUpdates": true,
   "UpdateChannel": "Stable",
   "AllowNonLoopbackProxy": false,
+  "AllowSystemNonLoopbackProxy": true,
   "ManageExternalCodexLaunches": false,
   "SafeRepairExternalCodexLaunches": true,
   "SafeExternalLaunchGraceSeconds": 20,
@@ -179,7 +182,7 @@ Common options:
 }
 ```
 
-`ExplicitProxy` has the highest priority. Leave it empty to inspect the current platform proxy and recognized proxy-process listeners. See the Windows [default-config.json](../config/default-config.json), its [config.schema.json](../config/config.schema.json), and the [macOS/Linux defaults](../config/default-posix-config.json).
+`ExplicitProxy` accepts `http://`, `https://`, `socks5://`, or `socks5h://`. `ExplicitPAC` accepts an absolute HTTP/HTTPS PAC URL; macOS/Linux also accept local `file://` PAC. Leave both empty to inspect the platform proxy/PAC/WPAD, inherited variables, and recognized listeners. See the Windows [default-config.json](../config/default-config.json), its [config.schema.json](../config/config.schema.json), and the [macOS/Linux defaults](../config/default-posix-config.json).
 
 ## Automatic updates
 

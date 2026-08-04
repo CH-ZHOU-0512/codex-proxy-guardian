@@ -39,3 +39,10 @@ func proxyEnvironment(proxyURI, noProxy string) []string {
 		"http_proxy="+proxyURI, "https_proxy="+proxyURI, "all_proxy="+proxyURI,
 		"NO_PROXY="+noProxy, "no_proxy="+noProxy)
 }
+
+func chromiumProxyURI(proxyURI string) string {
+	if strings.HasPrefix(strings.ToLower(proxyURI), "socks5h://") {
+		return "socks5://" + proxyURI[len("socks5h://"):]
+	}
+	return proxyURI
+}

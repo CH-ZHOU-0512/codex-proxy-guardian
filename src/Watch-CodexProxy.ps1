@@ -22,6 +22,7 @@ $script:AdoptRequestPath = Join-Path $script:Root 'adopt-current-once.request'
 $script:ConfigReloadRequestPath = Join-Path $script:Root 'config.reload.request'
 $script:ValidationCache = @{}
 $script:ProxyAddressCache = @{}
+$script:PACDiscoveryCache = $null
 $script:InheritedProxyEnvironment = @{}
 foreach ($proxyVariableName in @('HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy', 'ALL_PROXY', 'all_proxy')) {
     $script:InheritedProxyEnvironment[$proxyVariableName] = [Environment]::GetEnvironmentVariable($proxyVariableName, 'Process')
@@ -134,21 +135,162 @@ function New-ProxyCandidate {
     }
 }
 
+function Initialize-CpgWinHttpAutoProxy {
+    if ($null -ne ('CodexProxyGuardian.WinHttpAutoProxy' -as [type])) { return }
+
+    Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+
+namespace CodexProxyGuardian {
+    public static class WinHttpAutoProxy {
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        private struct CurrentUserProxyConfig {
+            [MarshalAs(UnmanagedType.Bool)] public bool AutoDetect;
+            public IntPtr AutoConfigUrl;
+            public IntPtr Proxy;
+            public IntPtr ProxyBypass;
+        }
+
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        private struct AutoProxyOptions {
+            public uint Flags;
+            public uint AutoDetectFlags;
+            public IntPtr AutoConfigUrl;
+            public IntPtr Reserved;
+            public uint ReservedFlags;
+            [MarshalAs(UnmanagedType.Bool)] public bool AutoLogonIfChallenged;
+        }
+
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        private struct ProxyInfo {
+            public uint AccessType;
+            public IntPtr Proxy;
+            public IntPtr ProxyBypass;
+        }
+
+        [DllImport("winhttp.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        private static extern IntPtr WinHttpOpen(string userAgent, uint accessType, string proxyName, string proxyBypass, uint flags);
+        [DllImport("winhttp.dll", SetLastError = true)]
+        private static extern bool WinHttpCloseHandle(IntPtr handle);
+        [DllImport("winhttp.dll", SetLastError = true)]
+        private static extern bool WinHttpSetTimeouts(IntPtr handle, int resolve, int connect, int send, int receive);
+        [DllImport("winhttp.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        private static extern bool WinHttpGetIEProxyConfigForCurrentUser(out CurrentUserProxyConfig config);
+        [DllImport("winhttp.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        private static extern bool WinHttpGetProxyForUrl(IntPtr session, string url, ref AutoProxyOptions options, out ProxyInfo info);
+        [DllImport("kernel32.dll")]
+        private static extern IntPtr GlobalFree(IntPtr memory);
+
+        private static void Free(IntPtr memory) {
+            if (memory != IntPtr.Zero) GlobalFree(memory);
+        }
+
+        public static string Resolve(string targetUrl, string explicitPac, bool allowWpad, int timeoutMilliseconds) {
+            CurrentUserProxyConfig current = new CurrentUserProxyConfig();
+            bool haveCurrent = WinHttpGetIEProxyConfigForCurrentUser(out current);
+            string systemPac = haveCurrent && current.AutoConfigUrl != IntPtr.Zero ? Marshal.PtrToStringUni(current.AutoConfigUrl) : null;
+            bool autoDetect = haveCurrent && current.AutoDetect && allowWpad;
+            if (haveCurrent) {
+                Free(current.AutoConfigUrl);
+                Free(current.Proxy);
+                Free(current.ProxyBypass);
+            }
+            string pac = String.IsNullOrWhiteSpace(explicitPac) ? systemPac : explicitPac;
+            if (String.IsNullOrWhiteSpace(pac) && !autoDetect) return null;
+
+            IntPtr session = WinHttpOpen("CodexProxyGuardian", 1, null, null, 0);
+            if (session == IntPtr.Zero) throw new Win32Exception(Marshal.GetLastWin32Error());
+            IntPtr pacPointer = IntPtr.Zero;
+            ProxyInfo info = new ProxyInfo();
+            try {
+                WinHttpSetTimeouts(session, timeoutMilliseconds, timeoutMilliseconds, timeoutMilliseconds, timeoutMilliseconds);
+                AutoProxyOptions options = new AutoProxyOptions();
+                if (!String.IsNullOrWhiteSpace(pac)) {
+                    options.Flags |= 0x2;
+                    pacPointer = Marshal.StringToHGlobalUni(pac);
+                    options.AutoConfigUrl = pacPointer;
+                }
+                if (autoDetect) {
+                    options.Flags |= 0x1;
+                    options.AutoDetectFlags = 0x3;
+                }
+                options.AutoLogonIfChallenged = true;
+                if (!WinHttpGetProxyForUrl(session, targetUrl, ref options, out info)) return null;
+                return info.Proxy == IntPtr.Zero ? null : Marshal.PtrToStringUni(info.Proxy);
+            }
+            finally {
+                if (pacPointer != IntPtr.Zero) Marshal.FreeHGlobal(pacPointer);
+                Free(info.Proxy);
+                Free(info.ProxyBypass);
+                WinHttpCloseHandle(session);
+            }
+        }
+    }
+}
+'@
+}
+
+function Get-PacProxyCandidates {
+    param($Config)
+
+    if (-not [bool](Get-CpgConfigValue $Config 'EnablePACDiscovery' $true)) { return @() }
+    Initialize-CpgWinHttpAutoProxy
+    $explicitPac = [string](Get-CpgConfigValue $Config 'ExplicitPAC' '')
+    $allowWpad = [bool](Get-CpgConfigValue $Config 'EnableWPADDiscovery' $true)
+    $allowRemote = if ([string]::IsNullOrWhiteSpace($explicitPac)) {
+        [bool](Get-CpgConfigValue $Config 'AllowSystemNonLoopbackProxy' $true)
+    }
+    else { [bool](Get-CpgConfigValue $Config 'AllowNonLoopbackProxy' $false) }
+    $timeout = [int](Get-CpgConfigValue $Config 'PacFetchTimeoutSeconds' 5) * 1000
+    $cacheMinutes = [Math]::Max(1, [int](Get-CpgConfigValue $Config 'PacCacheMinutes' 5))
+    $internetSettings = Get-ItemProperty -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings' -ErrorAction SilentlyContinue
+    $systemPacMarker = if ($null -eq $internetSettings) { '' } else { [string](Get-CpgConfigValue $internetSettings 'AutoConfigURL' '') }
+    $cacheKey = "{0}|{1}|{2}|{3}|{4}" -f $explicitPac, $systemPacMarker, $allowWpad, $allowRemote, (@(Get-CpgConfigValue $Config 'ProxyTestUrls' @()) -join ',')
+    if ($null -ne $script:PACDiscoveryCache -and $script:PACDiscoveryCache.Key -eq $cacheKey -and
+        ((Get-Date) - $script:PACDiscoveryCache.CheckedAt).TotalMinutes -lt $cacheMinutes) {
+        return @($script:PACDiscoveryCache.Candidates)
+    }
+    $result = @()
+    $seen = @{}
+    $targetIndex = 0
+    foreach ($target in @(Get-CpgConfigValue $Config 'ProxyTestUrls' @())) {
+        $targetIndex++
+        $targetUri = $null
+        if (-not [Uri]::TryCreate([string]$target, [UriKind]::Absolute, [ref]$targetUri) -or $targetUri.Scheme -ne 'https') { continue }
+        $resolved = $null
+        try { $resolved = [CodexProxyGuardian.WinHttpAutoProxy]::Resolve([string]$target, $explicitPac, $allowWpad, $timeout) }
+        catch { continue }
+        foreach ($item in @(ConvertFrom-CpgPacResult -Result ([string]$resolved) -AllowNonLoopback:$allowRemote)) {
+            if ($seen.ContainsKey([string]$item.Uri)) { continue }
+            $seen[[string]$item.Uri] = $true
+            $source = if ([string]::IsNullOrWhiteSpace($explicitPac)) { 'system:pac-wpad' } else { 'config:ExplicitPAC' }
+            $result += New-ProxyCandidate ([string]$item.Uri) ("{0}:target-{1}" -f $source, $targetIndex) (280 - $targetIndex)
+        }
+    }
+    $script:PACDiscoveryCache = [pscustomobject]@{ Key = $cacheKey; CheckedAt = Get-Date; Candidates = @($result) }
+    return $result
+}
+
 function Get-SystemProxyCandidates {
     param($Config)
 
     $allowRemote = [bool](Get-CpgConfigValue $Config 'AllowNonLoopbackProxy' $false)
+    $allowSystemRemote = [bool](Get-CpgConfigValue $Config 'AllowSystemNonLoopbackProxy' $true)
     $result = @()
     $explicitProxy = [string](Get-CpgConfigValue $Config 'ExplicitProxy' '')
     if (-not [string]::IsNullOrWhiteSpace($explicitProxy)) {
-        $uri = ConvertTo-CpgHttpProxyUri -Address $explicitProxy -AllowNonLoopback:$allowRemote
+        $uri = ConvertTo-CpgProxyUri -Address $explicitProxy -AllowNonLoopback:$allowRemote
         if ($null -ne $uri) { $result += New-ProxyCandidate $uri 'config:ExplicitProxy' 300 }
     }
+
+    $result += @(Get-PacProxyCandidates $Config)
 
     $settings = Get-ItemProperty -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings' -ErrorAction SilentlyContinue
     if ($null -eq $settings -or [int](Get-CpgConfigValue $settings 'ProxyEnable' 0) -ne 1) { return $result }
 
-    foreach ($item in @(ConvertFrom-CpgProxyServer -ProxyServer ([string](Get-CpgConfigValue $settings 'ProxyServer' '')) -AllowNonLoopback:$allowRemote)) {
+    foreach ($item in @(ConvertFrom-CpgProxyServer -ProxyServer ([string](Get-CpgConfigValue $settings 'ProxyServer' '')) -AllowNonLoopback:$allowSystemRemote)) {
         $score = switch ([string]$item.Label) {
             'https' { 220 }
             'http' { 210 }
@@ -168,7 +310,7 @@ function Get-EnvironmentProxyCandidates {
     $score = 190
     foreach ($name in @('HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy', 'ALL_PROXY', 'all_proxy')) {
         $value = $script:InheritedProxyEnvironment[$name]
-        $uri = ConvertTo-CpgHttpProxyUri -Address ([string]$value) -AllowNonLoopback:$allowRemote
+        $uri = ConvertTo-CpgProxyUri -Address ([string]$value) -AllowNonLoopback:$allowRemote
         if ($null -ne $uri) { $result += New-ProxyCandidate $uri ("environment:{0}" -f $name) $score }
         $score--
     }
@@ -200,15 +342,18 @@ function Get-ProcessProxyCandidates {
         if (-not (Test-CpgLoopbackHost -HostName $hostName)) { continue }
 
         $address = if ($hostName.Contains(':')) { "[$hostName]:$($connection.LocalPort)" } else { "$hostName`:$($connection.LocalPort)" }
-        $uri = ConvertTo-CpgHttpProxyUri -Address $address
-        if ($null -eq $uri -or $seen.ContainsKey($uri)) { continue }
-        $seen[$uri] = $true
-
         $score = 100
         if ([int]$connection.LocalPort -in $preferredPorts) { $score += 20 }
-        $result += New-ProxyCandidate $uri ("process:{0}" -f $process.ProcessName) $score
+        foreach ($proxyAddress in @($address, "socks5h://$address")) {
+            $uri = ConvertTo-CpgProxyUri -Address $proxyAddress
+            if ($null -eq $uri -or $seen.ContainsKey($uri)) { continue }
+            $seen[$uri] = $true
+            $schemePenalty = if ($uri.StartsWith('socks5h://', [System.StringComparison]::OrdinalIgnoreCase)) { 5 } else { 0 }
+            $sourceSuffix = if ($schemePenalty -gt 0) { ':socks5' } else { '' }
+            $result += New-ProxyCandidate $uri ("process:{0}{1}" -f $process.ProcessName, $sourceSuffix) ($score - $schemePenalty)
+        }
     }
-    $maximum = [Math]::Max(1, [int](Get-CpgConfigValue $Config 'MaxProcessProxyCandidates' 6))
+    $maximum = [Math]::Max(1, [int](Get-CpgConfigValue $Config 'MaxProcessProxyCandidates' 6)) * 2
     return @($result | Sort-Object -Property @{ Expression = 'Score'; Descending = $true }, @{ Expression = 'Port'; Ascending = $true }, @{ Expression = 'Uri'; Ascending = $true } | Select-Object -First $maximum)
 }
 
@@ -280,6 +425,49 @@ function Test-HttpProxy {
     }
 }
 
+function Test-Socks5Proxy {
+    param([string]$ProxyUri, [string[]]$TestUrls, [int]$TimeoutSeconds, [int]$MinimumSuccessCount)
+
+    $results = @()
+    $successCount = 0
+    $required = [Math]::Min($TestUrls.Count, [Math]::Max(1, $MinimumSuccessCount))
+    $attemptedCount = 0
+    $curlPath = Join-Path $env:SystemRoot 'System32\curl.exe'
+    foreach ($testUrl in $TestUrls) {
+        $attemptedCount++
+        $statusCode = $null
+        $passed = $false
+        $failureType = $null
+        if (-not (Test-Path -LiteralPath $curlPath -PathType Leaf)) {
+            $failureType = 'CurlUnavailable'
+        }
+        else {
+            try {
+                $output = & $curlPath '--silent' '--show-error' '--output=NUL' '--write-out=%{http_code}' '--noproxy=' ("--proxy=$ProxyUri") ("--connect-timeout=$TimeoutSeconds") ("--max-time=$TimeoutSeconds") ("--url=$testUrl") 2>$null
+                [int]$parsedStatusCode = 0
+                if ($LASTEXITCODE -eq 0 -and [int]::TryParse(([string]$output).Trim(), [ref]$parsedStatusCode)) {
+                    $statusCode = $parsedStatusCode
+                    $passed = Test-CpgProxyResponseStatus -StatusCode $statusCode
+                }
+                else { $failureType = 'CurlProxyRequestFailed' }
+            }
+            catch { $failureType = $_.Exception.GetType().Name }
+        }
+        if ($passed) { $successCount++ }
+        $results += [pscustomobject]@{ Host = ([Uri]$testUrl).Host; Passed = $passed; StatusCode = $statusCode; FailureType = $failureType }
+        if ($successCount -ge $required) { break }
+        if (($successCount + ($TestUrls.Count - $attemptedCount)) -lt $required) { break }
+    }
+    return [pscustomobject]@{
+        Passed = ($successCount -ge $required)
+        SuccessCount = $successCount
+        RequiredCount = $required
+        TargetCount = $TestUrls.Count
+        AttemptedCount = $attemptedCount
+        Results = $results
+    }
+}
+
 function Test-ProxyCandidate {
     param($Candidate, $Config)
 
@@ -305,7 +493,13 @@ function Test-ProxyCandidate {
     } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
     if ($urls.Count -eq 0) { throw 'ProxyTestUrls must contain at least one absolute HTTPS URL.' }
     $minimum = [int](Get-CpgConfigValue $Config 'MinimumSuccessfulProxyTests' 1)
-    $validation = Test-HttpProxy $Candidate.Uri $urls ([int](Get-CpgConfigValue $Config 'HttpTimeoutSeconds' 8)) $minimum
+    $proxyScheme = ([Uri]$Candidate.Uri).Scheme.ToLowerInvariant()
+    $validation = if ($proxyScheme -in @('socks5', 'socks5h')) {
+        Test-Socks5Proxy $Candidate.Uri $urls ([int](Get-CpgConfigValue $Config 'HttpTimeoutSeconds' 8)) $minimum
+    }
+    else {
+        Test-HttpProxy $Candidate.Uri $urls ([int](Get-CpgConfigValue $Config 'HttpTimeoutSeconds' 8)) $minimum
+    }
     $Candidate | Add-Member -MemberType NoteProperty -Name ValidationResult -Value $validation -Force
     $script:ValidationCache[$Candidate.Uri] = [pscustomobject]@{ Valid = [bool]$validation.Passed; CheckedAt = Get-Date; Result = $validation }
     return [bool]$validation.Passed
@@ -317,7 +511,7 @@ function Find-EffectiveProxy {
     $candidates = @()
     if (-not [string]::IsNullOrWhiteSpace($ProxyOverride)) {
         $allowRemote = [bool](Get-CpgConfigValue $Config 'AllowNonLoopbackProxy' $false)
-        $uri = ConvertTo-CpgHttpProxyUri -Address $ProxyOverride -AllowNonLoopback:$allowRemote
+        $uri = ConvertTo-CpgProxyUri -Address $ProxyOverride -AllowNonLoopback:$allowRemote
         if ($null -ne $uri) { $candidates += New-ProxyCandidate $uri 'parameter:ProxyOverride' 400 }
     }
     $candidates += @(Get-SystemProxyCandidates $Config)
@@ -378,7 +572,7 @@ function Start-CodexManaged {
     Set-ScopedProxyEnvironment $ProxyUri $Config
     $arguments = @()
     if ([bool](Get-CpgConfigValue $Config 'UseChromiumProxyArgument' $true)) {
-        $arguments += "--proxy-server=$ProxyUri"
+        $arguments += "--proxy-server=$(ConvertTo-CpgChromiumProxyUri -ProxyUri $ProxyUri)"
         $arguments += '--proxy-bypass-list=localhost;127.0.0.1;[::1]'
     }
 

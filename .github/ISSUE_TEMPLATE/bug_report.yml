@@ -11,7 +11,7 @@ body:
     id: version
     attributes:
       label: Guardian 版本
-      placeholder: 1.2.0
+      placeholder: 1.3.0
     validations:
       required: true
   - type: input
@@ -32,7 +32,7 @@ body:
     id: proxy
     attributes:
       label: 代理软件与运行模式
-      placeholder: 例如 Clash Verge Rev / Mihomo / v2rayN；系统代理、混合端口、TUN 等
+      placeholder: 例如 Clash Verge Rev / Mihomo / v2rayN；HTTP、纯 SOCKS5、PAC/WPAD、混合端口、TUN 等
     validations:
       required: true
   - type: dropdown

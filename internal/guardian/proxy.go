@@ -14,9 +14,10 @@ import (
 )
 
 type Candidate struct {
-	URI    string `json:"uri"`
-	Source string `json:"source"`
-	Score  int    `json:"score"`
+	URI                  string `json:"uri"`
+	Source               string `json:"source"`
+	Score                int    `json:"score"`
+	AllowNonLoopbackHost bool   `json:"-"`
 }
 
 type Validation struct {
@@ -51,8 +52,12 @@ func NormalizeProxy(value string, allowNonLoopback bool) (string, error) {
 	if err != nil || parsed.Host == "" {
 		return "", fmt.Errorf("invalid proxy URL")
 	}
-	if parsed.Scheme != "http" && parsed.Scheme != "https" {
-		return "", fmt.Errorf("only HTTP/HTTPS proxies are supported")
+	parsed.Scheme = strings.ToLower(parsed.Scheme)
+	if parsed.Scheme == "socks" || parsed.Scheme == "socks5" {
+		parsed.Scheme = "socks5h"
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" && parsed.Scheme != "socks5h" {
+		return "", fmt.Errorf("only HTTP, HTTPS and SOCKS5 proxies are supported")
 	}
 	if parsed.User != nil || parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
 		return "", fmt.Errorf("proxy credentials, paths, queries and fragments are rejected")
@@ -70,26 +75,32 @@ func NormalizeProxy(value string, allowNonLoopback bool) (string, error) {
 
 func DiscoverCandidates(cfg Config, preferred string) []Candidate {
 	all := []Candidate{}
-	appendCandidate := func(raw, source string, score int) {
-		normalized, err := NormalizeProxy(raw, cfg.AllowNonLoopbackProxy)
+	appendCandidate := func(raw, source string, score int, allowSystemHost bool) {
+		normalized, err := NormalizeProxy(raw, cfg.AllowNonLoopbackProxy || allowSystemHost)
 		if err == nil {
 			all = append(all, Candidate{URI: normalized, Source: source, Score: score})
 		}
 	}
-	appendCandidate(cfg.ExplicitProxy, "config:explicit", 500)
+	appendCandidate(cfg.ExplicitProxy, "config:explicit", 500, false)
 	for _, candidate := range platformSystemProxyCandidates(cfg) {
-		appendCandidate(candidate.URI, candidate.Source, candidate.Score)
+		appendCandidate(candidate.URI, candidate.Source, candidate.Score, candidate.AllowNonLoopbackHost)
+	}
+	if cfg.EnablePACDiscovery {
+		for _, candidate := range discoverPACCandidates(cfg) {
+			appendCandidate(candidate.URI, candidate.Source, candidate.Score, candidate.AllowNonLoopbackHost)
+		}
 	}
 	if cfg.EnableEnvironmentProxyDiscovery {
 		for _, name := range []string{"HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY", "https_proxy", "http_proxy", "all_proxy"} {
-			appendCandidate(inheritedProxyEnvironment[name], "environment:"+name, 250)
+			appendCandidate(inheritedProxyEnvironment[name], "environment:"+name, 250, false)
 		}
 	}
 	for _, candidate := range platformListenerCandidates(cfg) {
-		appendCandidate(candidate.URI, candidate.Source, candidate.Score)
+		appendCandidate(candidate.URI, candidate.Source, candidate.Score, false)
 	}
 	for _, port := range cfg.PreferredProxyPorts {
-		appendCandidate(fmt.Sprintf("http://127.0.0.1:%d", port), "loopback:common-port", 100)
+		appendCandidate(fmt.Sprintf("http://127.0.0.1:%d", port), "loopback:common-port", 100, false)
+		appendCandidate(fmt.Sprintf("socks5h://127.0.0.1:%d", port), "loopback:common-port-socks5", 95, false)
 	}
 
 	deduplicated := map[string]Candidate{}

@@ -87,6 +87,12 @@ Invoke-Test 'Default configuration is conservative' {
     Assert-True $config.SafeRepairExternalCodexLaunches
     Assert-True ([int]$config.SafeExternalLaunchGraceSeconds -ge 10)
     Assert-False $config.AllowNonLoopbackProxy
+    Assert-True $config.AllowSystemNonLoopbackProxy
+    Assert-True $config.EnablePACDiscovery
+    Assert-True $config.EnableWPADDiscovery
+    Assert-True ([int]$config.PacFetchTimeoutSeconds -le 10)
+    Assert-True ([int]$config.PacExecutionTimeoutMilliseconds -le 1000)
+    Assert-True ([int]$config.PacMaxBytes -le 1048576)
     Assert-True $config.UseChromiumProxyArgument
     Assert-True ([int]$config.RestartCooldownSeconds -ge 10)
     Assert-True ([int]$config.RestartLimitCount -le 3)
@@ -176,12 +182,18 @@ Invoke-Test 'Release checksum parser accepts only a leading SHA-256 digest' {
 
 Invoke-Test 'Configuration migration adds defaults without replacing user choices' {
     $config = [pscustomobject]@{ Mode = 'Enforce'; PollSeconds = 12; UpdateChannel = 'Prerelease' }
-    $defaults = [pscustomobject]@{ Mode = 'Safe'; PollSeconds = 5; CircuitBreakerMinutes = 15; UpdateChannel = 'Stable' }
+    $defaults = [pscustomobject]@{
+        Mode = 'Safe'; PollSeconds = 5; CircuitBreakerMinutes = 15; UpdateChannel = 'Stable'
+        EnablePACDiscovery = $true; PacExecutionTimeoutMilliseconds = 500; AllowSystemNonLoopbackProxy = $true
+    }
     $merged = Update-CpgConfigDefaults -Config $config -Defaults $defaults
     Assert-Equal 'Enforce' ([string]$merged.Mode)
     Assert-Equal 12 ([int]$merged.PollSeconds)
     Assert-Equal 15 ([int]$merged.CircuitBreakerMinutes)
     Assert-Equal 'Prerelease' ([string]$merged.UpdateChannel)
+    Assert-True $merged.EnablePACDiscovery
+    Assert-Equal 500 ([int]$merged.PacExecutionTimeoutMilliseconds)
+    Assert-True $merged.AllowSystemNonLoopbackProxy
 }
 
 Invoke-Test 'First stable release upgrades the alpha series on the Stable channel' {
@@ -198,8 +210,10 @@ Invoke-Test 'IPv6 loopback proxy is accepted' {
     Assert-Equal 'http://[::1]:8080' (ConvertTo-CpgHttpProxyUri -Address '[::1]:8080')
 }
 
-Invoke-Test 'Proxy scheme and explicit port are required' {
-    Assert-Null (ConvertTo-CpgHttpProxyUri -Address 'socks5://127.0.0.1:1080')
+Invoke-Test 'HTTP and SOCKS5 proxy schemes require an explicit port' {
+    Assert-Equal 'socks5h://127.0.0.1:1080' (ConvertTo-CpgProxyUri -Address 'socks5://127.0.0.1:1080')
+    Assert-Equal 'socks5h://127.0.0.1:1080' (ConvertTo-CpgProxyUri -Address 'socks://127.0.0.1:1080')
+    Assert-Null (ConvertTo-CpgProxyUri -Address 'socks4://127.0.0.1:1080')
     Assert-Null (ConvertTo-CpgHttpProxyUri -Address 'http://127.0.0.1')
 }
 
@@ -223,9 +237,23 @@ Invoke-Test 'Embedded credentials are rejected and redacted' {
 
 Invoke-Test 'Windows protocol proxy map prefers HTTPS and deduplicates' {
     $items = @(ConvertFrom-CpgProxyServer -ProxyServer 'http=127.0.0.1:8000;https=127.0.0.1:9000;socks=127.0.0.1:1080')
-    Assert-Equal 2 $items.Count
+    Assert-Equal 3 $items.Count
     Assert-Equal 'https' ([string]$items[0].Label)
     Assert-Equal 'http://127.0.0.1:9000' ([string]$items[0].Uri)
+    Assert-Equal 'socks5h://127.0.0.1:1080' ([string]$items[2].Uri)
+}
+
+Invoke-Test 'PAC results preserve supported fallback order' {
+    $items = @(ConvertFrom-CpgPacResult -Result 'PROXY 127.0.0.1:8080; SOCKS5 127.0.0.1:1080; SOCKS4 127.0.0.1:1081; DIRECT')
+    Assert-Equal 2 $items.Count
+    Assert-Equal 'http://127.0.0.1:8080' ([string]$items[0].Uri)
+    Assert-Equal 'socks5h://127.0.0.1:1080' ([string]$items[1].Uri)
+}
+
+Invoke-Test 'Chromium receives its supported SOCKS5 spelling' {
+    Assert-Equal 'socks5://127.0.0.1:1080' (ConvertTo-CpgChromiumProxyUri -ProxyUri 'socks5h://127.0.0.1:1080')
+    $root = [pscustomobject]@{ CommandLine = 'ChatGPT.exe --proxy-server=socks5://127.0.0.1:1080' }
+    Assert-True (Test-CpgRootUsesProxy -RootProcess $root -ProxyUri 'socks5h://127.0.0.1:1080')
 }
 
 Invoke-Test 'Candidate ordering is deterministic and sticky only within a score tier' {

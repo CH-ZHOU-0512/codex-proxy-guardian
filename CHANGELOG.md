@@ -4,6 +4,14 @@ All notable changes are documented here. This project follows semantic versionin
 
 ## [未发布 / Unreleased]
 
+## [1.3.0] - 2026-08-04
+
+- 新增三平台端到端 SOCKS5/SOCKS5H 支持：候选规范化、真实网络验证、Chromium 参数与 CLI 环境注入保持一致；常见代理程序的未知监听会同时尝试 HTTP 和 SOCKS5。
+- Windows 使用当前用户 WinHTTP 自动代理解析器处理系统 PAC/WPAD；macOS/Linux 使用带下载大小、网络、DNS 和 JavaScript 执行时限的 PAC 运行时执行 `FindProxyForURL`。
+- PAC 解析支持 `PROXY`、`HTTP`、`HTTPS`、`SOCKS`、`SOCKS5` 与 `DIRECT` 回退链；SOCKS4 继续安全拒绝。候选仍必须通过多目标真实请求门槛，目标路由不一致时保持不接管。
+- 将系统已配置的远程代理与任意显式远程代理拆分为独立信任边界：前者由 `AllowSystemNonLoopbackProxy` 控制，后者仍需 `AllowNonLoopbackProxy` 明确授权。
+- 新增真实 SOCKS5 转发测试、PAC JavaScript/超时测试、Windows WinHTTP PAC 集成测试、旧配置默认值迁移测试与四架构交叉编译验证。
+
 ## [1.2.0] - 2026-08-04
 
 - 新增 macOS Intel / Apple Silicon 原生守护程序：发现并真实验证系统、环境变量和常见本地 HTTP/HTTPS 代理，通过当前用户 LaunchAgent 静默自启，并在端点稳定变化后受控修复 ChatGPT/Codex 桌面应用。

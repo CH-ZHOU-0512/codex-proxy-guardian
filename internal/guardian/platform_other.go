@@ -17,3 +17,4 @@ func (*unsupportedManager) Restart(string, Config) error {
 }
 func platformSystemProxyCandidates(Config) []Candidate { return nil }
 func platformListenerCandidates(Config) []Candidate    { return nil }
+func platformPACSources(Config) []pacSource            { return nil }

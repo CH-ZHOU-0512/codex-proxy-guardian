@@ -16,7 +16,7 @@ This is an intentional platform boundary: a background process cannot safely rew
 
 ### Linux remains at `WaitingForProxy`
 
-Make sure the proxy application exposes an HTTP or mixed listener, not only SOCKS/TUN. A non-GNOME desktop may not expose a common system-proxy API; set `ExplicitProxy` in `${XDG_CONFIG_HOME:-~/.config}/codex-proxy-guardian/config.json`.
+Make sure the proxy application exposes HTTP, SOCKS5, or a mixed listener. TUN-only routing with no system PAC/proxy endpoint still cannot be explicitly validated. On non-GNOME desktops, set `ExplicitProxy` in `${XDG_CONFIG_HOME:-~/.config}/codex-proxy-guardian/config.json`.
 
 ### macOS cannot find the desktop app
 
@@ -56,8 +56,8 @@ Run `Control.ps1 -Action CheckUpdate` to inspect the configured channel. Update 
 
 ## No proxy is selected
 
-- Confirm the endpoint is HTTP or HTTPS, not SOCKS-only.
-- Confirm the local proxy application exposes an HTTP or mixed inbound listener.
+- Confirm the endpoint is HTTP, HTTPS, SOCKS5, or SOCKS5H. SOCKS4 is not supported.
+- Confirm the local proxy application exposes an HTTP, SOCKS5, or mixed inbound listener.
 - Check that Windows manual proxy is enabled, or set `ExplicitProxy`.
 - Run the self-test from the installed directory:
 
@@ -74,6 +74,14 @@ For a fuller, redacted diagnosis:
 ```
 
 The default requires at least two successful HTTPS targets. This makes a listener-only false positive much less likely.
+
+## PAC/WPAD is enabled but no candidate is selected
+
+- Windows uses the current-user WinHTTP auto-proxy resolver. Confirm the setup script or automatic-detection option is enabled for that user.
+- On macOS inspect `ProxyAutoConfigURLString` / `ProxyAutoDiscoveryEnable` in `scutil --proxy`; on GNOME inspect proxy `mode` and `autoconfig-url` with `gsettings`.
+- A PAC that returns SOCKS4, only DIRECT, or mutually incompatible endpoints for the OpenAI validation targets safely produces no selected proxy.
+- System PAC results may use remote proxies while `AllowSystemNonLoopbackProxy` is enabled. A manually supplied `ExplicitPAC` still requires `AllowNonLoopbackProxy: true` for remote results.
+- Fetch, DNS, and JavaScript execution limits reject a stalled or hostile PAC. Do not raise them without first inspecting the script.
 
 ## Status says ValidatedProxy but not TrafficObserved
 
