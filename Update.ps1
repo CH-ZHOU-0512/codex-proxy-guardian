@@ -138,7 +138,10 @@ try {
         'X-GitHub-Api-Version' = '2022-11-28'
     }
     Write-UpdateLog 'INFO' 'update_check_started' 'Checking the configured GitHub Release channel.' @{ current_version = $currentVersion; channel = $channel }
-    $releases = @(Invoke-RestMethod -Uri "https://api.github.com/repos/$repository/releases?per_page=20" -Headers $headers -Method Get -TimeoutSec 30)
+    # Assign first, then enumerate. Windows PowerShell 5.1 otherwise preserves
+    # the top-level JSON array as one pipeline object inside @(...).
+    $releaseResponse = Invoke-RestMethod -Uri "https://api.github.com/repos/$repository/releases?per_page=20" -Headers $headers -Method Get -TimeoutSec 30
+    $releases = @($releaseResponse)
     $release = Select-CpgUpdateRelease -Releases $releases -CurrentVersion $currentVersion -Channel $channel
     if ($null -eq $release) {
         Write-UpdateLog 'INFO' 'update_not_available' 'The installed version is current for the configured channel.' @{ current_version = $currentVersion; channel = $channel }

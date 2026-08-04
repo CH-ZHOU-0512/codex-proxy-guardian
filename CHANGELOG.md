@@ -4,6 +4,11 @@ All notable changes are documented here. This project follows semantic versionin
 
 ## [未发布 / Unreleased]
 
+## [1.3.1] - 2026-08-04
+
+- 修复 Windows PowerShell 5.1 将 GitHub Releases 顶层 JSON 数组保留为单个管道对象，导致更新器误报 `update_not_available` 的兼容问题。
+- Release 选择器现在会安全展平该返回形态，更新脚本同时先接收 REST 结果再枚举，并增加 PowerShell 5.1 回归测试。
+
 ## [1.3.0] - 2026-08-04
 
 - 新增三平台端到端 SOCKS5/SOCKS5H 支持：候选规范化、真实网络验证、Chromium 参数与 CLI 环境注入保持一致；常见代理程序的未知监听会同时尝试 HTTP 和 SOCKS5。
