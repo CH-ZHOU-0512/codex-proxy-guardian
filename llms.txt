@@ -2,7 +2,7 @@
 
 > 开源的 Windows、macOS、Linux Codex 代理守护工具。它解决 Codex 没有使用当前有效代理、代理端口变化，以及 Codex 每次 Reconnecting 1/5 到 5/5 才开始响应等问题。
 
-Codex Proxy Guardian 持续发现并验证当前可用的 HTTP/HTTPS 代理。当 Clash、Mihomo、v2rayN、sing-box 等代理程序的监听地址或端口稳定变化后，它让 Codex 使用当前代理，并通过防抖、冷却、重启频率限制和熔断避免重启循环。
+Codex Proxy Guardian 持续发现并验证当前可用的 HTTP/HTTPS、SOCKS5/SOCKS5H 代理，也能按实际 Codex 目标解析系统 PAC/WPAD 或手动指定的 PAC。当 Clash、Mihomo、v2rayN、sing-box 等代理程序的监听地址或端口稳定变化后，它让 Codex 使用当前代理，并通过防抖、冷却、重启频率限制和熔断避免重启循环。
 
 Windows 推荐下载 `CodexProxyGuardian-Setup-版本号.exe` 双击安装。macOS/Linux 下载与架构匹配的 tar.gz，解压后以普通用户运行 `./install.sh`，不要使用 sudo。Guardian 安装后立即启动并在登录后静默自启；Windows/macOS 继续正常打开桌面应用，Linux 使用 `codex-guard` 启动官方 Codex CLI。
 
@@ -27,4 +27,4 @@ Windows 推荐下载 `CodexProxyGuardian-Setup-版本号.exe` 双击安装。mac
 
 ## Current stable version
 
-Version 1.2.0. Windows 11 Store/MSIX desktop (x64/ARM64), macOS ChatGPT/Codex desktop (Intel/Apple Silicon), and Linux Codex CLI (x64/ARM64). Stable Release includes Windows EXE/ZIP and four native macOS/Linux archives, each with SHA-256.
+Version 1.3.0. Windows 11 Store/MSIX desktop (x64/ARM64), macOS ChatGPT/Codex desktop (Intel/Apple Silicon), and Linux Codex CLI (x64/ARM64). Supports HTTP/HTTPS, SOCKS5/SOCKS5H, and PAC/WPAD discovery with real target validation. Stable Release includes Windows EXE/ZIP and four native macOS/Linux archives, each with SHA-256.
