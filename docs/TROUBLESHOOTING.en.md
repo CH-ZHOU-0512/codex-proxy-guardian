@@ -58,6 +58,14 @@ Version 0.2 and later persists a `RecoveryLaunchRequired` flag before stopping C
 
 Run `Control.ps1 -Action CheckUpdate` to inspect the configured channel. Update logs are under `logs\update-*.jsonl`. GitHub reachability, incomplete Release assets, a SHA-256 mismatch, or a missing task can block an update; each failure retains the current version rather than partially overwriting it. Re-run the newest `Install.ps1` to restore a missing `Codex Proxy Guardian Update` task.
 
+Starting with v1.4.4, Settings distinguishes “another updater is running; this check was skipped” from a completed “no higher version” result. It displays the installed version, remote version, selected channel, and check time. A skipped check is never labeled current.
+
+## Codex was not restarted but still shows Reconnecting
+
+Compare the timestamp with Guardian's `codex_restart` and `proxy_changed` events. If neither is present while Codex records TLS EOF, WebSocket reset, Windows `10054`, or a request timeout, the streaming connection was interrupted upstream of Guardian.
+
+Version 1.4.4 requires the critical `chatgpt.com` probe to pass and exposes `ProxyCriticalTargetsPassed` and `ProxyCriticalFailures` in status and Doctor output. Guardian can try another discovered endpoint or protocol, but it does not silently change the proxy application's provider node. If the proxy application's own log reports upstream `i/o timeout`, select a healthier node there.
+
 ## No proxy is selected
 
 - Confirm the endpoint is HTTP, HTTPS, SOCKS5, or SOCKS5H. SOCKS4 is not supported.

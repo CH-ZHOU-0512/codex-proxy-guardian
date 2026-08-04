@@ -108,11 +108,10 @@ function Compare-CpgSemanticVersion {
     return 0
 }
 
-function Select-CpgUpdateRelease {
+function Select-CpgLatestRelease {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)]$Releases,
-        [Parameter(Mandatory = $true)][string]$CurrentVersion,
         [ValidateSet('Stable', 'Prerelease')][string]$Channel = 'Stable'
     )
 
@@ -133,13 +132,27 @@ function Select-CpgUpdateRelease {
         $tag = [string](Get-CpgConfigValue $release 'tag_name' '')
         if ($tag -notmatch '^v?\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$') { continue }
         $candidateVersion = $tag.TrimStart('v')
-        if ((Compare-CpgSemanticVersion $candidateVersion $CurrentVersion) -le 0) { continue }
         $selectedVersion = if ($null -eq $selected) { '' } else { ([string]$selected.tag_name).TrimStart('v') }
         if ($null -eq $selected -or (Compare-CpgSemanticVersion $candidateVersion $selectedVersion) -gt 0) {
             $selected = $release
         }
     }
     return $selected
+}
+
+function Select-CpgUpdateRelease {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]$Releases,
+        [Parameter(Mandatory = $true)][string]$CurrentVersion,
+        [ValidateSet('Stable', 'Prerelease')][string]$Channel = 'Stable'
+    )
+
+    $latest = Select-CpgLatestRelease -Releases $Releases -Channel $Channel
+    if ($null -eq $latest) { return $null }
+    $latestVersion = ([string]$latest.tag_name).TrimStart('v')
+    if ((Compare-CpgSemanticVersion $latestVersion $CurrentVersion) -le 0) { return $null }
+    return $latest
 }
 
 function Get-CpgDeclaredSha256 {
@@ -444,6 +457,25 @@ function Resolve-CpgProxyLifecycleUri {
     return $ValidatedProxyUri
 }
 
+function Get-CpgProxyChangeDecision {
+    [CmdletBinding()]
+    param(
+        [AllowNull()][AllowEmptyString()][string]$CurrentProxyUri,
+        [Parameter(Mandatory = $true)][ValidateNotNullOrEmpty()][string]$ValidatedProxyUri
+    )
+
+    if ([string]::IsNullOrWhiteSpace($CurrentProxyUri)) {
+        return [pscustomobject]@{ Kind = 'InitialAdoption'; RestartRequired = $false; SameEndpoint = $false }
+    }
+    if ([string]::Equals($CurrentProxyUri, $ValidatedProxyUri, [System.StringComparison]::OrdinalIgnoreCase)) {
+        return [pscustomobject]@{ Kind = 'Unchanged'; RestartRequired = $false; SameEndpoint = $true }
+    }
+    if (Test-CpgSameProxyEndpoint -FirstProxyUri $CurrentProxyUri -SecondProxyUri $ValidatedProxyUri) {
+        return [pscustomobject]@{ Kind = 'ProtocolUpdate'; RestartRequired = $false; SameEndpoint = $true }
+    }
+    return [pscustomobject]@{ Kind = 'EndpointChange'; RestartRequired = $true; SameEndpoint = $false }
+}
+
 function Get-CpgRestartPromptDecision {
     [CmdletBinding()]
     param([int]$PopupResult)
@@ -468,27 +500,6 @@ function Select-CpgProxyCandidates {
         @{ Expression = { if ([string]$_.Uri -eq $PreferredUri) { 1 } else { 0 } }; Descending = $true }, `
         @{ Expression = { [string]$_.Source }; Ascending = $true }, `
         @{ Expression = { [string]$_.Uri }; Ascending = $true })
-
-    if ($ordered.Count -eq 0 -or [string]::IsNullOrWhiteSpace($PreferredUri)) { return $ordered }
-
-    $preferred = @($ordered | Where-Object { [string]$_.Uri -eq $PreferredUri } | Select-Object -First 1)
-    if ($preferred.Count -eq 0 -or [string]$ordered[0].Uri -eq $PreferredUri) { return $ordered }
-
-    $preferredEndpoint = Get-CpgProxyEndpointKey -ProxyUri $PreferredUri
-    $highestEndpoint = Get-CpgProxyEndpointKey -ProxyUri ([string]$ordered[0].Uri)
-    $highestSource = [string]$ordered[0].Source
-    $explicitSelection = $highestSource -in @('parameter:ProxyOverride', 'config:ExplicitProxy')
-
-    # A mixed HTTP/SOCKS listener can temporarily validate under only one scheme.
-    # Once Guardian has fallen back successfully, keep that working scheme while
-    # the physical host:port is unchanged. This prevents a later score-based
-    # scheme flip from restarting Codex a second time. Explicit user choices and
-    # genuinely different endpoints still retain their normal priority.
-    if (-not $explicitSelection -and
-        -not [string]::IsNullOrWhiteSpace($preferredEndpoint) -and
-        $preferredEndpoint -eq $highestEndpoint) {
-        return @($preferred[0]) + @($ordered | Where-Object { [string]$_.Uri -ne $PreferredUri })
-    }
 
     return $ordered
 }
@@ -537,6 +548,42 @@ function Test-CpgProxyResponseStatus {
     return ($StatusCode -ge 200 -and $StatusCode -lt 500 -and $StatusCode -ne 407)
 }
 
+function Get-CpgProxyValidationDecision {
+    [CmdletBinding()]
+    param(
+        [AllowEmptyCollection()]$Results = @(),
+        [ValidateRange(1, 100)][int]$MinimumSuccessCount = 1,
+        [AllowEmptyCollection()][string[]]$RequiredHosts = @()
+    )
+
+    $items = @($Results | Where-Object { $null -ne $_ })
+    $successCount = @($items | Where-Object { [bool](Get-CpgConfigValue $_ 'Passed' $false) }).Count
+    $requiredCount = [Math]::Max(1, $MinimumSuccessCount)
+    $normalizedRequiredHosts = @($RequiredHosts | ForEach-Object { ([string]$_).Trim().ToLowerInvariant() } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Sort-Object -Unique)
+    $criticalFailures = @()
+    $criticalMissing = @()
+    foreach ($requiredHost in $normalizedRequiredHosts) {
+        $hostResults = @($items | Where-Object { [string]::Equals(([string](Get-CpgConfigValue $_ 'Host' '')).Trim(), $requiredHost, [System.StringComparison]::OrdinalIgnoreCase) })
+        if ($hostResults.Count -eq 0) {
+            $criticalMissing += $requiredHost
+            continue
+        }
+        if (@($hostResults | Where-Object { [bool](Get-CpgConfigValue $_ 'Passed' $false) }).Count -eq 0) {
+            $criticalFailures += $requiredHost
+        }
+    }
+
+    $criticalTargetsPassed = $criticalFailures.Count -eq 0 -and $criticalMissing.Count -eq 0
+    return [pscustomobject]@{
+        Passed = ($successCount -ge $requiredCount -and $criticalTargetsPassed)
+        SuccessCount = $successCount
+        RequiredCount = $requiredCount
+        CriticalTargetsPassed = $criticalTargetsPassed
+        CriticalFailures = @($criticalFailures)
+        CriticalMissing = @($criticalMissing)
+    }
+}
+
 function Test-CpgRootUsesProxy {
     [CmdletBinding()]
     param(
@@ -552,9 +599,14 @@ function Test-CpgRootUsesProxy {
         return $false
     }
 
-    $expected = '--proxy-server=' + (ConvertTo-CpgChromiumProxyUri -ProxyUri $ProxyUri).TrimEnd('/')
     $commandLine = [string]$RootProcess.CommandLine
-    return ($commandLine -match ('(?i)(?:^|\s)' + [regex]::Escape($expected) + '(?:\s|$)'))
+    $argumentMatch = [regex]::Match($commandLine, '(?i)(?:^|\s)--proxy-server=(?:"(?<quoted>[^"]+)"|(?<plain>\S+))')
+    if (-not $argumentMatch.Success) { return $false }
+    $actualText = if ($argumentMatch.Groups['quoted'].Success) { $argumentMatch.Groups['quoted'].Value } else { $argumentMatch.Groups['plain'].Value }
+    $actualProxy = ConvertTo-CpgProxyUri -Address $actualText -AllowNonLoopback
+    $expectedProxy = ConvertTo-CpgProxyUri -Address $ProxyUri -AllowNonLoopback
+    if ([string]::IsNullOrWhiteSpace($actualProxy) -or [string]::IsNullOrWhiteSpace($expectedProxy)) { return $false }
+    return Test-CpgSameProxyEndpoint -FirstProxyUri $actualProxy -SecondProxyUri $expectedProxy
 }
 
 function Get-CpgCodexApplicationCandidates {
@@ -695,6 +747,7 @@ Export-ModuleMember -Function @(
     'Set-CpgModeProfile',
     'Get-CpgModeProfile',
     'Compare-CpgSemanticVersion',
+    'Select-CpgLatestRelease',
     'Select-CpgUpdateRelease',
     'Get-CpgDeclaredSha256',
     'Get-CpgExternalLaunchDecision',
@@ -708,10 +761,12 @@ Export-ModuleMember -Function @(
     'Protect-CpgProxyUri',
     'Test-CpgSameProxyEndpoint',
     'Resolve-CpgProxyLifecycleUri',
+    'Get-CpgProxyChangeDecision',
     'Get-CpgRestartPromptDecision',
     'Select-CpgProxyCandidates',
     'Get-CpgRestartDecision',
     'Test-CpgProxyResponseStatus',
+    'Get-CpgProxyValidationDecision',
     'Test-CpgRootUsesProxy',
     'Get-CpgCodexApplicationCandidates',
     'Get-CpgCodexApp',

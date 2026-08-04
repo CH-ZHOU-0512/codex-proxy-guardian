@@ -273,6 +273,8 @@ if ($Json) { $reportJson; return }
     GuardianState = Get-SafeProperty $status 'guardianState' $null
     EffectivenessEvidence = Get-SafeProperty $status 'effectivenessEvidence' $null
     ProxyTests = ('{0}/{1}' -f [int](Get-SafeProperty $status 'proxyTestSuccessCount' 0), [int](Get-SafeProperty $status 'proxyTestRequiredCount' 0))
+    ProxyCriticalTargetsPassed = [bool](Get-SafeProperty $status 'proxyCriticalTargetsPassed' $false)
+    ProxyCriticalFailures = @((Get-SafeProperty $status 'proxyCriticalFailures' @()))
     LaunchProxyMatch = Get-SafeProperty $status 'codexProxyArgumentMatch' $null
     ProxyTrafficObservedRecently = Get-SafeProperty $status 'codexProxyConnectionObservedRecently' $null
     RestartApprovalRequired = [bool](Get-SafeProperty $status 'restartApprovalRequired' $false)

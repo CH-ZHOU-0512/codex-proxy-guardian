@@ -45,6 +45,10 @@
       "items": { "type": "string", "format": "uri", "pattern": "^https://" }
     },
     "MinimumSuccessfulProxyTests": { "type": "integer", "minimum": 1, "maximum": 20 },
+    "RequiredProxyTestHosts": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
     "PreferredProxyProcesses": { "type": "array", "items": { "type": "string" } },
     "PreferredProxyPorts": { "type": "array", "items": { "type": "integer", "minimum": 1, "maximum": 65535 } },
     "MaxProcessProxyCandidates": { "type": "integer", "minimum": 1, "maximum": 50 },

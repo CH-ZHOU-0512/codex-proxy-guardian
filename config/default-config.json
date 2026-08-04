@@ -28,6 +28,9 @@
     "https://auth.openai.com/"
   ],
   "MinimumSuccessfulProxyTests": 2,
+  "RequiredProxyTestHosts": [
+    "chatgpt.com"
+  ],
   "ExplicitProxy": "",
   "ExplicitPAC": "",
   "AllowNonLoopbackProxy": false,

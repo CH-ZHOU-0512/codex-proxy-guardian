@@ -372,7 +372,7 @@ function Test-TcpEndpoint {
 }
 
 function Test-HttpProxy {
-    param([string]$ProxyUri, [string[]]$TestUrls, [int]$TimeoutSeconds, [int]$MinimumSuccessCount)
+    param([string]$ProxyUri, [string[]]$TestUrls, [int]$TimeoutSeconds, [int]$MinimumSuccessCount, [string[]]$RequiredHosts = @())
 
     Add-Type -AssemblyName System.Net.Http
     $results = @()
@@ -412,21 +412,26 @@ function Test-HttpProxy {
             StatusCode = $statusCode
             FailureType = $failureType
         }
-        if ($successCount -ge $required) { break }
+        $decision = Get-CpgProxyValidationDecision -Results $results -MinimumSuccessCount $required -RequiredHosts $RequiredHosts
+        if ($decision.Passed -or @($decision.CriticalFailures).Count -gt 0) { break }
         if (($successCount + ($TestUrls.Count - $attemptedCount)) -lt $required) { break }
     }
+    $decision = Get-CpgProxyValidationDecision -Results $results -MinimumSuccessCount $required -RequiredHosts $RequiredHosts
     return [pscustomobject]@{
-        Passed = ($successCount -ge $required)
-        SuccessCount = $successCount
+        Passed = [bool]$decision.Passed
+        SuccessCount = [int]$decision.SuccessCount
         RequiredCount = $required
         TargetCount = $TestUrls.Count
         AttemptedCount = $attemptedCount
+        CriticalTargetsPassed = [bool]$decision.CriticalTargetsPassed
+        CriticalFailures = @($decision.CriticalFailures)
+        CriticalMissing = @($decision.CriticalMissing)
         Results = $results
     }
 }
 
 function Test-Socks5Proxy {
-    param([string]$ProxyUri, [string[]]$TestUrls, [int]$TimeoutSeconds, [int]$MinimumSuccessCount)
+    param([string]$ProxyUri, [string[]]$TestUrls, [int]$TimeoutSeconds, [int]$MinimumSuccessCount, [string[]]$RequiredHosts = @())
 
     $results = @()
     $successCount = 0
@@ -455,15 +460,20 @@ function Test-Socks5Proxy {
         }
         if ($passed) { $successCount++ }
         $results += [pscustomobject]@{ Host = ([Uri]$testUrl).Host; Passed = $passed; StatusCode = $statusCode; FailureType = $failureType }
-        if ($successCount -ge $required) { break }
+        $decision = Get-CpgProxyValidationDecision -Results $results -MinimumSuccessCount $required -RequiredHosts $RequiredHosts
+        if ($decision.Passed -or @($decision.CriticalFailures).Count -gt 0) { break }
         if (($successCount + ($TestUrls.Count - $attemptedCount)) -lt $required) { break }
     }
+    $decision = Get-CpgProxyValidationDecision -Results $results -MinimumSuccessCount $required -RequiredHosts $RequiredHosts
     return [pscustomobject]@{
-        Passed = ($successCount -ge $required)
-        SuccessCount = $successCount
+        Passed = [bool]$decision.Passed
+        SuccessCount = [int]$decision.SuccessCount
         RequiredCount = $required
         TargetCount = $TestUrls.Count
         AttemptedCount = $attemptedCount
+        CriticalTargetsPassed = [bool]$decision.CriticalTargetsPassed
+        CriticalFailures = @($decision.CriticalFailures)
+        CriticalMissing = @($decision.CriticalMissing)
         Results = $results
     }
 }
@@ -493,12 +503,13 @@ function Test-ProxyCandidate {
     } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
     if ($urls.Count -eq 0) { throw 'ProxyTestUrls must contain at least one absolute HTTPS URL.' }
     $minimum = [int](Get-CpgConfigValue $Config 'MinimumSuccessfulProxyTests' 1)
+    $requiredHosts = @((Get-CpgConfigValue $Config 'RequiredProxyTestHosts' @()) | ForEach-Object { ([string]$_).Trim().ToLowerInvariant() } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
     $proxyScheme = ([Uri]$Candidate.Uri).Scheme.ToLowerInvariant()
     $validation = if ($proxyScheme -in @('socks5', 'socks5h')) {
-        Test-Socks5Proxy $Candidate.Uri $urls ([int](Get-CpgConfigValue $Config 'HttpTimeoutSeconds' 8)) $minimum
+        Test-Socks5Proxy $Candidate.Uri $urls ([int](Get-CpgConfigValue $Config 'HttpTimeoutSeconds' 8)) $minimum $requiredHosts
     }
     else {
-        Test-HttpProxy $Candidate.Uri $urls ([int](Get-CpgConfigValue $Config 'HttpTimeoutSeconds' 8)) $minimum
+        Test-HttpProxy $Candidate.Uri $urls ([int](Get-CpgConfigValue $Config 'HttpTimeoutSeconds' 8)) $minimum $requiredHosts
     }
     $Candidate | Add-Member -MemberType NoteProperty -Name ValidationResult -Value $validation -Force
     $script:ValidationCache[$Candidate.Uri] = [pscustomobject]@{ Valid = [bool]$validation.Passed; CheckedAt = Get-Date; Result = $validation }
@@ -811,6 +822,8 @@ if ($SelfTest) {
         ProxyTestRequiredCount = if ($null -eq $validation) { [int](Get-CpgConfigValue $config 'MinimumSuccessfulProxyTests' 1) } else { $validation.RequiredCount }
         ProxyTestTargetCount = if ($null -eq $validation) { @((Get-CpgConfigValue $config 'ProxyTestUrls' @())).Count } else { $validation.TargetCount }
         ProxyTestAttemptedCount = if ($null -eq $validation) { 0 } else { $validation.AttemptedCount }
+        ProxyCriticalTargetsPassed = if ($null -eq $validation) { $false } else { [bool](Get-CpgConfigValue $validation 'CriticalTargetsPassed' $true) }
+        ProxyCriticalFailures = @(if ($null -eq $validation) { @() } else { @((Get-CpgConfigValue $validation 'CriticalFailures' @())) })
         CodexInstalled = ($null -ne $codexApp)
         CodexPackage = if ($null -eq $codexApp) { $null } else { $codexApp.PackageName }
         SystemProxyModified = $false
@@ -994,15 +1007,14 @@ try {
 
             $preferredProxy = if (-not [string]::IsNullOrWhiteSpace($activeProxy)) { $activeProxy } else { $previousActiveProxy }
             $candidate = Find-EffectiveProxy $config $preferredProxy
-            $explicitSelection = $null -ne $candidate -and [string]$candidate.Source -in @('parameter:ProxyOverride', 'config:ExplicitProxy')
-            $lifecycleUri = if ($null -eq $candidate) { '' } else { Resolve-CpgProxyLifecycleUri -PreferredProxyUri $preferredProxy -ValidatedProxyUri ([string]$candidate.Uri) -ExplicitSelection:$explicitSelection }
-            if ($null -ne $candidate -and [string]$candidate.Uri -ne $lifecycleUri) {
+            if ($null -ne $candidate -and
+                -not [string]::IsNullOrWhiteSpace($preferredProxy) -and
+                [string]$candidate.Uri -ne $preferredProxy -and
+                (Test-CpgSameProxyEndpoint -FirstProxyUri $preferredProxy -SecondProxyUri ([string]$candidate.Uri))) {
                 $validatedUri = [string]$candidate.Uri
-                $candidate.Uri = $lifecycleUri
-                $candidate.Source = "{0}:same-endpoint" -f [string]$candidate.Source
                 if ($lastEquivalentValidationUri -ne $validatedUri) {
-                    Write-GuardianLog 'WARN' 'proxy_scheme_change_ignored' 'An alternate protocol validated on the same host and port; Codex was left running on its current proxy scheme.' @{
-                        active_proxy = Protect-CpgProxyUri $lifecycleUri
+                    Write-GuardianLog 'INFO' 'proxy_protocol_candidate' 'A higher-priority protocol validated on the same host and port; it will be adopted without restarting the current Codex session.' @{
+                        active_proxy = Protect-CpgProxyUri $preferredProxy
                         validated_alternate = Protect-CpgProxyUri $validatedUri
                     }
                     $lastEquivalentValidationUri = $validatedUri
@@ -1034,12 +1046,22 @@ try {
                         $activeProxy = $candidate.Uri
                         $activeSource = $candidate.Source
                         if ($null -ne $oldProxy -and $oldProxy -ne $activeProxy) {
-                            $script:LastProxyConnection = [datetime]::MinValue
-                            $restartRequired = $true
-                            Write-GuardianLog 'INFO' 'proxy_changed' 'The validated proxy endpoint changed after debounce.' @{
-                                old_proxy = Protect-CpgProxyUri $oldProxy
-                                new_proxy = Protect-CpgProxyUri $activeProxy
-                                source = $activeSource
+                            $changeDecision = Get-CpgProxyChangeDecision -CurrentProxyUri $oldProxy -ValidatedProxyUri $activeProxy
+                            if ([string]$changeDecision.Kind -eq 'ProtocolUpdate') {
+                                Write-GuardianLog 'INFO' 'proxy_protocol_updated' 'The preferred protocol for the same proxy endpoint was updated for future launches; the current Codex session was not restarted.' @{
+                                    old_proxy = Protect-CpgProxyUri $oldProxy
+                                    new_proxy = Protect-CpgProxyUri $activeProxy
+                                    source = $activeSource
+                                }
+                            }
+                            else {
+                                $script:LastProxyConnection = [datetime]::MinValue
+                                $restartRequired = [bool]$changeDecision.RestartRequired
+                                Write-GuardianLog 'INFO' 'proxy_changed' 'The validated proxy endpoint changed after debounce.' @{
+                                    old_proxy = Protect-CpgProxyUri $oldProxy
+                                    new_proxy = Protect-CpgProxyUri $activeProxy
+                                    source = $activeSource
+                                }
                             }
                         }
                         else {
@@ -1259,6 +1281,8 @@ try {
                 proxyTestRequiredCount = if ($null -eq $currentValidation) { [int](Get-CpgConfigValue $config 'MinimumSuccessfulProxyTests' 1) } else { $currentValidation.RequiredCount }
                 proxyTestTargetCount = if ($null -eq $currentValidation) { @((Get-CpgConfigValue $config 'ProxyTestUrls' @())).Count } else { $currentValidation.TargetCount }
                 proxyTestAttemptedCount = if ($null -eq $currentValidation) { 0 } else { $currentValidation.AttemptedCount }
+                proxyCriticalTargetsPassed = if ($null -eq $currentValidation) { $false } else { [bool](Get-CpgConfigValue $currentValidation 'CriticalTargetsPassed' $true) }
+                proxyCriticalFailures = @(if ($null -eq $currentValidation) { @() } else { @((Get-CpgConfigValue $currentValidation 'CriticalFailures' @())) })
                 proxyTestResults = if ($null -eq $currentValidation) { @() } else { @($currentValidation.Results) }
                 pendingProxy = $pendingProxy
                 pendingSamples = $pendingSamples

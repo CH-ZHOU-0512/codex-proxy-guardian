@@ -166,7 +166,7 @@ codex-proxy-guardian doctor
 
 | 证据 | 代表什么 |
 |---|---|
-| `ValidatedProxy` | 代理端口可连接，且真实 HTTPS 请求达到成功门槛 |
+| `ValidatedProxy` | 代理端口可连接、真实 HTTPS 请求达到成功门槛，且 `chatgpt.com` 关键目标通过 |
 | `LaunchConfigured` | Codex 根进程带有同一个规范化代理参数 |
 | `TrafficObserved` | 近期观察到 Codex 进程树连接了该代理端点 |
 
@@ -185,6 +185,14 @@ codex-proxy-guardian doctor
 ### Windows 旧版一直说“没有更新”
 
 v1.0.0–v1.3.0 在 Windows PowerShell 5.1 下可能误报 `update_not_available`。请从[最新正式版](https://github.com/CH-ZHOU-0512/codex-proxy-guardian/releases/latest)手动原位安装一次；已有配置会保留，之后自动更新即可恢复。
+
+v1.4.4 起，Settings 不会把“更新器正忙、本次没有执行检查”翻译成“最新版”。检查结果会列出本机版本、远端版本、通道、检查时间和 GitHub Releases 来源；界面切换通道后可以直接检查，不必先应用设置。
+
+### Guardian 没有重启，为什么仍出现“正在重新连接”？
+
+这通常表示 Codex 到 OpenAI 的流式连接被代理上游节点重置或超时，不等于 Guardian 重启了应用。v1.4.4 起，`chatgpt.com` 是硬性验证目标，不能再由其他两个目标成功掩盖；同端口协议变化也只更新后续自然启动的首选，不会关闭当前任务。
+
+Guardian 无法在不改变用户网络选择的前提下修复代理服务商节点自身的丢包。若 `Status.ps1` 显示关键目标失败，或代理软件日志出现 `i/o timeout`、TLS EOF、WebSocket reset，请在代理软件中换一个稳定节点；Guardian 不会擅自替你切节点或修改系统代理。
 
 ### 会不会改坏系统网络？
 

@@ -4,7 +4,8 @@ param(
     [switch]$CheckOnly,
     [switch]$Install,
     [switch]$Silent,
-    [switch]$Json
+    [switch]$Json,
+    [string]$ChannelOverride = ''
 )
 
 Set-StrictMode -Version 2.0
@@ -31,7 +32,8 @@ Import-Module $coreModule -Force
 $config = Get-Content -Raw -LiteralPath $configPath | ConvertFrom-Json
 $currentVersion = (Get-Content -Raw -LiteralPath $versionPath).Trim()
 $automaticUpdates = [bool](Get-CpgConfigValue $config 'AutomaticUpdates' $true)
-$channel = [string](Get-CpgConfigValue $config 'UpdateChannel' 'Stable')
+$configuredChannel = [string](Get-CpgConfigValue $config 'UpdateChannel' 'Stable')
+$channel = if ([string]::IsNullOrWhiteSpace($ChannelOverride)) { $configuredChannel } else { $ChannelOverride.Trim() }
 if ($channel -notin @('Stable', 'Prerelease')) { throw "Unsupported update channel: $channel" }
 
 $logsPath = Join-Path $resolvedRoot 'logs'
@@ -120,7 +122,14 @@ function Restore-PreviousInstallation {
 try {
     $mutexAcquired = $mutex.WaitOne(0, $false)
     if (-not $mutexAcquired) {
-        $result = [pscustomobject]@{ UpdateChecked = $false; AlreadyRunning = $true; CurrentVersion = $currentVersion }
+        $result = [pscustomobject]@{
+            UpdateChecked = $false
+            UpdateAvailable = $null
+            AlreadyRunning = $true
+            CheckStatus = 'Busy'
+            CurrentVersion = $currentVersion
+            Channel = $channel
+        }
         Write-UpdateResult $result
         return
     }
@@ -136,20 +145,31 @@ try {
         Accept = 'application/vnd.github+json'
         'User-Agent' = "CodexProxyGuardian/$currentVersion"
         'X-GitHub-Api-Version' = '2022-11-28'
+        'Cache-Control' = 'no-cache'
+        Pragma = 'no-cache'
     }
     Write-UpdateLog 'INFO' 'update_check_started' 'Checking the configured GitHub Release channel.' @{ current_version = $currentVersion; channel = $channel }
     # Assign first, then enumerate. Windows PowerShell 5.1 otherwise preserves
     # the top-level JSON array as one pipeline object inside @(...).
     $releaseResponse = Invoke-RestMethod -Uri "https://api.github.com/repos/$repository/releases?per_page=20" -Headers $headers -Method Get -TimeoutSec 30
     $releases = @($releaseResponse)
+    $checkedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
+    $latestRelease = Select-CpgLatestRelease -Releases $releases -Channel $channel
+    $latestVersion = if ($null -eq $latestRelease) { $null } else { ([string]$latestRelease.tag_name).TrimStart('v') }
     $release = Select-CpgUpdateRelease -Releases $releases -CurrentVersion $currentVersion -Channel $channel
     if ($null -eq $release) {
-        Write-UpdateLog 'INFO' 'update_not_available' 'The installed version is current for the configured channel.' @{ current_version = $currentVersion; channel = $channel }
+        $checkStatus = if ($null -eq $latestRelease) { 'NoEligibleRelease' } else { 'Current' }
+        Write-UpdateLog 'INFO' 'update_not_available' 'No newer release is available for the requested channel.' @{ current_version = $currentVersion; latest_version = $latestVersion; channel = $channel; check_status = $checkStatus }
         Write-UpdateResult ([pscustomobject]@{
             UpdateChecked = $true
             UpdateAvailable = $false
+            AlreadyRunning = $false
+            CheckStatus = $checkStatus
             CurrentVersion = $currentVersion
+            LatestVersion = $latestVersion
             Channel = $channel
+            CheckedAtUtc = $checkedAtUtc
+            ReleaseUrl = if ($null -eq $latestRelease) { $null } else { [string]$latestRelease.html_url }
         })
         return
     }
@@ -171,9 +191,13 @@ try {
     $availableResult = [pscustomobject]@{
         UpdateChecked = $true
         UpdateAvailable = $true
+        AlreadyRunning = $false
+        CheckStatus = 'Available'
         CurrentVersion = $currentVersion
         TargetVersion = $targetVersion
+        LatestVersion = $latestVersion
         Channel = $channel
+        CheckedAtUtc = $checkedAtUtc
         ReleaseUrl = [string]$release.html_url
     }
     Write-UpdateLog 'INFO' 'update_available' 'A newer verified-channel release is available.' @{ current_version = $currentVersion; target_version = $targetVersion }
