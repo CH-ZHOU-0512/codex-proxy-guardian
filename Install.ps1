@@ -64,6 +64,15 @@ function Write-CpgInstallProgress {
     [Console]::Out.WriteLine(('CPG_PROGRESS|{0}|{1}' -f $Percent, $safeMessage))
 }
 
+function Test-CpgInstalledGuardianAlive {
+    param($Status, [ValidateNotNullOrEmpty()][string]$WatcherPath)
+    if ($null -eq $Status) { return $false }
+    $pidProperty = $Status.PSObject.Properties['guardianPid']
+    if ($null -eq $pidProperty -or [int]$pidProperty.Value -le 0) { return $false }
+    $guardianProcess = Get-CimInstance Win32_Process -Filter ("ProcessId={0}" -f [int]$pidProperty.Value) -ErrorAction SilentlyContinue
+    return ($null -ne $guardianProcess -and (Test-CpgGuardianProcessIdentity -Process $guardianProcess -WatcherPath $WatcherPath))
+}
+
 if ($ProgressProtocol) {
     [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
 }
@@ -383,35 +392,73 @@ Write-CpgInstallProgress 92 'WritingInstallConfiguration'
 $runtimeStatus = $null
 if (-not $NoStart) {
     Write-CpgInstallProgress 94 'StartingGuardian'
-    Remove-Item -LiteralPath (Join-Path $resolvedRoot 'status.json') -Force -ErrorAction SilentlyContinue
+    $statusPath = Join-Path $resolvedRoot 'status.json'
+    $installedWatcherPath = Join-Path $resolvedRoot 'Watch-CodexProxy.ps1'
+    $codexWasRunning = $false
+    Remove-Item -LiteralPath $statusPath -Force -ErrorAction SilentlyContinue
     if ($null -ne $codexApp) {
         $roots = @(Get-CimInstance Win32_Process -Filter ("Name='{0}'" -f $codexApp.ProcessName.Replace("'", "''")) -ErrorAction SilentlyContinue |
             Where-Object { Test-CpgCodexRootProcess -Process $_ -CodexApp $codexApp })
-        if ($roots.Count -gt 0) { New-Item -ItemType File -Path (Join-Path $resolvedRoot 'adopt-current-once.request') -Force | Out-Null }
+        $codexWasRunning = $roots.Count -gt 0
+        if ($codexWasRunning) { New-Item -ItemType File -Path (Join-Path $resolvedRoot 'adopt-current-once.request') -Force | Out-Null }
     }
 
-    if ($startupMode -eq 'ScheduledTask') { Start-ScheduledTask -TaskName $TaskName }
-    else { Start-Process -FilePath $wscriptPath -ArgumentList ('"{0}"' -f (Join-Path $resolvedRoot 'Run-Guardian.vbs')) -WindowStyle Hidden }
+    for ($guardianStartAttempt = 1; $guardianStartAttempt -le 2; $guardianStartAttempt++) {
+        if ($guardianStartAttempt -gt 1) {
+            Write-CpgInstallProgress 98 'RetryingGuardian'
+            Write-Warning 'Guardian exited during installation health verification. Retrying startup once.'
+            if ($startupMode -eq 'ScheduledTask') {
+                Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+            }
+            $staleGuardianProcesses = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
+                Test-CpgGuardianProcessIdentity -Process $_ -WatcherPath $installedWatcherPath
+            })
+            foreach ($staleGuardianProcess in $staleGuardianProcesses) {
+                if (Test-CpgGuardianProcessIdentity -Process $staleGuardianProcess -WatcherPath $installedWatcherPath) {
+                    Stop-Process -Id ([int]$staleGuardianProcess.ProcessId) -Force -ErrorAction SilentlyContinue
+                }
+            }
+            Remove-Item -LiteralPath (Join-Path $resolvedRoot 'stop.request') -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $statusPath -Force -ErrorAction SilentlyContinue
+            if ($codexWasRunning) { New-Item -ItemType File -Path (Join-Path $resolvedRoot 'adopt-current-once.request') -Force | Out-Null }
+        }
 
-    $statusPath = Join-Path $resolvedRoot 'status.json'
-    $deadline = (Get-Date).AddSeconds(40)
-    $statusWaitStarted = Get-Date
-    $lastRuntimeProgress = 94
-    do {
-        if (Test-Path -LiteralPath $statusPath) {
-            try { $runtimeStatus = Get-Content -Raw -LiteralPath $statusPath | ConvertFrom-Json } catch { $runtimeStatus = $null }
-            if ($null -ne $runtimeStatus -and [string]$runtimeStatus.guardianState -ne 'Stabilizing') { break }
+        $runtimeStatus = $null
+        if ($startupMode -eq 'ScheduledTask') { Start-ScheduledTask -TaskName $TaskName }
+        else { Start-Process -FilePath $wscriptPath -ArgumentList ('"{0}"' -f (Join-Path $resolvedRoot 'Run-Guardian.vbs')) -WindowStyle Hidden }
+
+        $deadline = (Get-Date).AddSeconds(40)
+        $statusWaitStarted = Get-Date
+        $lastRuntimeProgress = if ($guardianStartAttempt -gt 1) { 98 } else { 94 }
+        do {
+            if (Test-Path -LiteralPath $statusPath) {
+                try { $runtimeStatus = Get-Content -Raw -LiteralPath $statusPath | ConvertFrom-Json } catch { $runtimeStatus = $null }
+                if ($null -ne $runtimeStatus) {
+                    $runtimeAlive = Test-CpgInstalledGuardianAlive -Status $runtimeStatus -WatcherPath $installedWatcherPath
+                    if (-not $runtimeAlive -or [string]$runtimeStatus.guardianState -ne 'Stabilizing') { break }
+                }
+            }
+            if ($guardianStartAttempt -eq 1) {
+                $elapsedSeconds = ((Get-Date) - $statusWaitStarted).TotalSeconds
+                $runtimeProgress = 94 + [int][Math]::Min(4, [Math]::Floor($elapsedSeconds / 10))
+                if ($runtimeProgress -gt $lastRuntimeProgress) {
+                    $lastRuntimeProgress = $runtimeProgress
+                    Write-CpgInstallProgress $runtimeProgress 'WaitingForGuardian'
+                }
+            }
+            Start-Sleep -Milliseconds 500
+        } while ((Get-Date) -lt $deadline)
+
+        if (Test-CpgInstalledGuardianAlive -Status $runtimeStatus -WatcherPath $installedWatcherPath) {
+            break
         }
-        $elapsedSeconds = ((Get-Date) - $statusWaitStarted).TotalSeconds
-        $runtimeProgress = 94 + [int][Math]::Min(4, [Math]::Floor($elapsedSeconds / 10))
-        if ($runtimeProgress -gt $lastRuntimeProgress) {
-            $lastRuntimeProgress = $runtimeProgress
-            Write-CpgInstallProgress $runtimeProgress 'WaitingForGuardian'
-        }
-        Start-Sleep -Milliseconds 500
-    } while ((Get-Date) -lt $deadline)
-    if ($null -eq $runtimeStatus) {
-        $statusMessage = "The guardian was registered but did not publish status within 40 seconds. Check: $resolvedRoot\logs"
+    }
+
+    if (-not (Test-CpgInstalledGuardianAlive -Status $runtimeStatus -WatcherPath $installedWatcherPath)) {
+        throw "Guardian did not remain running after two start attempts. Check: $resolvedRoot\logs"
+    }
+    if ([string]$runtimeStatus.guardianState -eq 'Stabilizing') {
+        $statusMessage = "Guardian is running but did not finish stabilization within 40 seconds. Check: $resolvedRoot\logs"
         if ($RequireConnectivity) { throw $statusMessage }
         Write-Warning $statusMessage
     }

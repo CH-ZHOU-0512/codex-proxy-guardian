@@ -493,6 +493,7 @@ namespace CodexProxyGuardian.Setup
                 case "WritingInstallConfiguration": return "\u5b89\u88c5\u914d\u7f6e\u5df2\u5199\u5165";
                 case "StartingGuardian": return "\u6b63\u5728\u542f\u52a8 Guardian";
                 case "WaitingForGuardian": return "\u6b63\u5728\u7b49\u5f85 Guardian \u53d1\u5e03\u5065\u5eb7\u72b6\u6001";
+                case "RetryingGuardian": return "Guardian \u5f02\u5e38\u9000\u51fa\uff0c\u6b63\u5728\u5b89\u5168\u91cd\u8bd5";
                 case "Finalizing": return "\u6b63\u5728\u5b8c\u6210\u5b89\u88c5";
                 default: return stage;
             }

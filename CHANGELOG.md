@@ -4,6 +4,11 @@ All notable changes are documented here. This project follows semantic versionin
 
 ## [未发布 / Unreleased]
 
+## [1.4.1] - 2026-08-04
+
+- Windows 安装器在启动 Guardian 后会核对 `status.json` 中的 PID 是否仍对应当前安装路径下的真实 Guardian，不再把过期的 `Stabilizing` 状态当作成功。
+- Guardian 在安装健康验证期间意外退出时，安装器会清理过期状态并安全重试一次；第二次仍无法保持运行则明确失败并留下日志，不会向用户显示假的 100% 成功。
+
 ## [1.4.0] - 2026-08-04
 
 - Windows 图形安装器由无限旋转改为 0–100% 确定进度条，同步显示解压、预检、连通性、文件复制、自启、更新任务和 Guardian 健康验证等当前阶段。
