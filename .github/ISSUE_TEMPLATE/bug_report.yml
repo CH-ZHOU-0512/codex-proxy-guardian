@@ -7,11 +7,12 @@ body:
     attributes:
       value: |
         请勿公开代理账号密码、令牌、用户名、主机名、IP 地址或未经脱敏的日志。安全漏洞请使用 GitHub Private Security Advisory 私下报告。
+        Codex 显示“正在重新连接”不等于 Guardian 重启了应用。请先对照同一时间的 Guardian 日志：只有出现 `codex_restart` 或 `proxy_changed` 时，Guardian 生命周期操作才可能相关；没有这两个事件时，请同时检查代理软件是否记录 TLS EOF、WebSocket reset、10054 或上游超时。
   - type: input
     id: version
     attributes:
       label: Guardian 版本
-        placeholder: 1.4.4
+      placeholder: 1.4.5
     validations:
       required: true
   - type: input
@@ -68,6 +69,23 @@ body:
       render: shell
     validations:
       required: true
+  - type: dropdown
+    id: reconnect_attribution
+    attributes:
+      label: 同一时间的 Guardian 日志是否出现 codex_restart 或 proxy_changed？
+      description: 这用于区分 Guardian 生命周期操作与代理上游流式断连。
+      options:
+        - 没有；更像代理上游断流
+        - 有；Guardian 生命周期操作可能相关
+        - 尚未核对
+    validations:
+      required: true
+  - type: textarea
+    id: provider_log
+    attributes:
+      label: 代理软件同一时间的脱敏日志（可选）
+      description: 可粘贴 TLS EOF、WebSocket reset、10054、i/o timeout 等相关行；不要上传节点地址、订阅或账号信息。
+      render: shell
   - type: checkboxes
     id: safety
     attributes:

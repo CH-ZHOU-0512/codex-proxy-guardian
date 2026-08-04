@@ -202,6 +202,21 @@ Invoke-Test 'Settings never reports a skipped update check as current' {
     Assert-True ($settingsSource.Contains('$result.LatestVersion'))
     Assert-True ($settingsSource.Contains('$result.CheckedAtUtc'))
     Assert-True ($settingsSource.Contains('Version = $version'))
+    Assert-True ($settingsSource.Contains('ReconnectGuidanceVisible'))
+    Assert-True ($settingsSource.Contains('codex_restart / proxy_changed'))
+}
+
+Invoke-Test 'Public diagnostics explain how to attribute reconnects' {
+    $statusSource = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'Status.ps1')
+    $doctorSource = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'Doctor.ps1')
+    $issueTemplate = Get-Content -Raw -LiteralPath (Join-Path $repoRoot '.github\ISSUE_TEMPLATE\bug_report.yml')
+    foreach ($required in @('CodexStreamRetryNotProofOfGuardianRestart', 'codex_restart', 'proxy_changed', 'WebSocket reset', 'ProviderNodeManagedByGuardian')) {
+        Assert-True ($statusSource.Contains($required)) "Status is missing reconnect attribution: $required"
+        Assert-True ($doctorSource.Contains($required) -or ($required -eq 'ProviderNodeManagedByGuardian' -and $doctorSource.Contains('providerNodeManagedByGuardian'))) "Doctor is missing reconnect attribution: $required"
+    }
+    Assert-True ($issueTemplate.Contains('reconnect_attribution'))
+    Assert-True ($issueTemplate.Contains('codex_restart'))
+    Assert-True ($issueTemplate.Contains('proxy_changed'))
 }
 
 Invoke-Test 'Guardian serializes an empty critical failure list as a JSON array' {
@@ -609,7 +624,9 @@ Invoke-Test 'Doctor emits a redacted, share-safe JSON report' {
     $reportText = & (Join-Path $repoRoot 'Doctor.ps1') -InstallRoot $diagnosticRoot -Json
     $report = $reportText | ConvertFrom-Json
     Assert-True $report.safeForSharing
-    Assert-Equal 3 ([int]$report.reportSchema)
+    Assert-Equal 4 ([int]$report.reportSchema)
+    Assert-Equal 'CodexStreamRetryNotProofOfGuardianRestart' ([string]$report.reconnectAttribution.meaning)
+    Assert-False ([bool]$report.reconnectAttribution.providerNodeManagedByGuardian)
     Assert-False (($reportText -join '') -match [regex]::Escape($env:USERPROFILE)) 'The diagnostic report exposed the user profile path.'
     Assert-False (($reportText -join '') -match '(?i)"(?:activeProxy|systemProxy|proxyUri|proxyServer)"\s*:') 'The diagnostic report exposed a raw proxy field.'
 }

@@ -180,13 +180,17 @@ if ($Online -and $null -ne $onlineResult -and -not [bool](Get-SafeProperty ([psc
     $issues += 'online_proxy_validation_failed'
     $recommendations += 'Set ExplicitProxy to a working HTTP/mixed endpoint, then run Doctor.ps1 -Online again.'
 }
+if ($guardianAlive -and $null -ne $status -and -not [bool](Get-SafeProperty $status 'proxyCriticalTargetsPassed' $false)) {
+    $issues += 'critical_stream_target_failed'
+    $recommendations += 'If Codex shows Reconnecting without a matching codex_restart/proxy_changed event, inspect the proxy-provider node for TLS EOF, WebSocket reset, Windows 10054, or timeout errors.'
+}
 
 $health = 'Ready'
 if (@($issues).Count -gt 0) { $health = 'NeedsAttention' }
 if ($issues -contains 'unsupported_os' -or $issues -contains 'powershell_too_old' -or $issues -contains 'constrained_language_mode' -or $issues -contains 'codex_msix_not_found') { $health = 'Blocked' }
 
 $report = [ordered]@{
-    reportSchema = 3
+    reportSchema = 4
     generatedUtc = (Get-Date).ToUniversalTime().ToString('o')
     safeForSharing = $true
     health = $health
@@ -245,6 +249,13 @@ $report = [ordered]@{
         restartDeferredUntilUtc = Get-SafeProperty $status 'restartDeferredUntilUtc' $null
         recoveryLaunchRequired = [bool](Get-SafeProperty $status 'recoveryLaunchRequired' $false)
     }
+    reconnectAttribution = [ordered]@{
+        meaning = 'CodexStreamRetryNotProofOfGuardianRestart'
+        guardianEvidenceEvents = @('codex_restart', 'proxy_changed')
+        commonUpstreamSignals = @('TLS EOF', 'WebSocket reset', 'Windows 10054', 'request timeout')
+        providerNodeManagedByGuardian = $false
+        guidance = 'Compare timestamps. Without a matching Guardian lifecycle event, inspect or change the provider node in the proxy application.'
+    }
     updates = [ordered]@{
         automatic = if ($null -eq $config) { $null } else { [bool](Get-CpgConfigValue $config 'AutomaticUpdates' $true) }
         channel = if ($null -eq $config) { $null } else { [string](Get-CpgConfigValue $config 'UpdateChannel' 'Stable') }
@@ -275,6 +286,9 @@ if ($Json) { $reportJson; return }
     ProxyTests = ('{0}/{1}' -f [int](Get-SafeProperty $status 'proxyTestSuccessCount' 0), [int](Get-SafeProperty $status 'proxyTestRequiredCount' 0))
     ProxyCriticalTargetsPassed = [bool](Get-SafeProperty $status 'proxyCriticalTargetsPassed' $false)
     ProxyCriticalFailures = @((Get-SafeProperty $status 'proxyCriticalFailures' @()))
+    ReconnectMeaning = 'Codex stream retry; not proof of a Guardian restart'
+    ReconnectEvidenceEvents = 'codex_restart, proxy_changed'
+    ProviderNodeManagedByGuardian = $false
     LaunchProxyMatch = Get-SafeProperty $status 'codexProxyArgumentMatch' $null
     ProxyTrafficObservedRecently = Get-SafeProperty $status 'codexProxyConnectionObservedRecently' $null
     RestartApprovalRequired = [bool](Get-SafeProperty $status 'restartApprovalRequired' $false)

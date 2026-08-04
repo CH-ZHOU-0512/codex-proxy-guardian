@@ -4,7 +4,7 @@
 
 ![Codex Proxy Guardian social preview](../assets/social-preview.png)
 
-> **In one sentence:** If Codex often reconnects four or five times before it starts thinking because it did not pick up the working proxy, this tool is designed to fix that.
+> **In one sentence:** This tool reduces reconnects caused by Codex missing the working proxy or keeping a stale endpoint.
 
 An unofficial current-user watchdog that validates changing HTTP, HTTPS, or SOCKS5 proxies—and the effective routes selected by PAC/WPAD—against multiple OpenAI/ChatGPT targets before applying them to Codex.
 
@@ -22,6 +22,19 @@ The manual workaround is to find the current port, close Codex, set proxy enviro
 
 > [!NOTE]
 > This project is **not a proxy application and does not provide a proxy service or endpoints**. A working HTTP, HTTPS, or SOCKS5 endpoint—or PAC/WPAD that selects one for OpenAI targets—must already exist on the computer.
+
+> [!IMPORTANT]
+> **A Codex “Reconnecting” banner does not prove that Guardian restarted Codex.** Guardian manages proxy discovery, validation, and Codex launch configuration; it cannot repair packet loss, TLS EOF, WebSocket resets, Windows `10054`, or request timeouts inside a proxy-provider node. Compare the same timestamp with Guardian logs: `codex_restart` or `proxy_changed` indicates a possibly related lifecycle action; if neither event exists, the streaming connection normally failed upstream.
+
+## Attributing a reconnect
+
+| Evidence at the same timestamp | More likely cause | Next action |
+|---|---|---|
+| Guardian logged `codex_restart` or `proxy_changed` | Guardian performed a lifecycle action | Share a redacted Doctor report and timestamp in an Issue |
+| Neither event exists; Codex logged TLS EOF, WebSocket reset, `10054`, or timeout | The selected provider node or its upstream path dropped the stream | Select a healthier node in the proxy application |
+| `ProxyCriticalTargetsPassed=false` | The critical `chatgpt.com` entry point did not validate | Inspect `ProxyCriticalFailures` and the provider node |
+
+Guardian may try another discovered and validated endpoint or protocol. It never silently switches subscription nodes inside Clash/Mihomo/v2rayN, and it never changes system network settings.
 
 > [!IMPORTANT]
 > This is an independent community project. It is not affiliated with, endorsed by, or supported by OpenAI. The proxy behavior used here is a best-effort compatibility technique, not a documented Codex desktop API.

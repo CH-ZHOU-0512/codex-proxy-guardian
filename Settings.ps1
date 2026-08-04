@@ -36,7 +36,7 @@ $form.StartPosition = 'CenterScreen'
 $form.FormBorderStyle = 'FixedDialog'
 $form.MaximizeBox = $false
 $form.MinimizeBox = $false
-$form.ClientSize = New-Object System.Drawing.Size(560, 455)
+$form.ClientSize = New-Object System.Drawing.Size(560, 565)
 $form.Font = New-Object System.Drawing.Font('Microsoft YaHei UI', 9)
 
 $title = New-Object System.Windows.Forms.Label
@@ -114,22 +114,34 @@ $checkButton.Location = New-Object System.Drawing.Point(345, 57)
 $checkButton.Size = New-Object System.Drawing.Size(135, 30)
 $updateGroup.Controls.Add($checkButton)
 
+$reconnectGroup = New-Object System.Windows.Forms.GroupBox
+$reconnectGroup.Text = '关于“正在重新连接”'
+$reconnectGroup.Location = New-Object System.Drawing.Point(20, 372)
+$reconnectGroup.Size = New-Object System.Drawing.Size(520, 105)
+$form.Controls.Add($reconnectGroup)
+
+$reconnectDescription = New-Object System.Windows.Forms.Label
+$reconnectDescription.Text = '这表示 Codex 的流式连接正在重试，不等于 Guardian 重启了应用。若同一时间的 Guardian 日志没有 codex_restart / proxy_changed，通常是代理上游 TLS、WebSocket 或超时问题；请用 Status / Doctor 核对，并在代理软件中换稳定节点。'
+$reconnectDescription.Location = New-Object System.Drawing.Point(18, 25)
+$reconnectDescription.Size = New-Object System.Drawing.Size(480, 70)
+$reconnectGroup.Controls.Add($reconnectDescription)
+
 $statusLabel = New-Object System.Windows.Forms.Label
 $statusLabel.Text = "当前：$profile；自动更新：$(if ($automaticUpdates) { '开启' } else { '关闭' })"
-$statusLabel.Location = New-Object System.Drawing.Point(22, 374)
+$statusLabel.Location = New-Object System.Drawing.Point(22, 490)
 $statusLabel.Size = New-Object System.Drawing.Size(340, 25)
 $form.Controls.Add($statusLabel)
 
 $applyButton = New-Object System.Windows.Forms.Button
 $applyButton.Text = '应用'
-$applyButton.Location = New-Object System.Drawing.Point(365, 405)
+$applyButton.Location = New-Object System.Drawing.Point(365, 518)
 $applyButton.Size = New-Object System.Drawing.Size(82, 32)
 $applyButton.DialogResult = [System.Windows.Forms.DialogResult]::None
 $form.Controls.Add($applyButton)
 
 $closeButton = New-Object System.Windows.Forms.Button
 $closeButton.Text = '关闭'
-$closeButton.Location = New-Object System.Drawing.Point(458, 405)
+$closeButton.Location = New-Object System.Drawing.Point(458, 518)
 $closeButton.Size = New-Object System.Drawing.Size(82, 32)
 $closeButton.Add_Click({ $form.Close() })
 $form.Controls.Add($closeButton)
@@ -209,6 +221,7 @@ if ($SelfTest) {
         ModeProfile = $profile
         AutomaticUpdates = $automaticUpdates
         UpdateChannel = $updateChannel
+        ReconnectGuidanceVisible = ($reconnectDescription.Text -like '*不等于 Guardian 重启*')
         ControlExists = (Test-Path -LiteralPath $controlPath)
         UpdaterExists = (Test-Path -LiteralPath $updatePath)
     }
