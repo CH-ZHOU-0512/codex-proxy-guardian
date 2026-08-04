@@ -13,7 +13,8 @@ param(
     [switch]$NoShortcut,
     [switch]$NoStart,
     [switch]$PreserveUpdateTask,
-    [switch]$PreflightOnly
+    [switch]$PreflightOnly,
+    [switch]$ProgressProtocol
 )
 
 Set-StrictMode -Version 2.0
@@ -53,6 +54,21 @@ function Get-RunValue {
     return [string]$property.Value
 }
 
+function Write-CpgInstallProgress {
+    param(
+        [ValidateRange(0, 100)][int]$Percent,
+        [ValidateNotNullOrEmpty()][string]$Message
+    )
+    if (-not $ProgressProtocol) { return }
+    $safeMessage = ($Message -replace '[\r\n|]', ' ').Trim()
+    [Console]::Out.WriteLine(('CPG_PROGRESS|{0}|{1}' -f $Percent, $safeMessage))
+}
+
+if ($ProgressProtocol) {
+    [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
+}
+Write-CpgInstallProgress 30 'CheckingWindowsEnvironment'
+
 if ($env:OS -ne 'Windows_NT') { throw 'Codex Proxy Guardian supports Windows only.' }
 if ($PSVersionTable.PSVersion -lt [Version]'5.1') { throw 'Windows PowerShell 5.1 or later is required.' }
 if ($ExecutionContext.SessionState.LanguageMode -ne 'FullLanguage') {
@@ -65,6 +81,7 @@ Unblock-File -LiteralPath $coreModule -ErrorAction SilentlyContinue
 foreach ($commandName in @('Get-AppxPackage', 'Get-AppxPackageManifest', 'Register-ScheduledTask', 'Get-CimInstance', 'Get-NetTCPConnection')) {
     if ($null -eq (Get-Command $commandName -ErrorAction SilentlyContinue)) { throw "Missing required Windows command: $commandName" }
 }
+Write-CpgInstallProgress 34 'CheckingCodexAndComponents'
 
 $policyList = @(Get-ExecutionPolicy -List)
 $groupPolicy = $policyList | Where-Object { $_.Scope -in @('MachinePolicy', 'UserPolicy') -and $_.ExecutionPolicy -notin @('Undefined', 'Bypass', 'Unrestricted', 'RemoteSigned') } | Select-Object -First 1
@@ -149,6 +166,7 @@ if ($null -ne $existingUpdateTask) {
         throw "A scheduled task named '$UpdateTaskName' exists and is not owned by this installation."
     }
 }
+Write-CpgInstallProgress 38 'PreflightPassed'
 
 $preflight = [pscustomobject]@{
     Ready = $true
@@ -162,12 +180,16 @@ $preflight = [pscustomobject]@{
     ExistingInstall = (Test-MarkerMatchesRoot $existingMarker $resolvedRoot)
     SystemProxyWillBeModified = $false
 }
-if ($PreflightOnly) { return $preflight }
+if ($PreflightOnly) {
+    Write-CpgInstallProgress 100 'PreflightComplete'
+    return $preflight
+}
 
 if (-not $PSCmdlet.ShouldProcess($resolvedRoot, "Install Codex Proxy Guardian $version in $Mode mode")) { return }
 
 $connectivityState = 'Skipped'
 if (-not $SkipConnectivityCheck) {
+    Write-CpgInstallProgress 40 'CheckingConnectivity'
     $stagingRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('CodexProxyGuardian-preflight-' + [Guid]::NewGuid().ToString('N'))
     try {
         New-Item -ItemType Directory -Path $stagingRoot -Force | Out-Null
@@ -189,7 +211,9 @@ if (-not $SkipConnectivityCheck) {
         Write-Warning $message
     }
 }
+Write-CpgInstallProgress 48 'ConnectivityComplete'
 
+Write-CpgInstallProgress 50 'PreparingUpgrade'
 if (Test-MarkerMatchesRoot $existingMarker $resolvedRoot) {
     $oldStatusPath = Join-Path $resolvedRoot 'status.json'
     $expectedWatcher = Join-Path $resolvedRoot 'Watch-CodexProxy.ps1'
@@ -223,7 +247,9 @@ if (Test-MarkerMatchesRoot $existingMarker $resolvedRoot) {
     Remove-Item -LiteralPath (Join-Path $resolvedRoot 'stop.request') -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $oldStatusPath -Force -ErrorAction SilentlyContinue
 }
+Write-CpgInstallProgress 56 'UpgradeReady'
 
+Write-CpgInstallProgress 58 'CreatingInstallDirectory'
 New-Item -ItemType Directory -Path $resolvedRoot -Force | Out-Null
 New-Item -ItemType Directory -Path (Join-Path $resolvedRoot 'logs') -Force | Out-Null
 
@@ -263,18 +289,25 @@ $payload = [ordered]@{
     (Join-Path $sourceRoot 'VERSION') = 'VERSION'
     (Join-Path $sourceRoot 'config\config.schema.json') = 'config.schema.json'
 }
+$payloadIndex = 0
+$payloadCount = [Math]::Max(1, $payload.Count)
 foreach ($entry in $payload.GetEnumerator()) {
     if (-not (Test-Path -LiteralPath $entry.Key)) { throw "Missing installation payload: $($entry.Key)" }
     Copy-Item -LiteralPath $entry.Key -Destination (Join-Path $resolvedRoot $entry.Value) -Force
+    $payloadIndex++
+    $copyPercent = 60 + [int][Math]::Floor(($payloadIndex * 12.0) / $payloadCount)
+    Write-CpgInstallProgress $copyPercent 'CopyingFiles'
 }
 Get-ChildItem -LiteralPath $resolvedRoot -File | Unblock-File -ErrorAction SilentlyContinue
 
 $prospectiveConfig | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $installedConfigPath -Encoding UTF8
 Copy-Item -LiteralPath $defaultConfigPath -Destination (Join-Path $resolvedRoot 'config.default.json') -Force
+Write-CpgInstallProgress 74 'UpdatingConfiguration'
 
 $startupMode = 'ScheduledTask'
 $startupError = $null
 
+Write-CpgInstallProgress 76 'RegisteringStartup'
 try {
     $taskAction = New-ScheduledTaskAction -Execute $powershellPath -Argument ('-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File "{0}"' -f (Join-Path $resolvedRoot 'Watch-CodexProxy.ps1')) -WorkingDirectory $resolvedRoot
     $taskTrigger = New-ScheduledTaskTrigger -AtLogOn -User $identity
@@ -301,8 +334,10 @@ catch {
     $runCommand = '"{0}" "{1}"' -f $wscriptPath, (Join-Path $resolvedRoot 'Run-Guardian.vbs')
     New-ItemProperty -LiteralPath $runKey -Name $RunValueName -PropertyType String -Value $runCommand -Force | Out-Null
 }
+Write-CpgInstallProgress 80 'StartupRegistered'
 
 $updateTaskError = $null
+Write-CpgInstallProgress 82 'RegisteringUpdates'
 try {
     if (-not ($PreserveUpdateTask -and $null -ne $existingUpdateTask)) {
         $updateAction = New-ScheduledTaskAction -Execute $powershellPath -Argument ('-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File "{0}" -Install -Silent' -f (Join-Path $resolvedRoot 'Update.ps1')) -WorkingDirectory $resolvedRoot
@@ -316,7 +351,9 @@ catch {
     $updateTaskError = $_.Exception.Message
     Write-Warning "Automatic update task registration failed. Manual updates remain available through Control.ps1. Error: $updateTaskError"
 }
+Write-CpgInstallProgress 85 'UpdatesRegistered'
 
+Write-CpgInstallProgress 87 'CreatingShortcuts'
 if (-not $NoShortcut) {
     $shell = New-Object -ComObject WScript.Shell
     $shortcut = $shell.CreateShortcut($shortcutPath)
@@ -335,14 +372,17 @@ if (-not $NoShortcut) {
     $settingsShortcut.Description = 'Configure Codex Proxy Guardian mode and automatic updates'
     $settingsShortcut.Save()
 }
+Write-CpgInstallProgress 90 'ShortcutsReady'
 
 $marker.startupMode = $startupMode
 $marker.startupError = $startupError
 $marker.updateTaskError = $updateTaskError
 $marker | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $resolvedRoot $markerName) -Encoding UTF8
+Write-CpgInstallProgress 92 'WritingInstallConfiguration'
 
 $runtimeStatus = $null
 if (-not $NoStart) {
+    Write-CpgInstallProgress 94 'StartingGuardian'
     Remove-Item -LiteralPath (Join-Path $resolvedRoot 'status.json') -Force -ErrorAction SilentlyContinue
     if ($null -ne $codexApp) {
         $roots = @(Get-CimInstance Win32_Process -Filter ("Name='{0}'" -f $codexApp.ProcessName.Replace("'", "''")) -ErrorAction SilentlyContinue |
@@ -355,10 +395,18 @@ if (-not $NoStart) {
 
     $statusPath = Join-Path $resolvedRoot 'status.json'
     $deadline = (Get-Date).AddSeconds(40)
+    $statusWaitStarted = Get-Date
+    $lastRuntimeProgress = 94
     do {
         if (Test-Path -LiteralPath $statusPath) {
             try { $runtimeStatus = Get-Content -Raw -LiteralPath $statusPath | ConvertFrom-Json } catch { $runtimeStatus = $null }
             if ($null -ne $runtimeStatus -and [string]$runtimeStatus.guardianState -ne 'Stabilizing') { break }
+        }
+        $elapsedSeconds = ((Get-Date) - $statusWaitStarted).TotalSeconds
+        $runtimeProgress = 94 + [int][Math]::Min(4, [Math]::Floor($elapsedSeconds / 10))
+        if ($runtimeProgress -gt $lastRuntimeProgress) {
+            $lastRuntimeProgress = $runtimeProgress
+            Write-CpgInstallProgress $runtimeProgress 'WaitingForGuardian'
         }
         Start-Sleep -Milliseconds 500
     } while ((Get-Date) -lt $deadline)
@@ -368,6 +416,7 @@ if (-not $NoStart) {
         Write-Warning $statusMessage
     }
 }
+Write-CpgInstallProgress 99 'Finalizing'
 
 $effectiveConfig = Get-Content -Raw -LiteralPath $installedConfigPath | ConvertFrom-Json
 $managedLaunchRecommended = $null -ne $runtimeStatus -and [bool]$runtimeStatus.codexRunning -and [bool]$runtimeStatus.activeProxyValid -and -not [bool]$runtimeStatus.codexProxyArgumentMatch

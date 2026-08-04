@@ -161,8 +161,10 @@ namespace CodexProxyGuardian.Setup
 
             progressBar = new ProgressBar
             {
-                Style = ProgressBarStyle.Marquee,
-                MarqueeAnimationSpeed = 28,
+                Style = ProgressBarStyle.Continuous,
+                Minimum = 0,
+                Maximum = 100,
+                Value = 0,
                 Location = new Point(44, 352),
                 Size = new Size(350, 6),
                 Visible = false
@@ -216,10 +218,15 @@ namespace CodexProxyGuardian.Setup
             Controls.Add(projectLink);
 
             worker = new BackgroundWorker();
+            worker.WorkerReportsProgress = true;
             worker.DoWork += delegate(object sender, DoWorkEventArgs eventArgs)
             {
-                eventArgs.Result = Bootstrapper.Install();
+                eventArgs.Result = Bootstrapper.Install(delegate(int percent, string message)
+                {
+                    worker.ReportProgress(percent, message);
+                });
             };
+            worker.ProgressChanged += WorkerProgressChanged;
             worker.RunWorkerCompleted += WorkerCompleted;
             FormClosing += SetupFormClosing;
         }
@@ -235,24 +242,36 @@ namespace CodexProxyGuardian.Setup
             installButton.Enabled = false;
             cancelButton.Enabled = false;
             ControlBox = false;
+            progressBar.Value = 0;
             progressBar.Visible = true;
-            statusLabel.Text = "\u6b63\u5728\u9a8c\u8bc1\u5b89\u88c5\u5305\u5e76\u5b89\u88c5\uff0c\u8bf7\u7a0d\u5019\u2026";
+            statusLabel.Text = "\u6b63\u5728\u51c6\u5907\u5b89\u88c5  0%";
             worker.RunWorkerAsync();
+        }
+
+        private void WorkerProgressChanged(object sender, ProgressChangedEventArgs eventArgs)
+        {
+            var percent = Math.Max(progressBar.Value, Math.Max(progressBar.Minimum, Math.Min(progressBar.Maximum, eventArgs.ProgressPercentage)));
+            progressBar.Value = percent;
+            var message = eventArgs.UserState as string;
+            statusLabel.Text = (string.IsNullOrWhiteSpace(message) ? "\u6b63\u5728\u5b89\u88c5" : message) + "  " + percent + "%";
         }
 
         private void WorkerCompleted(object sender, RunWorkerCompletedEventArgs eventArgs)
         {
-            progressBar.Visible = false;
             ControlBox = true;
             completed = true;
             cancelButton.Visible = false;
             installButton.Enabled = true;
             installButton.Text = "\u5173\u95ed";
 
-            var result = eventArgs.Result as InstallResult;
+            InstallResult result;
             if (eventArgs.Error != null)
             {
                 result = InstallResult.Failure(eventArgs.Error.Message, string.Empty);
+            }
+            else
+            {
+                result = eventArgs.Result as InstallResult;
             }
             if (result == null)
             {
@@ -260,8 +279,12 @@ namespace CodexProxyGuardian.Setup
             }
 
             ExitCode = result.Success ? 0 : 2;
+            if (result.Success)
+            {
+                progressBar.Value = 100;
+            }
             statusLabel.ForeColor = result.Success ? Color.FromArgb(47, 107, 80) : Color.FromArgb(160, 50, 45);
-            statusLabel.Text = result.UserMessage;
+            statusLabel.Text = result.UserMessage + (result.Success ? "  100%" : string.Empty);
             if (!result.Success && !string.IsNullOrWhiteSpace(result.LogPath))
             {
                 statusLabel.Text += "  Log: " + result.LogPath;
@@ -317,7 +340,7 @@ namespace CodexProxyGuardian.Setup
             try
             {
                 string projectRoot;
-                temporaryRoot = ExtractPayload(out projectRoot);
+                temporaryRoot = ExtractPayload(out projectRoot, null);
                 ValidatePayload(projectRoot);
                 return 0;
             }
@@ -331,15 +354,19 @@ namespace CodexProxyGuardian.Setup
             }
         }
 
-        internal static InstallResult Install()
+        internal static InstallResult Install(Action<int, string> progress)
         {
             string temporaryRoot = null;
             var output = new StringBuilder();
+            var outputLock = new object();
             try
             {
+                ReportProgress(progress, 2, "\u6b63\u5728\u8bfb\u53d6\u5b89\u88c5\u5305");
                 string projectRoot;
-                temporaryRoot = ExtractPayload(out projectRoot);
+                temporaryRoot = ExtractPayload(out projectRoot, progress);
+                ReportProgress(progress, 24, "\u6b63\u5728\u9a8c\u8bc1\u5b89\u88c5\u5305");
                 ValidatePayload(projectRoot);
+                ReportProgress(progress, 28, "\u5b89\u88c5\u5305\u9a8c\u8bc1\u901a\u8fc7");
 
                 string powerShell = Path.Combine(
                     Environment.GetFolderPath(Environment.SpecialFolder.System),
@@ -353,23 +380,36 @@ namespace CodexProxyGuardian.Setup
                 {
                     FileName = powerShell,
                     Arguments = "-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"" +
-                                Path.Combine(projectRoot, "Install.ps1") + "\"",
+                                Path.Combine(projectRoot, "Install.ps1") + "\" -ProgressProtocol",
                     WorkingDirectory = projectRoot,
                     UseShellExecute = false,
                     CreateNoWindow = true,
                     RedirectStandardOutput = true,
-                    RedirectStandardError = true
+                    RedirectStandardError = true,
+                    StandardOutputEncoding = new UTF8Encoding(false),
+                    StandardErrorEncoding = new UTF8Encoding(false)
                 };
 
                 using (var process = new Process { StartInfo = startInfo })
                 {
                     process.OutputDataReceived += delegate(object sender, DataReceivedEventArgs eventArgs)
                     {
-                        if (eventArgs.Data != null) output.AppendLine(eventArgs.Data);
+                        if (eventArgs.Data == null) return;
+                        int percent;
+                        string message;
+                        if (TryParseProgress(eventArgs.Data, out percent, out message))
+                        {
+                            ReportProgress(progress, percent, LocalizeProgressMessage(message));
+                            return;
+                        }
+                        lock (outputLock) output.AppendLine(eventArgs.Data);
                     };
                     process.ErrorDataReceived += delegate(object sender, DataReceivedEventArgs eventArgs)
                     {
-                        if (eventArgs.Data != null) output.AppendLine(eventArgs.Data);
+                        if (eventArgs.Data != null)
+                        {
+                            lock (outputLock) output.AppendLine(eventArgs.Data);
+                        }
                     };
                     if (!process.Start()) throw new InvalidOperationException("Could not start Windows PowerShell.");
                     process.BeginOutputReadLine();
@@ -387,12 +427,15 @@ namespace CodexProxyGuardian.Setup
                     }
                 }
 
+                ReportProgress(progress, 100, "\u5b89\u88c5\u5b8c\u6210");
                 return InstallResult.Succeeded();
             }
             catch (Exception exception)
             {
-                output.AppendLine(exception.ToString());
-                string logPath = WriteFailureLog(output.ToString());
+                lock (outputLock) output.AppendLine(exception.ToString());
+                string details;
+                lock (outputLock) details = output.ToString();
+                string logPath = WriteFailureLog(details);
                 return InstallResult.Failure(exception.Message, logPath);
             }
             finally
@@ -401,7 +444,61 @@ namespace CodexProxyGuardian.Setup
             }
         }
 
-        private static string ExtractPayload(out string projectRoot)
+        private static void ReportProgress(Action<int, string> progress, int percent, string message)
+        {
+            if (progress == null) return;
+            try
+            {
+                progress(Math.Max(0, Math.Min(100, percent)), message ?? string.Empty);
+            }
+            catch
+            {
+            }
+        }
+
+        private static bool TryParseProgress(string line, out int percent, out string message)
+        {
+            const string prefix = "CPG_PROGRESS|";
+            percent = 0;
+            message = string.Empty;
+            if (string.IsNullOrEmpty(line) || !line.StartsWith(prefix, StringComparison.Ordinal)) return false;
+            var separator = line.IndexOf('|', prefix.Length);
+            if (separator < 0 || !int.TryParse(line.Substring(prefix.Length, separator - prefix.Length), out percent)) return false;
+            if (percent < 0 || percent > 100) return false;
+            message = line.Substring(separator + 1).Trim();
+            return !string.IsNullOrWhiteSpace(message);
+        }
+
+        private static string LocalizeProgressMessage(string stage)
+        {
+            switch (stage)
+            {
+                case "CheckingWindowsEnvironment": return "\u6b63\u5728\u68c0\u67e5 Windows \u5b89\u88c5\u73af\u5883";
+                case "CheckingCodexAndComponents": return "\u6b63\u5728\u68c0\u67e5 Codex \u548c\u5fc5\u9700\u7ec4\u4ef6";
+                case "PreflightPassed": return "\u5b89\u88c5\u524d\u68c0\u67e5\u901a\u8fc7";
+                case "PreflightComplete": return "\u5b89\u88c5\u524d\u68c0\u67e5\u5b8c\u6210";
+                case "CheckingConnectivity": return "\u6b63\u5728\u9a8c\u8bc1\u4ee3\u7406\u8fde\u901a\u6027";
+                case "ConnectivityComplete": return "\u4ee3\u7406\u8fde\u901a\u6027\u68c0\u67e5\u5b8c\u6210";
+                case "PreparingUpgrade": return "\u6b63\u5728\u51c6\u5907\u5347\u7ea7\u73b0\u6709\u5b89\u88c5";
+                case "UpgradeReady": return "\u5347\u7ea7\u51c6\u5907\u5b8c\u6210";
+                case "CreatingInstallDirectory": return "\u6b63\u5728\u521b\u5efa\u5b89\u88c5\u76ee\u5f55";
+                case "CopyingFiles": return "\u6b63\u5728\u590d\u5236\u7a0b\u5e8f\u6587\u4ef6";
+                case "UpdatingConfiguration": return "\u6b63\u5728\u4fdd\u7559\u5e76\u66f4\u65b0\u914d\u7f6e";
+                case "RegisteringStartup": return "\u6b63\u5728\u6ce8\u518c\u767b\u5f55\u81ea\u542f";
+                case "StartupRegistered": return "\u767b\u5f55\u81ea\u542f\u5df2\u6ce8\u518c";
+                case "RegisteringUpdates": return "\u6b63\u5728\u6ce8\u518c\u5b89\u5168\u81ea\u52a8\u66f4\u65b0";
+                case "UpdatesRegistered": return "\u81ea\u52a8\u66f4\u65b0\u914d\u7f6e\u5b8c\u6210";
+                case "CreatingShortcuts": return "\u6b63\u5728\u521b\u5efa\u5f00\u59cb\u83dc\u5355\u5165\u53e3";
+                case "ShortcutsReady": return "\u5f00\u59cb\u83dc\u5355\u5165\u53e3\u5df2\u5c31\u7eea";
+                case "WritingInstallConfiguration": return "\u5b89\u88c5\u914d\u7f6e\u5df2\u5199\u5165";
+                case "StartingGuardian": return "\u6b63\u5728\u542f\u52a8 Guardian";
+                case "WaitingForGuardian": return "\u6b63\u5728\u7b49\u5f85 Guardian \u53d1\u5e03\u5065\u5eb7\u72b6\u6001";
+                case "Finalizing": return "\u6b63\u5728\u5b8c\u6210\u5b89\u88c5";
+                default: return stage;
+            }
+        }
+
+        private static string ExtractPayload(out string projectRoot, Action<int, string> progress)
         {
             var temporaryRoot = Path.Combine(
                 Path.GetTempPath(),
@@ -418,6 +515,7 @@ namespace CodexProxyGuardian.Setup
             using (resource)
             using (var archive = new ZipArchive(resource, ZipArchiveMode.Read, false))
             {
+                ReportProgress(progress, 3, "\u6b63\u5728\u68c0\u67e5\u5185\u5d4c\u6587\u4ef6");
                 if (archive.Entries.Count == 0 || archive.Entries.Count > MaximumEntries)
                 {
                     throw new InvalidDataException("The embedded payload has an invalid entry count.");
@@ -445,6 +543,13 @@ namespace CodexProxyGuardian.Setup
                     {
                         throw new InvalidDataException("The embedded payload contains an unsafe path.");
                     }
+                }
+
+                long expandedWritten = 0;
+                int lastReportedPercent = 3;
+                foreach (var entry in archive.Entries)
+                {
+                    var targetPath = Path.GetFullPath(Path.Combine(temporaryRoot, entry.FullName));
 
                     if (string.IsNullOrEmpty(entry.Name))
                     {
@@ -464,14 +569,22 @@ namespace CodexProxyGuardian.Setup
                         while ((read = input.Read(buffer, 0, buffer.Length)) > 0)
                         {
                             written += read;
+                            expandedWritten += read;
                             if (written > MaximumEntryBytes)
                             {
                                 throw new InvalidDataException("An embedded payload entry expanded past the size limit.");
                             }
                             output.Write(buffer, 0, read);
+                            var percent = 4 + (int)Math.Min(18, (expandedWritten * 18) / Math.Max(1, totalExpanded));
+                            if (percent > lastReportedPercent)
+                            {
+                                lastReportedPercent = percent;
+                                ReportProgress(progress, percent, "\u6b63\u5728\u89e3\u538b\u5b89\u88c5\u6587\u4ef6");
+                            }
                         }
                     }
                 }
+                ReportProgress(progress, 22, "\u5b89\u88c5\u6587\u4ef6\u89e3\u538b\u5b8c\u6210");
             }
 
             projectRoot = Path.Combine(temporaryRoot, "CodexProxyGuardian");
