@@ -158,7 +158,7 @@ codex-proxy-guardian mode auto
 codex-proxy-guardian mode strict
 ```
 
-The earlier restart-loop class is avoided by matching the root process's proxy argument, not a short-lived launcher PID. In short, Automatic means “prove a repair is needed first,” while Strict means “repair any argument mismatch.” The program does not silently change a user's long-term profile from Automatic to Strict; the automatic decision is made per Codex launch from traffic evidence. Mode changes are reloaded by the guardian in the background without restarting Guardian or the current Codex process. Explicitly opening **Codex (Managed Proxy)** remains the immediate deterministic path, and the same cooldown/circuit protection applies to every repair. During a Store update, an existing Codex process is left running if the replacement MSIX executable cannot yet be resolved.
+The earlier restart-loop class is avoided by matching the root process's proxy argument, not a short-lived launcher PID. HTTP/SOCKS5 validation changes on one host and port are also treated as the same lifecycle endpoint. In short, Automatic means “prove a repair is needed first,” while Strict means “repair any argument mismatch.” The program does not silently change a user's long-term profile from Automatic to Strict; the automatic decision is made per Codex launch from traffic evidence. Mode changes are reloaded by the guardian in the background without restarting Guardian or the current Codex process. Explicitly opening **Codex (Managed Proxy)** remains the immediate deterministic path, and the same cooldown/circuit protection applies to every repair. On Windows, any repair that would close a running Codex prompts first and proceeds only after an explicit Yes; No, timeout, or prompt failure defers it. During a Store update, an existing Codex process is left running if the replacement MSIX executable cannot yet be resolved.
 
 ## Configuration
 
@@ -177,6 +177,9 @@ Common options:
   "ManageExternalCodexLaunches": false,
   "SafeRepairExternalCodexLaunches": true,
   "SafeExternalLaunchGraceSeconds": 20,
+  "NotifyBeforeCodexRestart": true,
+  "RestartPromptTimeoutSeconds": 45,
+  "RestartPromptSnoozeMinutes": 10,
   "DebounceSeconds": 10,
   "RestartCooldownSeconds": 45
 }

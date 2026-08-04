@@ -4,6 +4,12 @@ All notable changes are documented here. This project follows semantic versionin
 
 ## [未发布 / Unreleased]
 
+## [1.4.3] - 2026-08-04
+
+- 同一主机与端口上的 HTTP/SOCKS5 验证变化现在只视为传输协议替代，不再触发 Codex 生命周期操作；即使当前协议短暂验证失败、另一协议成功，也保持正在运行的 Codex 不动。
+- Windows 所有可能关闭现有 Codex 的自动修复路径现在默认先显示前台确认框；只有用户明确点击“是”才会继续，点击“否”、超时或提示无法显示都会安全延后，默认 10 分钟后再询问。
+- 状态新增 `RestartApprovalRequired`、`RestartDeferred`、`restartNotificationEnabled` 与 `restartDeferredUntilUtc`，重启调用增加不可绕过的审批参数，并补充协议生命周期与提醒决策回归测试。
+
 ## [1.4.2] - 2026-08-04
 
 - 修复 Windows 自动发现同一个混合代理端口时，HTTP 与 SOCKS5 验证结果短暂波动会被误判为代理端点反复变化，进而连续重启 Codex 的严重问题。
