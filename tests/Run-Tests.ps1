@@ -386,7 +386,7 @@ Invoke-Test 'One-click installer embeds and safely verifies the exact release pa
         'The embedded payload VERSION does not match the installer.',
         'WindowsPowerShell\v1.0\powershell.exe', 'ExecutionPolicy Bypass',
         'ProgressBarStyle.Continuous', 'WorkerReportsProgress = true', 'TryParseProgress',
-        'CPG_PROGRESS|', '-ProgressProtocol'
+        'CPG_PROGRESS|', '-ProgressProtocol', 'RetryingGuardian'
     )) {
         Assert-True $bootstrapper.Contains($required) "One-click installer is missing safety behavior: $required"
     }
@@ -430,6 +430,18 @@ Invoke-Test 'Installer progress protocol reports determinate stages' {
     $plainOutput = @(& $windowsPowerShell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $repoRoot 'Install.ps1') -InstallRoot $testRoot -TaskName "CPG Test $testId" -RunValueName "CPGTest-$testId" -ShortcutName "CPG Test $testId.lnk" -SettingsShortcutName "CPG Settings Test $testId.lnk" -UpdateTaskName "CPG Update Test $testId" -AllowMissingCodex -PreflightOnly 2>&1)
     Assert-Equal 0 $LASTEXITCODE 'Plain installer preflight failed.'
     Assert-False (($plainOutput -join [Environment]::NewLine).Contains('CPG_PROGRESS|')) 'Manual script execution exposed the private installer progress protocol.'
+}
+
+Invoke-Test 'Installer verifies the started guardian and retries one unexpected exit' {
+    $installer = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'Install.ps1')
+    foreach ($required in @(
+        'Test-CpgInstalledGuardianAlive',
+        'for ($guardianStartAttempt = 1; $guardianStartAttempt -le 2; $guardianStartAttempt++)',
+        "Write-CpgInstallProgress 98 'RetryingGuardian'",
+        'Guardian did not remain running after two start attempts.'
+    )) {
+        Assert-True $installer.Contains($required) "Installer health retry is missing: $required"
+    }
 }
 
 Invoke-Test 'Watcher publishes explicit lifecycle states' {
