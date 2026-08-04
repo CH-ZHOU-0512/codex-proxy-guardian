@@ -14,7 +14,7 @@ body:
     id: environment
     attributes:
       label: 使用环境
-      description: 请说明 Windows、Codex 来源以及代理软件/模式；不要填写代理地址、IP 或账号密码。
+      description: 请说明 Windows/macOS/Linux、Codex 来源以及代理软件/模式；不要填写代理地址、IP 或账号密码。
   - type: textarea
     id: proposal
     attributes:

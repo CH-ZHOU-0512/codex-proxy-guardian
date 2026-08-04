@@ -1,4 +1,4 @@
-# Codex Proxy Guardian：Windows 11 Codex 桌面版代理守护程序
+# Codex Proxy Guardian：让 Codex 始终跟上当前有效代理
 
 [简体中文](README.md) | [English](docs/README.en.md)
 
@@ -12,13 +12,19 @@
 
 > **一句话解释：** 如果你的 Codex 经常要重连四五次才开始思考，而原因是代理没有正确跟上，这个工具就是用来解决它的。
 
-这是一个非官方的 **Windows 11 Codex 桌面版代理守护工具**。它能够持续发现并验证当前可用的 HTTP/HTTPS 代理；当 Clash、Mihomo、v2rayN、sing-box 等代理软件的监听地址或端口稳定变化后，为 Codex 配置当前代理并进行受控重启。
+这是一个非官方的 **Codex 代理守护工具**，支持 Windows 11、macOS 和 Linux。它持续发现并验证当前可用的 HTTP/HTTPS 代理；当 Clash、Mihomo、v2rayN、sing-box 等代理软件的监听地址或端口稳定变化后，让 Codex 使用新的有效端点。
+
+| 平台 | 守护对象 | 安装后怎么用 |
+|---|---|---|
+| Windows 11 | Store/MSIX Codex 桌面端 | 继续点击原来的 Codex 图标；必要时自动受控修复 |
+| macOS（Intel / Apple Silicon） | ChatGPT/Codex 桌面应用 | 继续正常打开应用；必要时自动受控修复 |
+| Linux（x64 / ARM64） | Codex CLI | 用 `codex-guard` 代替 `codex` 启动；不会强杀或重启终端会话 |
 
 项目重点解决这些实际问题：**Codex 桌面端无法连接、系统代理端口变化、代理软件随机端口、Codex 没有继承代理、切换节点后 Codex 仍使用旧代理、守护脚本导致 Codex 反复重启**。
 
 ## 为什么需要它
 
-许多 Windows 代理软件会在电脑本地开启一个 HTTP 代理端口，例如 `127.0.0.1:7890`，其他应用只有连接这个端口才能使用代理。浏览器能够正常联网，并不一定代表已经运行的 Codex 也拿到了正确代理；代理软件重启、切换配置或更新后，端口还可能发生变化，而 Codex 仍然记着旧地址，于是就会出现登录失败、内容加载不出来或任务中断。
+许多代理软件会在电脑本地开启一个 HTTP 代理端口，例如 `127.0.0.1:7890`，其他应用只有连接这个端口才能使用代理。浏览器能够正常联网，并不一定代表已经运行的 Codex 也拿到了正确代理；代理软件重启、切换配置或更新后，端口还可能发生变化，而 Codex 仍然记着旧地址，于是就会出现登录失败、内容加载不出来或任务中断。
 
 手动处理通常需要找到当前端口、关闭 Codex、设置代理环境变量或启动参数，再重新打开 Codex；以后端口变化还要重复操作。Codex Proxy Guardian 把这套过程自动化：它寻找候选端口、实际验证代理是否可用，只在确认变化稳定后才更新 Codex，并通过防抖、冷却和熔断避免反复重启。即使不熟悉端口、环境变量或计划任务，也可以先使用默认的 `Safe` 模式。
 
@@ -32,20 +38,20 @@
 
 ## 它能做什么
 
-- 自动读取 Windows 当前用户的系统代理、显式指定代理、进程环境变量和常见代理程序的本地监听端口。
+- 自动读取 Windows、macOS 或 GNOME 当前用户代理、显式指定代理、进程环境变量和常见代理程序的本地监听端口。
 - 不只判断端口是否存在，还会通过代理访问多个 OpenAI/ChatGPT HTTPS 目标，达到成功数量要求后才启用。
 - 使用进程级 `HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY` 环境变量和 Chromium `--proxy-server` 参数启动 Codex。
 - 代理地址或端口变化时先防抖，再受控重启 Codex；端口来回波动时不会立即反复重启。
 - 提供重启冷却、十分钟重启次数限制、熔断和启动失败恢复，避免形成 Codex 重启循环。
-- 自动适配 Microsoft Store / MSIX 版 Codex 更新后的安装路径，并支持 x64 和 ARM64。
+- Windows 自动适配 Store/MSIX Codex 更新后的安装路径；macOS 支持 Intel 与 Apple Silicon；Linux 支持 x64 与 ARM64。
 - 每日检查本项目 GitHub Release，只有版本、文件名和 SHA-256 全部匹配时才静默原位升级。
-- 提供单文件图形化安装器，普通用户双击即可安装或升级；无需管理员权限。
+- Windows 提供单文件图形化安装器；macOS/Linux 提供当前用户安装脚本，均无需管理员或 `sudo`。
 - 以当前用户身份静默运行、登录后自启，不要求管理员权限。
 - 提供开始菜单设置窗口、状态、日志、在线诊断、单实例保护和安全卸载脚本。
 
 ## 先看安全边界
 
-- **不会修改** Windows 系统代理、WinHTTP 代理、DNS、路由或永久用户/系统环境变量。
+- **不会修改**系统代理、WinHTTP 代理、DNS、路由、防火墙或永久用户/系统环境变量。
 - 只接受带明确端口的 HTTP/HTTPS 代理；拒绝 URL 中包含账号密码的代理地址。
 - 候选代理必须同时通过 TCP 监听检查和经代理发起的 HTTPS 请求验证。
 - 默认使用“自动（Safe）”模式：只有在代理已经验证、Codex 缺少当前代理参数，而且证据等待期内没有观察到该进程正在使用当前代理时，才会进行一次受控修复。
@@ -54,22 +60,52 @@
 
 ## 支持范围
 
-当前支持的基础环境：
+| 项目 | Windows 11 | macOS | Linux |
+|---|---|---|---|
+| 架构 | x64、ARM64 | Intel、Apple Silicon | x64、ARM64 |
+| Codex | Store/MSIX 桌面端 | ChatGPT/Codex 桌面应用 | 官方 Codex CLI |
+| 系统代理发现 | Internet Settings | `scutil --proxy` | GNOME `gsettings`；其他桌面建议显式配置 |
+| 后台自启 | 当前用户计划任务 / HKCU Run | 当前用户 LaunchAgent | systemd user / XDG Autostart |
+| 自动处理 Codex | 可受控重启桌面端 | 可受控重启桌面应用 | 只维护代理；不重启交互式 CLI |
 
-- Windows 11 当前用户的交互式桌面会话；
-- Windows PowerShell 5.1 或 PowerShell 7 安装环境；后台任务使用系统自带的 Windows PowerShell 5.1；
-- Microsoft Store 或企业分发的 Store 签名 MSIX 版 Codex 桌面端；
-- Windows“Internet 设置”中的显式 HTTP/HTTPS 系统代理；
-- `config.json` 中手动指定的 HTTP/HTTPS 代理；
-- 当前进程继承的 `HTTPS_PROXY`、`HTTP_PROXY` 或兼容 HTTP 的 `ALL_PROXY`；
-- Clash/Mihomo、v2rayN/Xray、sing-box、Shadowsocks、NekoRay、Hiddify、FlClash 等常见代理程序的本机监听端口；
-- x64 与 ARM64，Codex 路径从 MSIX 清单动态解析，不写死版本目录。
+共同支持显式 HTTP/HTTPS 代理、继承的 `HTTPS_PROXY` / `HTTP_PROXY` / HTTP 兼容 `ALL_PROXY`，以及常见代理程序的本机监听端口。暂不自动支持 PAC/WPAD、纯 SOCKS、只有 TUN 而没有 HTTP/混合端口的配置，或 URL 中包含账号密码的代理。详见[兼容性矩阵](docs/SUPPORT.md)。
 
-暂不自动支持：PAC/WPAD、纯 SOCKS 代理、只有 TUN 而没有 HTTP/混合端口的配置、仅 WinHTTP 代理、其他用户或服务会话中的监听器，以及企业策略禁止未签名 PowerShell 脚本的环境。详见[兼容性矩阵](docs/SUPPORT.md)。
+> [!IMPORTANT]
+> OpenAI 当前提供 macOS/Windows 桌面应用和 Linux Codex CLI；Linux 没有官方 Codex 桌面应用。因此 Linux 版采用 `codex-guard` 包装 CLI，并明确不声称能守护不存在的桌面端。参阅 [Codex app](https://learn.chatgpt.com/docs/app) 和 [Codex CLI quickstart](https://learn.chatgpt.com/docs/quickstart)。
 
 ## 下载与安装
 
-### 推荐：双击 EXE 一键安装
+### macOS
+
+从[最新正式版](https://github.com/CH-ZHOU-0512/codex-proxy-guardian/releases/latest)按芯片下载：
+
+- Apple Silicon（M1/M2/M3/M4 等）：`CodexProxyGuardian-版本-darwin-arm64.tar.gz`
+- Intel Mac：`CodexProxyGuardian-版本-darwin-amd64.tar.gz`
+
+解压后在终端进入 `CodexProxyGuardian` 目录，以普通用户执行：
+
+```sh
+./install.sh
+codex-proxy-guardian doctor
+```
+
+安装器复制到 `~/.local/lib/codex-proxy-guardian`，注册当前用户 LaunchAgent 并立即静默启动。以后照常打开 ChatGPT/Codex；代理稳定变化或应用未带当前参数时，Guardian 才会在防抖、冷却和熔断限制内受控修复。
+
+### Linux
+
+从同一 Release 按架构下载 `linux-amd64.tar.gz` 或 `linux-arm64.tar.gz`，解压后执行：
+
+```sh
+./install.sh
+codex-proxy-guardian doctor
+codex-guard
+```
+
+安装器优先注册 systemd 用户服务，不可用时回退到 XDG Autostart，不使用 `sudo`。`codex-guard` 会先取出 Guardian 已验证的代理，再以进程级环境变量启动官方 Codex CLI，并保留原终端和参数：例如 `codex-guard resume --last`。
+
+> 直接运行普通 `codex` 时，已经由 shell 正确配置代理的环境仍可正常工作；但 Guardian 无法在进程启动后改写另一个终端进程的环境。因此 Linux 上要确定使用当前已验证代理，请使用 `codex-guard`。Guardian 永远不会自动结束或重启交互式 Codex CLI 会话。
+
+### Windows 11：推荐双击 EXE 一键安装
 
 1. 打开[最新正式版下载页](https://github.com/CH-ZHOU-0512/codex-proxy-guardian/releases/latest)，下载名称以 `CodexProxyGuardian-Setup-` 开头、以 `.exe` 结尾的文件；
 2. 双击 EXE，确认界面显示的项目地址为 `CH-ZHOU-0512/codex-proxy-guardian`；
@@ -155,6 +191,13 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Install.ps1
 .\Control.ps1 -Action ToggleMode
 ```
 
+macOS/Linux 使用同样的两种策略：
+
+```sh
+codex-proxy-guardian mode auto
+codex-proxy-guardian mode strict
+```
+
 模式变化会由 Guardian 在后台自动重新加载，不需要重启 Guardian，也不会主动关闭当前 Codex。
 
 项目通过匹配 Codex **根进程**的代理参数，而不是匹配短暂存在的启动器 PID，来规避早期脚本常见的误判重启问题。所有重启仍受到防抖、冷却、频率限制和熔断保护。
@@ -165,7 +208,13 @@ Codex 更新后，Guardian 会重新读取当前用户的 MSIX 清单，根据�
 
 ## 指定代理
 
-编辑 `%LOCALAPPDATA%\CodexProxyGuardian\config.json`：
+配置文件位置：
+
+- Windows：`%LOCALAPPDATA%\CodexProxyGuardian\config.json`
+- macOS：`~/Library/Application Support/CodexProxyGuardian/config.json`
+- Linux：`${XDG_CONFIG_HOME:-~/.config}/codex-proxy-guardian/config.json`
+
+编辑对应的 `config.json`：
 
 ```json
 {
@@ -181,7 +230,7 @@ Codex 更新后，Guardian 会重新读取当前用户的 MSIX 清单，根据�
 }
 ```
 
-`ExplicitProxy` 优先级最高。留空时会自动检查 Windows 当前代理、继承的代理环境变量和已识别代理程序的监听端口。完整选项见 [default-config.json](config/default-config.json) 和 [config.schema.json](config/config.schema.json)。
+`ExplicitProxy` 优先级最高。留空时会自动检查当前平台系统代理、继承的代理环境变量和已识别代理程序的监听端口。Windows 完整选项见 [default-config.json](config/default-config.json) 与 [config.schema.json](config/config.schema.json)，macOS/Linux 默认值见 [default-posix-config.json](config/default-posix-config.json)。
 
 修改配置后重启守护程序：
 
@@ -195,6 +244,8 @@ Codex 更新后，Guardian 会重新读取当前用户的 MSIX 清单，根据�
 
 默认每天由当前用户计划任务检查一次 GitHub Release。更新器只信任固定仓库 `CH-ZHOU-0512/codex-proxy-guardian`，要求 Release 标签、ZIP 文件名、包内 `VERSION` 完全一致，并使用同一 Release 附带的 `.sha256`（以及 GitHub 提供时的资产摘要）校验下载内容。安装前会快照现有文件，拒绝路径异常或展开规模超限的压缩包；安装中断会尝试恢复原版本并重新启动原 Guardian。结果写入 `logs\update-*.jsonl`。
 
+macOS/Linux 由守护进程每天检查与当前系统、架构精确对应的 `.tar.gz` 和 `.sha256`，验证标签、版本、文件名、包内 `VERSION`、SHA-256 与安全解包边界后才原位替换。更新成功后进程会无缝执行新版；失败则继续使用旧版或保留 `.previous` 回退副本。
+
 在设置窗口可以关闭自动更新，或在命令行检查/立即更新：
 
 ```powershell
@@ -202,9 +253,26 @@ Codex 更新后，Guardian 会重新读取当前用户的 MSIX 清单，根据�
 .\Control.ps1 -Action Update
 ```
 
+macOS/Linux：
+
+```sh
+codex-proxy-guardian update
+codex-proxy-guardian update --install
+```
+
 新安装默认使用 `Stable` 通道；愿意提前测试 Alpha/Beta 的用户可以在设置窗口主动改为“预发布版本”。升级会保留已有通道选择和其他配置，并优先接管正在运行的 Codex 会话而不是重启它。
 
 ## 如何确认它真的有效
+
+macOS/Linux：
+
+```sh
+codex-proxy-guardian status
+codex-proxy-guardian status --json
+codex-proxy-guardian doctor
+```
+
+Windows：
 
 ```powershell
 .\Status.ps1
@@ -240,6 +308,15 @@ Codex 更新后，Guardian 会重新读取当前用户的 MSIX 清单，根据�
 
 ## 日志与控制
 
+macOS/Linux 的运行状态和轮转 JSONL 日志分别位于：
+
+- macOS：`~/Library/Application Support/CodexProxyGuardian/`
+- Linux：`${XDG_STATE_HOME:-~/.local/state}/codex-proxy-guardian/`
+
+常用命令为 `codex-proxy-guardian status`、`doctor`、`mode` 和 `update`。Linux 用 `codex-guard` 启动 Codex CLI。
+
+Windows 控制命令：
+
 ```powershell
 .\Control.ps1 -Action Start
 .\Control.ps1 -Action Stop
@@ -252,7 +329,15 @@ Codex 更新后，Guardian 会重新读取当前用户的 MSIX 清单，根据�
 
 ## 卸载
 
-在 Release 解压目录或安装目录执行：
+macOS/Linux 在下载包的 `CodexProxyGuardian` 目录执行：
+
+```sh
+./uninstall.sh
+```
+
+默认保留配置和日志；确实需要一并删除时使用 `./uninstall.sh --purge`。脚本会先核对服务和可执行文件归属，不会修改或“恢复”系统网络设置。
+
+Windows 在 Release 解压目录或安装目录执行：
 
 ```powershell
 .\Uninstall.ps1 -Confirm:$false

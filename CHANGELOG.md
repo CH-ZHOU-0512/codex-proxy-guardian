@@ -4,6 +4,15 @@ All notable changes are documented here. This project follows semantic versionin
 
 ## [未发布 / Unreleased]
 
+## [1.2.0] - 2026-08-04
+
+- 新增 macOS Intel / Apple Silicon 原生守护程序：发现并真实验证系统、环境变量和常见本地 HTTP/HTTPS 代理，通过当前用户 LaunchAgent 静默自启，并在端点稳定变化后受控修复 ChatGPT/Codex 桌面应用。
+- 新增 Linux x64 / ARM64 原生守护程序与 `codex-guard`：通过 systemd user 或 XDG Autostart 自启，将已验证代理注入官方 Codex CLI，同时明确不强杀或自动重启交互式终端会话。
+- macOS/Linux 默认每天检查稳定版 Release；更新前核对平台、架构、语义版本、文件名、包内 `VERSION`、SHA-256 和安全解包边界，原位替换失败时保留旧版本。
+- 新增跨平台 Go 核心、单实例、防抖、重启冷却/熔断、JSONL 日志轮转、脱敏 Doctor、当前用户安装与安全卸载脚本。
+- Release 现在同时生成 Windows EXE/ZIP，以及 macOS/Linux 四种 `.tar.gz` 与各自 SHA-256；CI 在 Windows、macOS、Linux 上运行原生单测和编译检查。
+- 补充跨平台安装、支持矩阵、架构、故障排查和平台限制说明。Linux 当前对应官方 Codex CLI，不虚构官方 Linux 桌面端支持。
+
 ## [1.1.0] - 2026-08-03
 
 - 新增面向普通用户的单文件图形化安装器 `CodexProxyGuardian-Setup-1.1.0.exe`，双击即可完成当前用户安装或原位升级。

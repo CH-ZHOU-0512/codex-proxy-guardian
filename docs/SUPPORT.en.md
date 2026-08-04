@@ -2,18 +2,13 @@
 
 ## Tested design baseline
 
-| Area | Supported | Notes |
-|---|---|---|
-| OS | Windows 11 | Current-user interactive desktop only |
-| Architecture | x64, ARM64 | Executable is resolved from the MSIX manifest |
-| Codex distribution | Microsoft Store / Store-signed MSIX | Package name defaults to `OpenAI.Codex` and is configurable |
-| One-click setup | Windows 11 inbox .NET Framework 4.8 | Current-user graphical setup; use the ZIP where unsigned-app policy blocks it |
-| Shell | Windows PowerShell 5.1 | PowerShell 7 can run setup/tests, but the task uses inbox Windows PowerShell |
-| Proxy scheme | HTTP, HTTPS | An explicit port is required |
-| Windows proxy | Manual `ProxyServer` | Supports one endpoint or `http=...;https=...` forms |
-| Environment proxy | `HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY` | Values must describe an HTTP/HTTPS proxy and pass validation |
-| Proxy process | Recognized local listener | Process patterns are configurable |
-| Startup | Scheduled Task | HKCU Run is a fallback |
+| Platform | Architectures | Codex target | System proxy source | Current-user startup |
+|---|---|---|---|---|
+| Windows 11 | x64, ARM64 | Store / Store-signed MSIX desktop | Internet Settings `ProxyServer` | Scheduled Task; HKCU Run fallback |
+| macOS | Intel, Apple Silicon | ChatGPT/Codex desktop app | `scutil --proxy` | LaunchAgent |
+| Linux | x64, ARM64 | Official Codex CLI | GNOME `gsettings` | systemd user; XDG Autostart fallback |
+
+Every platform requires a current-user session and an HTTP/HTTPS proxy with an explicit port. Explicit configuration, inherited `HTTPS_PROXY` / `HTTP_PROXY` / HTTP-compatible `ALL_PROXY`, and recognized loopback listeners are supported. Candidates must pass both TCP and proxied HTTP(S) quorum validation.
 
 ## Not automatically supported
 
@@ -25,10 +20,21 @@
 - Proxy authentication embedded in a URL. Credentials are rejected to prevent command-line/process-list and log exposure.
 - Group Policy that requires signed scripts or enforces Constrained Language Mode.
 - Non-MSIX or renamed third-party Codex packages unless their package name is explicitly added and their manifest exposes a directly launchable executable.
+- A Linux Codex desktop app. OpenAI does not currently ship one; the Linux edition provides `codex-guard` for the official CLI.
+- Retroactively changing another Linux terminal process's environment, or automatically terminating/restarting an interactive Codex CLI session.
+- A macOS desktop app installed at a custom path not listed in `MacApplicationPaths`.
 
 ## Compatibility reports
 
 When opening an issue, attach the intentionally redacted report first:
+
+macOS/Linux:
+
+```sh
+codex-proxy-guardian doctor
+```
+
+Windows:
 
 ```powershell
 .\Doctor.ps1 -Online -Json -ExportPath .\codex-proxy-guardian-diagnostics.json

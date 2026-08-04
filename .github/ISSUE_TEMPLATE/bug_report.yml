@@ -11,21 +11,21 @@ body:
     id: version
     attributes:
       label: Guardian 版本
-      placeholder: 1.0.0
+      placeholder: 1.2.0
     validations:
       required: true
   - type: input
-    id: windows
+    id: platform
     attributes:
-      label: Windows 版本与架构
-      placeholder: Windows 11 24H2，x64 或 ARM64
+      label: 操作系统、版本与架构
+      placeholder: Windows 11 24H2 x64 / macOS 15 arm64 / Ubuntu 24.04 amd64
     validations:
       required: true
   - type: input
     id: codex
     attributes:
       label: Codex 来源与版本
-      placeholder: Microsoft Store/MSIX；请将输出中的隐私信息脱敏
+      placeholder: Microsoft Store/MSIX、macOS ChatGPT/Codex app，或 Codex CLI
     validations:
       required: true
   - type: input
@@ -53,7 +53,7 @@ body:
     id: doctor
     attributes:
       label: 已脱敏的 Doctor 报告
-      description: 请粘贴 Doctor.ps1 -Online -Json 的输出，并在提交前人工检查一次。
+      description: Windows 请粘贴 Doctor.ps1 -Online -Json；macOS/Linux 请粘贴 codex-proxy-guardian doctor。提交前人工检查一次。
       render: json
   - type: textarea
     id: expected

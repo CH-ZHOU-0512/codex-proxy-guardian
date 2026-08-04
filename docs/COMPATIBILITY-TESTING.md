@@ -4,7 +4,7 @@ The project separates “installed successfully” from “proved effective.” 
 
 ## Layer 1: deterministic tests
 
-Run `tests\Run-Tests.ps1` on Windows PowerShell 5.1 and PowerShell 7. Tests cover parser behavior, credential rejection, candidate ordering, configuration migration, PID handoff, restart circuit breaking, diagnostic redaction, and the no-network-mutation contract.
+Run `tests\Run-Tests.ps1` on Windows PowerShell 5.1 and PowerShell 7, plus `go test ./...` on Windows, macOS, and Linux. Tests cover parser behavior, credential rejection, candidate ordering, configuration migration, PID handoff, restart circuit breaking, diagnostic redaction, semantic release selection, safe archive extraction, and the no-network-mutation contract.
 
 ## Layer 2: online proxy proof
 
@@ -17,9 +17,13 @@ Install with mandatory connectivity validation:
 
 The default test set sends unauthenticated HTTPS HEAD requests through the explicit `WebProxy` transport to three OpenAI/ChatGPT hosts and requires two successes. Expected unauthenticated responses such as HTTP `401`, `403`, and `429` count; proxy-authentication `407`, server errors, and transport failures do not.
 
+On macOS/Linux use `codex-proxy-guardian doctor` and `status --json`. The Go core uses an explicit `http.Transport` proxy, not ambient routing, and applies the same success quorum.
+
 ## Layer 3: Codex process proof
 
 After starting or using Codex, `Status.ps1` should progress from `ValidatedProxy` to `LaunchConfigured`, then ideally `TrafficObserved`. The last level requires a recently observed TCP connection from the Codex process tree to the same proxy endpoint. No packet content is captured.
+
+On macOS, `status` exposes the corresponding `activeProxyValid`, `launchConfigured`, and `trafficObserved` fields. On Linux, effectiveness is split intentionally: the daemon proves the endpoint, while starting through `codex-guard` proves deterministic process-scoped injection. The guardian never restarts an interactive CLI session.
 
 ## Layer 4: soak test
 
@@ -44,6 +48,9 @@ Maintainers should exercise at least these scenarios before promoting any releas
 - update preserving custom configuration;
 - uninstall from a custom path with no Windows proxy change;
 - forced repeated change simulation proving that the circuit breaker opens.
+- macOS LaunchAgent install/upgrade/uninstall on Intel and Apple Silicon, including an app opened outside Guardian;
+- Linux systemd user and XDG fallback, `codex-guard` argument/TTY preservation, exact-PID uninstall safety, and x64/ARM64 package execution;
+- automatic update selecting only the exact OS/architecture archive and rejecting a path-traversal archive.
 
 ## Community matrix
 

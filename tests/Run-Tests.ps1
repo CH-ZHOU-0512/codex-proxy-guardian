@@ -357,10 +357,11 @@ Invoke-Test 'One-click installer embeds and safely verifies the exact release pa
     Assert-True $packager.Contains('CodexProxyGuardian-Setup-{0}.exe') 'Release packaging does not create the one-click installer.'
     Assert-True $packager.Contains('/resource:$zipPath,CodexProxyGuardian.Payload.zip') 'Release ZIP is not embedded as the installer payload.'
     Assert-True $packager.Contains('& $installerPath --verify') 'Packaged installer is not self-checked.'
+	Assert-True $packager.Contains('package-posix.go') 'Release packaging does not create macOS/Linux archives.'
 
     $releaseWorkflow = Get-Content -Raw -LiteralPath (Join-Path $repoRoot '.github\workflows\release.yml')
-    Assert-True $releaseWorkflow.Contains('CodexProxyGuardian-Setup-$version.exe') 'GitHub Release does not publish the one-click installer.'
-    Assert-True $releaseWorkflow.Contains('$installerChecksum') 'GitHub Release does not publish the installer checksum.'
+	Assert-True $releaseWorkflow.Contains('Get-ChildItem -LiteralPath .\artifacts -File') 'GitHub Release does not publish all generated assets.'
+	Assert-True $releaseWorkflow.Contains('Expected at least 12 release assets') 'GitHub Release does not enforce the complete cross-platform asset set.'
 }
 
 Invoke-Test 'Watcher publishes explicit lifecycle states' {

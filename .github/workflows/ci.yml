@@ -8,6 +8,26 @@ permissions:
   contents: read
 
 jobs:
+  go-test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Test native guardian
+        run: go test ./...
+      - name: Build native guardian
+        run: go build ./cmd/codex-proxy-guardian
+      - name: Check install scripts
+        if: runner.os != 'Windows'
+        run: sh -n platform/install.sh && sh -n platform/uninstall.sh
+
   test:
     runs-on: windows-latest
     strategy:
@@ -27,9 +47,13 @@ jobs:
 
   package:
     runs-on: windows-latest
-    needs: test
+    needs: [test, go-test]
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
       - name: Build release archive
         shell: powershell
         run: .\tools\Package-Release.ps1

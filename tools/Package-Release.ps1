@@ -89,7 +89,7 @@ try {
         'assets', 'CHANGELOG.md', 'CODE_OF_CONDUCT.md', 'CONTRIBUTING.md', 'Control.ps1',
         'DISCLAIMER.md', 'Doctor.ps1', 'Install.ps1', 'LICENSE', 'README.md',
         'SECURITY.md', 'Settings.ps1', 'Status.ps1', 'Uninstall.ps1', 'Update.ps1', 'VERSION',
-        'config', 'docs', 'setup', 'src', 'tests', 'tools'
+        'cmd', 'config', 'docs', 'go.mod', 'internal', 'platform', 'setup', 'src', 'tests', 'tools'
     )
     foreach ($name in $releaseItems) {
         $sourcePath = Join-Path $repoRoot $name
@@ -155,6 +155,9 @@ using System.Reflection;
     $installerHash = (Get-FileHash -LiteralPath $installerPath -Algorithm SHA256).Hash.ToLowerInvariant()
     "$installerHash  $([System.IO.Path]::GetFileName($installerPath))" | Set-Content -LiteralPath $installerChecksumPath -Encoding ASCII
 
+    & go run (Join-Path $repoRoot 'tools\package-posix.go') -root $repoRoot -out $outputRoot -version $version
+    if ($LASTEXITCODE -ne 0) { throw "The macOS/Linux packager exited with code $LASTEXITCODE." }
+
     [pscustomobject]@{
         Version = $version
         Archive = $zipPath
@@ -163,6 +166,7 @@ using System.Reflection;
         Installer = $installerPath
         InstallerSha256 = $installerHash
         InstallerChecksumFile = $installerChecksumPath
+        PosixArchives = @(Get-ChildItem -LiteralPath $outputRoot -Filter "CodexProxyGuardian-$version-*.tar.gz" -File | Select-Object -ExpandProperty FullName)
     }
 }
 finally {
