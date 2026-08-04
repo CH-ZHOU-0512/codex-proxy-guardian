@@ -4,7 +4,7 @@
 
 Codex Proxy Guardian 持续发现并验证当前可用的 HTTP/HTTPS、SOCKS5/SOCKS5H 代理，也能按实际 Codex 目标解析系统 PAC/WPAD 或手动指定的 PAC。当 Clash、Mihomo、v2rayN、sing-box 等代理程序的监听地址或端口稳定变化后，它让 Codex 使用当前代理，并通过防抖、冷却、重启频率限制和熔断避免重启循环。
 
-Windows 推荐下载 `CodexProxyGuardian-Setup-版本号.exe` 双击安装，v1.4.0 起安装器会显示当前阶段和 0–100% 进度。macOS/Linux 下载与架构匹配的 tar.gz，解压后以普通用户运行 `./install.sh`，不要使用 sudo。Guardian 安装后立即启动并在登录后静默自启；Windows/macOS 继续正常打开桌面应用，Linux 使用 `codex-guard` 启动官方 Codex CLI。
+Windows 推荐下载 `CodexProxyGuardian-Setup-版本号.exe` 双击安装，v1.4.0 起安装器会显示当前阶段和 0–100% 进度；v1.4.1 起完成前还会核对 Guardian PID 与安装路径，意外退出时安全重试一次。macOS/Linux 下载与架构匹配的 tar.gz，解压后以普通用户运行 `./install.sh`，不要使用 sudo。Guardian 安装后立即启动并在登录后静默自启；Windows/macOS 继续正常打开桌面应用，Linux 使用 `codex-guard` 启动官方 Codex CLI。
 
 项目没有商业代码签名证书，Windows SmartScreen 可能提示新 EXE 无法识别。用户应只从 `CH-ZHOU-0512/codex-proxy-guardian` 正式 Release 下载并核对 `.sha256`；受策略限制时可改用可直接审阅的 ZIP 与 `Install.ps1`。项目不要求用户关闭系统安全功能。
 
@@ -27,4 +27,4 @@ Windows 推荐下载 `CodexProxyGuardian-Setup-版本号.exe` 双击安装，v1.
 
 ## Current stable version
 
-Version 1.4.0. Windows 11 Store/MSIX desktop (x64/ARM64), macOS ChatGPT/Codex desktop (Intel/Apple Silicon), and Linux Codex CLI (x64/ARM64). Supports HTTP/HTTPS, SOCKS5/SOCKS5H, and PAC/WPAD discovery with real target validation. The Windows Setup EXE shows determinate 0–100% progress based on actual extraction bytes and completed installation stages. It retains the Windows PowerShell 5.1 GitHub Release discovery fix introduced in v1.3.1. Stable Release includes Windows EXE/ZIP and four native macOS/Linux archives, each with SHA-256.
+Version 1.4.1. Windows 11 Store/MSIX desktop (x64/ARM64), macOS ChatGPT/Codex desktop (Intel/Apple Silicon), and Linux Codex CLI (x64/ARM64). Supports HTTP/HTTPS, SOCKS5/SOCKS5H, and PAC/WPAD discovery with real target validation. The Windows Setup EXE shows determinate 0–100% progress based on actual extraction bytes and completed installation stages. Before reporting success it verifies that the status PID still belongs to the guardian under the current install root, retries one unexpected startup exit, and fails clearly after a second dead start. It retains the Windows PowerShell 5.1 GitHub Release discovery fix introduced in v1.3.1. Stable Release includes Windows EXE/ZIP and four native macOS/Linux archives, each with SHA-256.
