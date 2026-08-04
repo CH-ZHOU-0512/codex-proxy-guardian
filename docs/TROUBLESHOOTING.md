@@ -37,6 +37,8 @@ codex-proxy-guardian doctor
 
 ## Codex 反复重启
 
+先确认 Guardian 已升级到 v1.4.2 或更高版本。v1.4.1 及更早版本可能把同一个混合代理端口的 HTTP/SOCKS5 验证波动误判为端点变化；v1.4.2 会保留同一主机与端口上已经验证可用的协议。
+
 1. 立即停止守护任务；此操作不会改变任何网络设置：
 
    ```powershell

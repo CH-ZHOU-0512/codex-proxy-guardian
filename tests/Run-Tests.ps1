@@ -279,6 +279,38 @@ Invoke-Test 'Candidate ordering is deterministic and sticky only within a score 
     Assert-Equal 'http://127.0.0.1:8000' ([string]$ordered[2].Uri)
 }
 
+Invoke-Test 'Candidate ordering keeps the working scheme on the same physical endpoint' {
+    $candidates = @(
+        [pscustomobject]@{ Uri = 'http://127.0.0.1:7897'; Source = 'system:all'; Score = 210 },
+        [pscustomobject]@{ Uri = 'http://127.0.0.1:7897'; Source = 'process:verge-mihomo'; Score = 120 },
+        [pscustomobject]@{ Uri = 'socks5h://127.0.0.1:7897'; Source = 'process:verge-mihomo:socks5'; Score = 115 }
+    )
+
+    $ordered = @(Select-CpgProxyCandidates -Candidates $candidates -PreferredUri 'socks5h://127.0.0.1:7897')
+    Assert-Equal 'socks5h://127.0.0.1:7897' ([string]$ordered[0].Uri)
+    Assert-Equal 'http://127.0.0.1:7897' ([string]$ordered[1].Uri)
+}
+
+Invoke-Test 'Candidate ordering still changes to a higher-priority different endpoint' {
+    $candidates = @(
+        [pscustomobject]@{ Uri = 'http://127.0.0.1:7898'; Source = 'system:all'; Score = 210 },
+        [pscustomobject]@{ Uri = 'socks5h://127.0.0.1:7897'; Source = 'process:verge-mihomo:socks5'; Score = 115 }
+    )
+
+    $ordered = @(Select-CpgProxyCandidates -Candidates $candidates -PreferredUri 'socks5h://127.0.0.1:7897')
+    Assert-Equal 'http://127.0.0.1:7898' ([string]$ordered[0].Uri)
+}
+
+Invoke-Test 'Explicit proxy selection overrides same-endpoint scheme stickiness' {
+    $candidates = @(
+        [pscustomobject]@{ Uri = 'http://127.0.0.1:7897'; Source = 'config:ExplicitProxy'; Score = 300 },
+        [pscustomobject]@{ Uri = 'socks5h://127.0.0.1:7897'; Source = 'process:verge-mihomo:socks5'; Score = 115 }
+    )
+
+    $ordered = @(Select-CpgProxyCandidates -Candidates $candidates -PreferredUri 'socks5h://127.0.0.1:7897')
+    Assert-Equal 'http://127.0.0.1:7897' ([string]$ordered[0].Uri)
+}
+
 Invoke-Test 'Restart circuit breaker opens, remains open, and later recovers' {
     $now = [datetime]'2026-08-02T10:00:00Z'
     $history = @($now.AddMinutes(-8), $now.AddMinutes(-4), $now.AddMinutes(-1))

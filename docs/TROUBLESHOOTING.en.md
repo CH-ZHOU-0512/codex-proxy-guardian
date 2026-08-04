@@ -31,6 +31,8 @@ Do not use `sudo` for install, repair, or uninstall.
 
 ## Codex repeatedly restarts
 
+First confirm that Guardian is v1.4.2 or newer. v1.4.1 and earlier can mistake HTTP/SOCKS5 validation fluctuations on one mixed proxy port for endpoint changes; v1.4.2 keeps the already validated scheme while the host and port stay the same.
+
 1. Stop the task immediately without changing network settings:
 
    ```powershell

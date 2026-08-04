@@ -4,6 +4,12 @@ All notable changes are documented here. This project follows semantic versionin
 
 ## [未发布 / Unreleased]
 
+## [1.4.2] - 2026-08-04
+
+- 修复 Windows 自动发现同一个混合代理端口时，HTTP 与 SOCKS5 验证结果短暂波动会被误判为代理端点反复变化，进而连续重启 Codex 的严重问题。
+- Guardian 现在会对同一主机与端口保留已经验证可用的协议；当前协议真实失效时仍可切换，代理主机或端口变化时仍会正常修复 Codex。
+- 显式 `ProxyOverride` 与 `ExplicitProxy` 继续优先于协议粘滞，并新增同端点协议抖动、不同端点切换和显式配置覆盖回归测试。
+
 ## [1.4.1] - 2026-08-04
 
 - Windows 安装器在启动 Guardian 后会核对 `status.json` 中的 PID 是否仍对应当前安装路径下的真实 Guardian，不再把过期的 `Stabilizing` 状态当作成功。

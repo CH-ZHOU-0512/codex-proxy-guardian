@@ -175,10 +175,11 @@ codex-proxy-guardian doctor
 
 ### Codex 还在反复重启
 
-1. 保持或切回“自动（Safe）”。
-2. 运行 `Status.ps1` 查看 `GuardianState` 和最近重启原因。
-3. 运行 `Doctor.ps1 -Online` 生成脱敏诊断。
-4. 参阅[故障排查](docs/TROUBLESHOOTING.md)或提交 [Bug report](https://github.com/CH-ZHOU-0512/codex-proxy-guardian/issues/new?template=bug_report.yml)。
+1. 先升级到 v1.4.2 或更高版本；旧版可能把同一混合端口的 HTTP/SOCKS5 波动误判为代理变化。
+2. 保持或切回“自动（Safe）”。
+3. 运行 `Status.ps1` 查看 `GuardianState` 和最近重启原因。
+4. 运行 `Doctor.ps1 -Online` 生成脱敏诊断。
+5. 参阅[故障排查](docs/TROUBLESHOOTING.md)或提交 [Bug report](https://github.com/CH-ZHOU-0512/codex-proxy-guardian/issues/new?template=bug_report.yml)。
 
 ### Windows 旧版一直说“没有更新”
 
