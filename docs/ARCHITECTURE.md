@@ -7,6 +7,7 @@ flowchart LR
     A["Explicit config"] --> D["Candidate ranking"]
     B["Platform system proxy"] --> D
     C["Recognized process listeners"] --> D
+    P["PAC / WPAD FindProxyForURL"] --> D
     D --> E["TCP listener check"]
     E --> F["Multi-target HTTPS-through-proxy quorum"]
     F --> G["Sampling and debounce"]
@@ -17,7 +18,9 @@ flowchart LR
     I --> L["Linux codex-guard CLI"]
 ```
 
-The guardian reads but never writes platform proxy configuration. Candidate priority is explicit configuration, the current platform proxy, inherited HTTP-compatible proxy variables, recognized local listeners, then common loopback ports. A candidate becomes active only after TCP and explicit proxied-request validation plus debounce. Ordering is deterministic, and the current endpoint wins ties within its priority tier.
+The guardian reads but never writes platform proxy configuration. Candidate priority is explicit configuration, PAC/WPAD routes, the current platform proxy, inherited proxy variables, recognized local listeners, then common loopback ports. HTTP, HTTPS, and SOCKS5 candidates become active only after TCP and explicit proxied-request validation plus debounce. Ordering is deterministic, and the current endpoint wins ties within its priority tier.
+
+Windows delegates PAC/WPAD policy evaluation to the current-user WinHTTP auto-proxy resolver. macOS/Linux fetch and execute `FindProxyForURL` in a pure-Go JavaScript runtime bounded by source size, download time, DNS time, execution time, and cache age. PAC fallback directives are parsed in order; SOCKS4 is ignored. A resolved endpoint must still satisfy the multi-target quorum. If destination-specific PAC routes do not share a usable endpoint, the state machine remains in `WaitingForProxy` rather than flattening them into a false global route.
 
 The Windows implementation remains PowerShell-based. macOS/Linux share a small statically linked Go core and platform adapters:
 
@@ -65,7 +68,7 @@ The macOS/Linux daemon performs the same fixed-repository and channel selection 
 
 ## Effectiveness evidence
 
-1. **ValidatedProxy**: the chosen endpoint has a listener and reaches the configured HTTPS quorum through an explicit .NET `WebProxy` transport.
+1. **ValidatedProxy**: the chosen endpoint has a listener and reaches the configured HTTPS quorum through an explicit HTTP/HTTPS/SOCKS5 transport. Windows uses .NET for HTTP(S) and inbox `curl.exe` for SOCKS5; the Go core uses an explicit standard-library transport.
 2. **LaunchConfigured**: a current Codex root command line contains the exact normalized `--proxy-server` token.
 3. **TrafficObserved**: an established TCP connection from the Codex process tree to the chosen endpoint was observed within the configured evidence window.
 
@@ -87,7 +90,8 @@ The [official Codex network-isolation documentation](https://learn.chatgpt.com/d
 ## Security boundaries
 
 - URLs containing user information are rejected.
-- Remote/non-loopback proxies require explicit opt-in.
+- Arbitrary explicit/environment remote proxies require opt-in. System-configured remote proxies have a separate default-on trust switch that can be disabled without breaking local proxy discovery.
+- PAC source size, fetch, DNS, execution time, and cache lifetime are bounded; credential-bearing PAC and proxy URLs are rejected.
 - The updater refuses a non-empty, unmarked installation directory.
 - The uninstaller requires a product marker whose canonical path matches the requested root.
 - Scheduled tasks, Run values, and shortcuts are removed only when they still point to that root.

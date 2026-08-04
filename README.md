@@ -12,7 +12,7 @@
 
 > **一句话解释：** 如果你的 Codex 经常要重连四五次才开始思考，而原因是代理没有正确跟上，这个工具就是用来解决它的。
 
-这是一个非官方的 **Codex 代理守护工具**，支持 Windows 11、macOS 和 Linux。它持续发现并验证当前可用的 HTTP/HTTPS 代理；当 Clash、Mihomo、v2rayN、sing-box 等代理软件的监听地址或端口稳定变化后，让 Codex 使用新的有效端点。
+这是一个非官方的 **Codex 代理守护工具**，支持 Windows 11、macOS 和 Linux。它持续发现并验证当前可用的 HTTP、HTTPS、SOCKS5 代理，也能解析系统 PAC/WPAD 为 OpenAI 目标选择的实际代理链；当 Clash、Mihomo、v2rayN、sing-box 等代理软件的监听地址或端口稳定变化后，让 Codex 使用新的有效端点。
 
 | 平台 | 守护对象 | 安装后怎么用 |
 |---|---|---|
@@ -29,7 +29,7 @@
 手动处理通常需要找到当前端口、关闭 Codex、设置代理环境变量或启动参数，再重新打开 Codex；以后端口变化还要重复操作。Codex Proxy Guardian 把这套过程自动化：它寻找候选端口、实际验证代理是否可用，只在确认变化稳定后才更新 Codex，并通过防抖、冷却和熔断避免反复重启。即使不熟悉端口、环境变量或计划任务，也可以先使用默认的 `Safe` 模式。
 
 > [!NOTE]
-> 本项目本身**不是代理软件，也不提供代理服务或节点**。使用前需要电脑上已经存在一个可用的 HTTP/HTTPS 代理；它解决的是“怎样让 Codex 稳定跟随这个代理”的问题。
+> 本项目本身**不是代理软件，也不提供代理服务或节点**。使用前需要电脑上已经存在可用的 HTTP、HTTPS、SOCKS5 代理，或能为 OpenAI 目标返回这些代理的 PAC/WPAD；它解决的是“怎样让 Codex 稳定跟随这个代理”的问题。
 
 ![Codex Proxy Guardian 工作流程：发现、验证、稳定、生效](assets/how-it-works.png)
 
@@ -38,7 +38,8 @@
 
 ## 它能做什么
 
-- 自动读取 Windows、macOS 或 GNOME 当前用户代理、显式指定代理、进程环境变量和常见代理程序的本地监听端口。
+- 自动读取 Windows、macOS 或 GNOME 当前用户代理、PAC/WPAD、显式指定代理、进程环境变量和常见代理程序的本地监听端口。
+- 对未知的代理程序监听同时尝试 HTTP 与 SOCKS5，只有真实请求通过才确认协议，不按常见端口猜结论。
 - 不只判断端口是否存在，还会通过代理访问多个 OpenAI/ChatGPT HTTPS 目标，达到成功数量要求后才启用。
 - 使用进程级 `HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY` 环境变量和 Chromium `--proxy-server` 参数启动 Codex。
 - 代理地址或端口变化时先防抖，再受控重启 Codex；端口来回波动时不会立即反复重启。
@@ -52,7 +53,9 @@
 ## 先看安全边界
 
 - **不会修改**系统代理、WinHTTP 代理、DNS、路由、防火墙或永久用户/系统环境变量。
-- 只接受带明确端口的 HTTP/HTTPS 代理；拒绝 URL 中包含账号密码的代理地址。
+- 只接受带明确端口的 HTTP、HTTPS、SOCKS5 代理；拒绝 SOCKS4 和 URL 中包含账号密码的代理地址。
+- Windows PAC/WPAD 交给系统 WinHTTP 安全策略执行；macOS/Linux 的 PAC 运行时另有下载大小、获取、DNS、执行和缓存限制。WPAD 只在操作系统已启用自动发现时使用。
+- 任意显式远程代理仍需手动允许；操作系统已经配置的远程代理由独立的 `AllowSystemNonLoopbackProxy` 开关控制。
 - 候选代理必须同时通过 TCP 监听检查和经代理发起的 HTTPS 请求验证。
 - 默认使用“自动（Safe）”模式：只有在代理已经验证、Codex 缺少当前代理参数，而且证据等待期内没有观察到该进程正在使用当前代理时，才会进行一次受控修复。
 - 卸载时会核对安装标记、计划任务动作和快捷方式目标，只删除本项目拥有的资源。
@@ -68,7 +71,7 @@
 | 后台自启 | 当前用户计划任务 / HKCU Run | 当前用户 LaunchAgent | systemd user / XDG Autostart |
 | 自动处理 Codex | 可受控重启桌面端 | 可受控重启桌面应用 | 只维护代理；不重启交互式 CLI |
 
-共同支持显式 HTTP/HTTPS 代理、继承的 `HTTPS_PROXY` / `HTTP_PROXY` / HTTP 兼容 `ALL_PROXY`，以及常见代理程序的本机监听端口。暂不自动支持 PAC/WPAD、纯 SOCKS、只有 TUN 而没有 HTTP/混合端口的配置，或 URL 中包含账号密码的代理。详见[兼容性矩阵](docs/SUPPORT.md)。
+共同支持显式 HTTP/HTTPS/SOCKS5 代理、继承的 `HTTPS_PROXY` / `HTTP_PROXY` / `ALL_PROXY`、系统 PAC/WPAD，以及常见代理程序的本机监听端口。PAC 会针对配置的 OpenAI/ChatGPT 验证目标执行 `FindProxyForURL`，按返回顺序尝试 `PROXY`、`HTTPS`、`SOCKS`、`SOCKS5`，忽略 `SOCKS4`；只有同一候选达到多目标成功门槛才会接管。若 PAC 为不同目标返回互不通用的代理，Guardian 会安全地保持不接管，而不是错误地强制一个端点。只有 TUN 而没有可解析代理端点、SOCKS4、带账号密码的代理 URL 仍不支持。详见[兼容性矩阵](docs/SUPPORT.md)。
 
 > [!IMPORTANT]
 > OpenAI 当前提供 macOS/Windows 桌面应用和 Linux Codex CLI；Linux 没有官方 Codex 桌面应用。因此 Linux 版采用 `codex-guard` 包装 CLI，并明确不声称能守护不存在的桌面端。参阅 [Codex app](https://learn.chatgpt.com/docs/app) 和 [Codex CLI quickstart](https://learn.chatgpt.com/docs/quickstart)。
@@ -219,9 +222,11 @@ Codex 更新后，Guardian 会重新读取当前用户的 MSIX 清单，根据�
 ```json
 {
   "ExplicitProxy": "http://127.0.0.1:7890",
+  "ExplicitPAC": "",
   "AutomaticUpdates": true,
   "UpdateChannel": "Stable",
   "AllowNonLoopbackProxy": false,
+  "AllowSystemNonLoopbackProxy": true,
   "ManageExternalCodexLaunches": false,
   "SafeRepairExternalCodexLaunches": true,
   "SafeExternalLaunchGraceSeconds": 20,
@@ -230,7 +235,7 @@ Codex 更新后，Guardian 会重新读取当前用户的 MSIX 清单，根据�
 }
 ```
 
-`ExplicitProxy` 优先级最高。留空时会自动检查当前平台系统代理、继承的代理环境变量和已识别代理程序的监听端口。Windows 完整选项见 [default-config.json](config/default-config.json) 与 [config.schema.json](config/config.schema.json)，macOS/Linux 默认值见 [default-posix-config.json](config/default-posix-config.json)。
+`ExplicitProxy` 优先级最高，可填写 `http://`、`https://`、`socks5://` 或 `socks5h://`。`ExplicitPAC` 可指定绝对 HTTP/HTTPS PAC URL；macOS/Linux 还接受本地 `file://` PAC。两者留空时会自动检查当前平台系统代理/PAC/WPAD、继承的代理环境变量和已识别代理程序的监听端口。Windows 完整选项见 [default-config.json](config/default-config.json) 与 [config.schema.json](config/config.schema.json)，macOS/Linux 默认值见 [default-posix-config.json](config/default-posix-config.json)。
 
 修改配置后重启守护程序：
 

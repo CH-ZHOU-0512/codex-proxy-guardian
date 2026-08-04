@@ -87,7 +87,7 @@ func (manager *macManager) Observe(proxyURI string) AppObservation {
 }
 
 func containsProxyArgument(command, proxyURI string) bool {
-	return strings.Contains(command, "--proxy-server="+proxyURI)
+	return strings.Contains(command, "--proxy-server="+chromiumProxyURI(proxyURI))
 }
 
 func macTrafficObserved(processes []processInfo, rootPID int, proxyURI string) bool {
@@ -119,7 +119,7 @@ func (manager *macManager) Launch(proxyURI string, arguments []string) error {
 	if executable == "" {
 		return fmt.Errorf("ChatGPT.app was not found; install it or set MacApplicationPaths")
 	}
-	launchArguments := append([]string{"--proxy-server=" + proxyURI}, arguments...)
+	launchArguments := append([]string{"--proxy-server=" + chromiumProxyURI(proxyURI)}, arguments...)
 	command := exec.Command(executable, launchArguments...)
 	command.Env = proxyEnvironment(proxyURI, manager.cfg.NoProxy)
 	command.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
@@ -154,9 +154,10 @@ func (manager *macManager) Restart(proxyURI string, cfg Config) error {
 	return manager.Launch(proxyURI, nil)
 }
 
-var macProxyLine = regexp.MustCompile(`^\s*(HTTP|HTTPS)(Enable|Proxy|Port)\s*:\s*(.+?)\s*$`)
+var macProxyLine = regexp.MustCompile(`^\s*(HTTP|HTTPS|SOCKS)(Enable|Proxy|Port)\s*:\s*(.+?)\s*$`)
+var macPACLine = regexp.MustCompile(`^\s*(ProxyAutoConfigEnable|ProxyAutoConfigURLString|ProxyAutoDiscoveryEnable)\s*:\s*(.+?)\s*$`)
 
-func platformSystemProxyCandidates(Config) []Candidate {
+func platformSystemProxyCandidates(cfg Config) []Candidate {
 	output, err := exec.Command("scutil", "--proxy").Output()
 	if err != nil {
 		return nil
@@ -169,10 +170,36 @@ func platformSystemProxyCandidates(Config) []Candidate {
 		}
 	}
 	result := []Candidate{}
-	for _, scheme := range []string{"HTTPS", "HTTP"} {
+	for _, scheme := range []string{"HTTPS", "HTTP", "SOCKS"} {
 		if values[scheme+"Enable"] == "1" && values[scheme+"Proxy"] != "" && values[scheme+"Port"] != "" {
-			result = append(result, Candidate{URI: "http://" + values[scheme+"Proxy"] + ":" + values[scheme+"Port"], Source: "system:macos-" + strings.ToLower(scheme), Score: 300})
+			proxyScheme := "http"
+			if scheme == "SOCKS" {
+				proxyScheme = "socks5h"
+			}
+			result = append(result, Candidate{URI: proxyScheme + "://" + values[scheme+"Proxy"] + ":" + values[scheme+"Port"], Source: "system:macos-" + strings.ToLower(scheme), Score: 300, AllowNonLoopbackHost: cfg.AllowSystemNonLoopbackProxy})
 		}
+	}
+	return result
+}
+
+func platformPACSources(cfg Config) []pacSource {
+	output, err := exec.Command("scutil", "--proxy").Output()
+	if err != nil {
+		return nil
+	}
+	values := map[string]string{}
+	for _, line := range strings.Split(string(output), "\n") {
+		match := macPACLine.FindStringSubmatch(line)
+		if len(match) == 3 {
+			values[match[1]] = strings.TrimSpace(match[2])
+		}
+	}
+	result := []pacSource{}
+	if values["ProxyAutoConfigEnable"] == "1" && values["ProxyAutoConfigURLString"] != "" {
+		result = append(result, pacSource{URL: values["ProxyAutoConfigURLString"], Source: "system:macos-pac", Score: 420, AllowNonLoopbackHost: cfg.AllowSystemNonLoopbackProxy})
+	}
+	if cfg.EnableWPADDiscovery && values["ProxyAutoDiscoveryEnable"] == "1" {
+		result = append(result, pacSource{URL: "http://wpad/wpad.dat", Source: "system:macos-wpad", Score: 410, AllowNonLoopbackHost: cfg.AllowSystemNonLoopbackProxy})
 	}
 	return result
 }
@@ -191,7 +218,10 @@ func platformListenerCandidates(cfg Config) []Candidate {
 			continue
 		}
 		host := strings.Trim(match[2], "[]")
-		result = append(result, Candidate{URI: fmt.Sprintf("http://%s:%s", host, match[3]), Source: "process:" + strings.ToLower(match[1]), Score: 200})
+		result = append(result,
+			Candidate{URI: fmt.Sprintf("http://%s:%s", host, match[3]), Source: "process:" + strings.ToLower(match[1]), Score: 200},
+			Candidate{URI: fmt.Sprintf("socks5h://%s:%s", host, match[3]), Source: "process:" + strings.ToLower(match[1]) + ":socks5", Score: 195},
+		)
 	}
 	return result
 }

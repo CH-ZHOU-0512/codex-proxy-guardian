@@ -39,11 +39,15 @@ jobs:
       - name: Run tests on Windows PowerShell 5.1
         if: matrix.shell == 'windows-powershell'
         shell: powershell
-        run: .\tests\Run-Tests.ps1
+        run: |
+          .\tests\Run-Tests.ps1
+          .\tests\Test-WinHttpPac.ps1
       - name: Run tests on PowerShell 7
         if: matrix.shell == 'powershell'
         shell: pwsh
-        run: .\tests\Run-Tests.ps1
+        run: |
+          .\tests\Run-Tests.ps1
+          .\tests\Test-WinHttpPac.ps1
 
   package:
     runs-on: windows-latest

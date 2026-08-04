@@ -54,7 +54,7 @@ Maintainers should exercise at least these scenarios before promoting any releas
 
 ## Community matrix
 
-Compatibility is accepted only with a redacted `Doctor.ps1 -Online -Json` report and the tested proxy mode. A product name alone is insufficient because the same client can expose system proxy, mixed HTTP/SOCKS, pure SOCKS, or TUN-only behavior.
+Compatibility is accepted only with a redacted `Doctor.ps1 -Online -Json` report and the tested proxy mode. A product name alone is insufficient because the same client can expose system proxy, mixed HTTP/SOCKS, pure SOCKS5, PAC/WPAD, or TUN-only behavior. SOCKS5 acceptance requires a real proxied request, not just a listening port; PAC acceptance records the effective endpoint selected for the configured OpenAI target set.
 
 | Client family | Mode to report | Expected adapter |
 |---|---|---|

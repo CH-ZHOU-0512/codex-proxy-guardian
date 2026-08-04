@@ -18,7 +18,7 @@ codex-proxy-guardian doctor
 
 ### Linux 显示 `WaitingForProxy`
 
-确认代理软件开放 HTTP 或混合端口，而不是只有 SOCKS/TUN。非 GNOME 桌面可能没有统一的系统代理读取方式，可编辑 `${XDG_CONFIG_HOME:-~/.config}/codex-proxy-guardian/config.json` 设置：
+确认代理软件开放 HTTP、SOCKS5 或混合端口。只有 TUN 且没有系统 PAC/代理端点时仍无法明确验证。非 GNOME 桌面可能没有统一的系统代理读取方式，可编辑 `${XDG_CONFIG_HOME:-~/.config}/codex-proxy-guardian/config.json` 设置：
 
 ```json
 { "ExplicitProxy": "http://127.0.0.1:7890" }
@@ -66,8 +66,8 @@ codex-proxy-guardian doctor
 
 ## 没有选中任何代理
 
-- 确认端点是 HTTP 或 HTTPS，而不是仅 SOCKS。
-- 确认代理软件开放了 HTTP 或混合入站端口。
+- 确认端点是 HTTP、HTTPS、SOCKS5 或 SOCKS5H；SOCKS4 不支持。
+- 确认代理软件开放了 HTTP、SOCKS5 或混合入站端口。
 - 确认 Windows 手动代理已启用，或者设置 `ExplicitProxy`。
 - 在安装目录运行自检：
 
@@ -84,6 +84,14 @@ codex-proxy-guardian doctor
 ```
 
 默认配置要求至少两个 HTTPS 测试目标成功，可以显著降低“端口存在但代理不可用”的误判概率。
+
+## PAC/WPAD 已启用但没有候选
+
+- Windows 会使用当前用户 WinHTTP 自动代理解析器；确认“使用设置脚本”或“自动检测设置”确实由当前用户启用。
+- macOS 检查 `scutil --proxy` 中的 `ProxyAutoConfigURLString` / `ProxyAutoDiscoveryEnable`；GNOME 检查 `gsettings get org.gnome.system.proxy mode` 与 `autoconfig-url`。
+- PAC 返回 `SOCKS4`、只有 `DIRECT`，或为不同 OpenAI 验证目标返回互不通用的端点时，Guardian 会保持不接管。
+- 企业 PAC 返回远程代理时，确认 `AllowSystemNonLoopbackProxy` 没有被关闭。手写 `ExplicitPAC` 返回远程代理则仍需 `AllowNonLoopbackProxy: true`。
+- PAC 下载、DNS 或脚本执行超过安全时限会被拒绝；不要通过无限增大限制掩盖损坏或恶意脚本。
 
 ## 显示 ValidatedProxy，但没有 TrafficObserved
 

@@ -6,31 +6,30 @@
 
 | 平台 | 架构 | Codex 对象 | 系统代理来源 | 当前用户自启 |
 |---|---|---|---|---|
-| Windows 11 | x64、ARM64 | Store / Store 签名 MSIX 桌面端 | Internet Settings `ProxyServer` | 计划任务，失败时 HKCU Run |
-| macOS | Intel、Apple Silicon | ChatGPT/Codex 桌面应用 | `scutil --proxy` | LaunchAgent |
-| Linux | x64、ARM64 | 官方 Codex CLI | GNOME `gsettings` | systemd user，失败时 XDG Autostart |
+| Windows 11 | x64、ARM64 | Store / Store 签名 MSIX 桌面端 | Internet Settings、WinHTTP PAC/WPAD 解析 | 计划任务，失败时 HKCU Run |
+| macOS | Intel、Apple Silicon | ChatGPT/Codex 桌面应用 | `scutil --proxy`，含 PAC/WPAD | LaunchAgent |
+| Linux | x64、ARM64 | 官方 Codex CLI | GNOME `gsettings`，含自动配置 URL | systemd user，失败时 XDG Autostart |
 
-所有平台都要求当前用户会话和带明确端口的 HTTP/HTTPS 代理；支持显式配置、继承的 `HTTPS_PROXY` / `HTTP_PROXY` / HTTP 兼容 `ALL_PROXY`，以及已识别代理进程拥有的回环监听器。候选端点必须通过 TCP 和经代理 HTTP(S) 请求成功数门槛。
+所有平台支持带明确端口的 HTTP、HTTPS、SOCKS5/SOCKS5H 代理，来源可以是显式配置、继承的 `HTTPS_PROXY` / `HTTP_PROXY` / `ALL_PROXY`、系统代理/PAC/WPAD，或已识别代理进程拥有的回环监听器。未知监听会分别按 HTTP 与 SOCKS5 做真实请求验证，不根据端口号直接认定协议。
 
-Windows 使用 PowerShell 核心和图形安装器；macOS/Linux 使用静态 Go 二进制与 POSIX 安装脚本。三者共享相同的安全原则，但不是同一套进程控制实现。
+PAC 会针对每个 `ProxyTestUrls` 目标执行 `FindProxyForURL`，支持 `PROXY`、`HTTP`、`HTTPS`、`SOCKS`、`SOCKS5` 和 `DIRECT` 回退项。Windows 使用当前用户 WinHTTP 自动代理解析器；macOS/Linux 使用受大小、下载、DNS、执行时间与缓存限制保护的 JavaScript 运行时。返回的端点仍要通过 TCP 与经代理请求成功数门槛。
 
-## 暂不自动支持
+如果 PAC 为不同验证目标返回互不通用的代理，且没有一个候选能达到配置的成功门槛，Guardian 会保持不接管。这是安全降级，不会为了“看起来支持”而把错误端点强制给 Codex。
 
-- PAC 文件、WPAD 或自动配置脚本。正确解析 PAC 需要针对每个目标执行受系统策略影响的 JavaScript。
-- 纯 SOCKS4/SOCKS5 端点。当前版本有意只接受 HTTP/HTTPS 代理语义。
-- 没有 HTTP 或混合入站端口的纯 TUN 模式。
-- 仅设置 WinHTTP 代理的环境。Codex 是桌面应用，读取 WinHTTP 会产生不明确的优先级。
+## 仍不支持或需要配置
+
+- SOCKS4。PAC 中的 `SOCKS4` 会被忽略；请让代理程序提供 SOCKS5、HTTP 或混合入站。
+- 只有 TUN、没有系统 PAC/代理端点，也没有 HTTP/SOCKS5/混合入站的配置。
+- URL 中嵌入认证信息的代理。为避免凭据进入命令行、进程列表或日志，此类地址会被拒绝。
+- 任意显式或环境变量中的远程代理，除非设置 `AllowNonLoopbackProxy: true`。操作系统已经配置的远程代理由独立的 `AllowSystemNonLoopbackProxy` 控制，默认开启，可关闭。
 - 位于其他用户或服务会话中，且无法安全归属于当前桌面配置的代理监听器。
-- URL 中嵌入认证信息的代理。为避免凭据出现在命令行、进程列表或日志中，此类地址会被拒绝。
-- 要求脚本签名或强制使用 Constrained Language Mode 的企业组策略环境。
-- 非 MSIX 或第三方改名的 Codex 包，除非配置了精确包名且清单提供可直接启动的可执行文件。
-- Linux Codex 桌面端。OpenAI 当前没有发布官方 Linux 桌面应用；Linux 版只为官方 Codex CLI 提供 `codex-guard`。
-- 对已经启动的 Linux 终端进程“补写”环境变量，或自动结束/重启交互式 Codex CLI。进程环境无法从外部安全改写。
-- macOS 上安装到自定义路径但未加入 `MacApplicationPaths` 的桌面应用。
+- 要求脚本签名或强制 Constrained Language Mode 的企业组策略环境。
+- 非 MSIX 或第三方改名的 Windows Codex 包，除非配置精确包名且清单提供可启动文件。
+- Linux Codex 桌面端。OpenAI 当前没有发布官方 Linux 桌面应用；Linux 版为官方 Codex CLI 提供 `codex-guard`。
+- 对已启动的 Linux 终端补写环境，或自动结束/重启交互式 Codex CLI。
+- macOS 自定义应用路径未加入 `MacApplicationPaths` 的桌面应用。
 
 ## 提交兼容性报告
-
-提交 Issue 前，请优先生成专门设计的脱敏诊断报告：
 
 macOS/Linux：
 
@@ -44,13 +43,6 @@ Windows：
 .\Doctor.ps1 -Online -Json -ExportPath .\codex-proxy-guardian-diagnostics.json
 ```
 
-同时说明代理软件名称与版本，以及它使用系统代理、HTTP/混合端口还是 TUN 模式。只有产品名称不足以判断实际路由行为。
+请同时说明代理软件版本和实际模式：HTTP、混合、纯 SOCKS5、PAC/WPAD 或 TUN。只有产品名称不足以判断路由行为。
 
-`Status.ps1 -Json`、`config.json` 和 JSONL 日志属于本机运行数据，**不能视为可直接公开分享的安全内容**。只有维护者明确请求特定字段或事件时才应提交，并提前删除代理端点、自定义验证域名、用户名、路径、IP 地址、令牌和凭据。
-
-Windows 的以下低风险版本信息可以单独提供：
-
-```powershell
-Get-AppxPackage -Name OpenAI.Codex | Select-Object Name, Version, Architecture
-Get-ExecutionPolicy -List
-```
+`Status.ps1 -Json`、`config.json` 和 JSONL 日志不是默认可公开内容；提交前应删除代理端点、自定义域名、用户名、路径、IP、令牌和凭据。

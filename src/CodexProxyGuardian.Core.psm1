@@ -209,7 +209,7 @@ function Test-CpgLoopbackHost {
     return $false
 }
 
-function ConvertTo-CpgHttpProxyUri {
+function ConvertTo-CpgProxyUri {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Address,
@@ -234,7 +234,9 @@ function ConvertTo-CpgHttpProxyUri {
     if (-not [Uri]::TryCreate($value, [UriKind]::Absolute, [ref]$uri)) {
         return $null
     }
-    if ($uri.Scheme -notin @('http', 'https')) {
+    $scheme = $uri.Scheme.ToLowerInvariant()
+    if ($scheme -in @('socks', 'socks5')) { $scheme = 'socks5h' }
+    if ($scheme -notin @('http', 'https', 'socks5h')) {
         return $null
     }
     if ([string]::IsNullOrWhiteSpace($uri.Host) -or $uri.Port -le 0 -or $uri.Port -gt 65535) {
@@ -260,7 +262,27 @@ function ConvertTo-CpgHttpProxyUri {
         }
         $normalizedHost = "[$normalizedHost]"
     }
-    return ("{0}://{1}:{2}" -f $uri.Scheme.ToLowerInvariant(), $normalizedHost.ToLowerInvariant(), $uri.Port)
+    return ("{0}://{1}:{2}" -f $scheme, $normalizedHost.ToLowerInvariant(), $uri.Port)
+}
+
+function ConvertTo-CpgHttpProxyUri {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Address,
+        [switch]$AllowNonLoopback
+    )
+
+    return ConvertTo-CpgProxyUri -Address $Address -AllowNonLoopback:$AllowNonLoopback
+}
+
+function ConvertTo-CpgChromiumProxyUri {
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)][string]$ProxyUri)
+
+    if ($ProxyUri.StartsWith('socks5h://', [System.StringComparison]::OrdinalIgnoreCase)) {
+        return 'socks5://' + $ProxyUri.Substring('socks5h://'.Length)
+    }
+    return $ProxyUri
 }
 
 function ConvertFrom-CpgProxyServer {
@@ -284,9 +306,13 @@ function ConvertFrom-CpgProxyServer {
                 $map[$pair[0].Trim().ToLowerInvariant()] = $pair[1].Trim()
             }
         }
-        foreach ($scheme in @('https', 'http')) {
+        foreach ($scheme in @('https', 'http', 'socks')) {
             if ($map.ContainsKey($scheme)) {
-                $items += [pscustomobject]@{ Address = $map[$scheme]; Label = $scheme }
+                $address = $map[$scheme]
+                if ($scheme -eq 'socks' -and $address -notmatch '^[a-zA-Z][a-zA-Z0-9+.-]*://') {
+                    $address = 'socks5h://' + $address
+                }
+                $items += [pscustomobject]@{ Address = $address; Label = $scheme }
             }
         }
     }
@@ -297,13 +323,52 @@ function ConvertFrom-CpgProxyServer {
     $result = @()
     $seen = @{}
     foreach ($item in $items) {
-        $uri = ConvertTo-CpgHttpProxyUri -Address ([string]$item.Address) -AllowNonLoopback:$AllowNonLoopback
+        $uri = ConvertTo-CpgProxyUri -Address ([string]$item.Address) -AllowNonLoopback:$AllowNonLoopback
         if ($null -ne $uri -and -not $seen.ContainsKey($uri)) {
             $seen[$uri] = $true
             $result += [pscustomobject]@{ Uri = $uri; Label = $item.Label }
         }
     }
     return $result
+}
+
+function ConvertFrom-CpgPacResult {
+    [CmdletBinding()]
+    param(
+        [AllowEmptyString()][string]$Result,
+        [switch]$AllowNonLoopback
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Result)) { return @() }
+    if ($Result.Contains('=')) {
+        return @(ConvertFrom-CpgProxyServer -ProxyServer $Result -AllowNonLoopback:$AllowNonLoopback)
+    }
+
+    $items = @()
+    $seen = @{}
+    foreach ($part in ($Result -split ';')) {
+        $token = $part.Trim()
+        if ([string]::IsNullOrWhiteSpace($token) -or $token -match '^(?i)DIRECT$') { continue }
+        $address = $token
+        $label = 'proxy'
+        if ($token -match '^(?i)(PROXY|HTTP|HTTPS|SOCKS|SOCKS5)\s+(.+)$') {
+            $kind = $matches[1].ToUpperInvariant()
+            $address = $matches[2].Trim()
+            $label = $kind.ToLowerInvariant()
+            $scheme = switch ($kind) {
+                'HTTPS' { 'https' }
+                { $_ -in @('SOCKS', 'SOCKS5') } { 'socks5h' }
+                default { 'http' }
+            }
+            $address = "$scheme`://$address"
+        }
+        $uri = ConvertTo-CpgProxyUri -Address $address -AllowNonLoopback:$AllowNonLoopback
+        if ($null -ne $uri -and -not $seen.ContainsKey($uri)) {
+            $seen[$uri] = $true
+            $items += [pscustomobject]@{ Uri = $uri; Label = $label }
+        }
+    }
+    return $items
 }
 
 function Protect-CpgProxyUri {
@@ -401,7 +466,7 @@ function Test-CpgRootUsesProxy {
         return $false
     }
 
-    $expected = '--proxy-server=' + $ProxyUri.TrimEnd('/')
+    $expected = '--proxy-server=' + (ConvertTo-CpgChromiumProxyUri -ProxyUri $ProxyUri).TrimEnd('/')
     $commandLine = [string]$RootProcess.CommandLine
     return ($commandLine -match ('(?i)(?:^|\s)' + [regex]::Escape($expected) + '(?:\s|$)'))
 }
@@ -549,8 +614,11 @@ Export-ModuleMember -Function @(
     'Get-CpgExternalLaunchDecision',
     'Test-CpgGuardianProcessIdentity',
     'Test-CpgLoopbackHost',
+    'ConvertTo-CpgProxyUri',
     'ConvertTo-CpgHttpProxyUri',
+    'ConvertTo-CpgChromiumProxyUri',
     'ConvertFrom-CpgProxyServer',
+    'ConvertFrom-CpgPacResult',
     'Protect-CpgProxyUri',
     'Select-CpgProxyCandidates',
     'Get-CpgRestartDecision',
