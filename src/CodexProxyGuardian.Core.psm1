@@ -116,8 +116,18 @@ function Select-CpgUpdateRelease {
         [ValidateSet('Stable', 'Prerelease')][string]$Channel = 'Stable'
     )
 
+    # Windows PowerShell 5.1 can emit a top-level JSON array from
+    # Invoke-RestMethod as one pipeline object. Flatten that shape here so the
+    # updater does not mistake the complete release array for one release.
+    $pending = New-Object System.Collections.Queue
+    $pending.Enqueue($Releases)
     $selected = $null
-    foreach ($release in @($Releases)) {
+    while ($pending.Count -gt 0) {
+        $release = $pending.Dequeue()
+        if ($release -is [System.Array]) {
+            foreach ($item in $release) { $pending.Enqueue($item) }
+            continue
+        }
         if ($null -eq $release -or [bool](Get-CpgConfigValue $release 'draft' $false)) { continue }
         if ($Channel -eq 'Stable' -and [bool](Get-CpgConfigValue $release 'prerelease' $false)) { continue }
         $tag = [string](Get-CpgConfigValue $release 'tag_name' '')

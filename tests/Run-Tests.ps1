@@ -171,6 +171,17 @@ Invoke-Test 'Semantic update selection respects version order and release channe
     Assert-Equal 'v0.4.0-alpha' ([string](Select-CpgUpdateRelease $releases '0.3.1-alpha' Prerelease).tag_name)
     Assert-Equal 'v0.3.2' ([string](Select-CpgUpdateRelease $releases '0.3.1-alpha' Stable).tag_name)
     Assert-Null (Select-CpgUpdateRelease $releases '0.4.0-alpha' Prerelease)
+
+    $wrappedReleases = New-Object 'object[]' 1
+    $wrappedReleases[0] = $releases
+    Assert-Equal 'v0.4.0-alpha' ([string](Select-CpgUpdateRelease $wrappedReleases '0.3.1-alpha' Prerelease).tag_name)
+}
+
+Invoke-Test 'Windows PowerShell updater expands REST release arrays' {
+    $updateSource = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'Update.ps1')
+    Assert-True ($updateSource.Contains('$releaseResponse = Invoke-RestMethod'))
+    Assert-True ($updateSource.Contains('$releases = @($releaseResponse)'))
+    Assert-False ($updateSource.Contains('$releases = @(Invoke-RestMethod'))
 }
 
 Invoke-Test 'Release checksum parser accepts only a leading SHA-256 digest' {
