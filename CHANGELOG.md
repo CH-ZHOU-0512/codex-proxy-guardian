@@ -4,6 +4,13 @@ All notable changes are documented here. This project follows semantic versionin
 
 ## [未发布 / Unreleased]
 
+## [1.4.4] - 2026-08-04
+
+- 修复 Settings 的“立即检查更新”把“另一个更新任务正在运行、本次并未检查”误报成“已经是最新版”的问题；结果现在明确显示本机版本、远端版本、通道、检查时间和 GitHub Release 来源，并按界面当前选中的通道实时检查。
+- `chatgpt.com` 现在是 Windows 代理验证的关键目标，不能再由 API 与登录页的两个成功掩盖流式入口失败；状态与 Doctor 同时公开关键目标结果。
+- 同一主机端口上的更高优先级协议可以在防抖后成为后续自然启动的首选，但协议变化仍不关闭当前 Codex；正在运行的 HTTP/SOCKS 进程按物理端点等价匹配，避免再次引入重启循环。
+- 更新请求增加禁用缓存头，并返回 `Busy`、`NoEligibleRelease`、`Current`、`Available` 等可验证状态，减少模糊或过度乐观的界面提示。
+
 ## [1.4.3] - 2026-08-04
 
 - 同一主机与端口上的 HTTP/SOCKS5 验证变化现在只视为传输协议替代，不再触发 Codex 生命周期操作；即使当前协议短暂验证失败、另一协议成功，也保持正在运行的 Codex 不动。

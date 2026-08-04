@@ -11,7 +11,8 @@ $resolvedRoot = [System.IO.Path]::GetFullPath($InstallRoot).TrimEnd('\')
 $markerPath = Join-Path $resolvedRoot '.cpg-install.json'
 $configPath = Join-Path $resolvedRoot 'config.json'
 $coreModule = Join-Path $resolvedRoot 'CodexProxyGuardian.Core.psm1'
-foreach ($requiredPath in @($markerPath, $configPath, $coreModule)) {
+$versionPath = Join-Path $resolvedRoot 'VERSION'
+foreach ($requiredPath in @($markerPath, $configPath, $coreModule, $versionPath)) {
     if (-not (Test-Path -LiteralPath $requiredPath)) { throw "Codex Proxy Guardian is not fully installed: $requiredPath" }
 }
 
@@ -27,7 +28,7 @@ $config = Get-Content -Raw -LiteralPath $configPath | ConvertFrom-Json
 $profile = Get-CpgModeProfile -Config $config
 $automaticUpdates = [bool](Get-CpgConfigValue $config 'AutomaticUpdates' $true)
 $updateChannel = [string](Get-CpgConfigValue $config 'UpdateChannel' 'Stable')
-$version = [string]$marker.version
+$version = (Get-Content -Raw -LiteralPath $versionPath).Trim()
 
 $form = New-Object System.Windows.Forms.Form
 $form.Text = 'Codex Proxy Guardian 设置'
@@ -140,18 +141,31 @@ $checkButton.Add_Click({
     try {
         $form.UseWaitCursor = $true
         $checkButton.Enabled = $false
+        $checkButton.Text = '正在检查...'
         [System.Windows.Forms.Application]::DoEvents()
-        $result = & $updatePath -InstallRoot $resolvedRoot -CheckOnly
+        $requestedChannel = if ($channelCombo.SelectedIndex -eq 1) { 'Prerelease' } else { 'Stable' }
+        $channelText = if ($requestedChannel -eq 'Prerelease') { '预发布' } else { '稳定版' }
+        $result = & $updatePath -InstallRoot $resolvedRoot -CheckOnly -ChannelOverride $requestedChannel
+        if ($null -eq $result -or -not [bool]$result.UpdateChecked) {
+            $busyMessage = "本次尚未完成更新检查。`r`n`r`n本机版本：$version`r`n检查通道：$channelText`r`n原因：另一个更新任务正在运行。`r`n`r`n这不代表当前已经是最新版，请稍后再试。"
+            [void][System.Windows.Forms.MessageBox]::Show($busyMessage, '检查尚未完成', 'OK', 'Warning')
+            return
+        }
+
+        $checkedAt = try { ([datetime]::Parse([string]$result.CheckedAtUtc)).ToLocalTime().ToString('yyyy-MM-dd HH:mm:ss') } catch { '刚刚' }
         if ([bool]$result.UpdateAvailable) {
-            $choice = [System.Windows.Forms.MessageBox]::Show("发现新版本 $($result.TargetVersion)。是否立即校验并安装？", '发现更新', 'YesNo', 'Question')
+            $choice = [System.Windows.Forms.MessageBox]::Show("发现新版本。`r`n`r`n本机版本：$($result.CurrentVersion)`r`n远端版本：$($result.TargetVersion)`r`n检查通道：$channelText`r`n检查时间：$checkedAt`r`n来源：GitHub Releases`r`n`r`n是否立即校验并安装？", '发现更新', 'YesNo', 'Question')
             if ($choice -eq [System.Windows.Forms.DialogResult]::Yes) {
-                $installed = & $updatePath -InstallRoot $resolvedRoot -Install
+                $installed = & $updatePath -InstallRoot $resolvedRoot -Install -ChannelOverride $requestedChannel
                 [void][System.Windows.Forms.MessageBox]::Show("已升级到 $($installed.InstalledVersion)。设置窗口将关闭。", '更新完成', 'OK', 'Information')
                 $form.Close()
             }
         }
+        elseif ([string]$result.CheckStatus -eq 'NoEligibleRelease') {
+            [void][System.Windows.Forms.MessageBox]::Show("检查已完成，但 GitHub 没有返回此通道可验证的 Release。`r`n`r`n本机版本：$($result.CurrentVersion)`r`n检查通道：$channelText`r`n检查时间：$checkedAt`r`n`r`n这不能证明当前已经是最新版，请检查网络或稍后重试。", '未找到可验证版本', 'OK', 'Warning')
+        }
         else {
-            [void][System.Windows.Forms.MessageBox]::Show('当前更新通道已经是最新版。', '检查完成', 'OK', 'Information')
+            [void][System.Windows.Forms.MessageBox]::Show("检查已完成。`r`n`r`n本机版本：$($result.CurrentVersion)`r`n远端版本：$($result.LatestVersion)`r`n检查通道：$channelText`r`n检查时间：$checkedAt`r`n来源：GitHub Releases`r`n`r`n没有发现更高版本。", '检查完成', 'OK', 'Information')
         }
     }
     catch {
@@ -159,6 +173,7 @@ $checkButton.Add_Click({
     }
     finally {
         $checkButton.Enabled = $true
+        $checkButton.Text = '立即检查更新'
         $form.UseWaitCursor = $false
     }
 })
@@ -190,6 +205,7 @@ $form.CancelButton = $closeButton
 if ($SelfTest) {
     [pscustomobject]@{
         Ready = $true
+        Version = $version
         ModeProfile = $profile
         AutomaticUpdates = $automaticUpdates
         UpdateChannel = $updateChannel

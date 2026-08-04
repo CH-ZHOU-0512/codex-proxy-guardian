@@ -158,7 +158,7 @@ codex-proxy-guardian mode auto
 codex-proxy-guardian mode strict
 ```
 
-The earlier restart-loop class is avoided by matching the root process's proxy argument, not a short-lived launcher PID. HTTP/SOCKS5 validation changes on one host and port are also treated as the same lifecycle endpoint. In short, Automatic means “prove a repair is needed first,” while Strict means “repair any argument mismatch.” The program does not silently change a user's long-term profile from Automatic to Strict; the automatic decision is made per Codex launch from traffic evidence. Mode changes are reloaded by the guardian in the background without restarting Guardian or the current Codex process. Explicitly opening **Codex (Managed Proxy)** remains the immediate deterministic path, and the same cooldown/circuit protection applies to every repair. On Windows, any repair that would close a running Codex prompts first and proceeds only after an explicit Yes; No, timeout, or prompt failure defers it. During a Store update, an existing Codex process is left running if the replacement MSIX executable cannot yet be resolved.
+The earlier restart-loop class is avoided by matching the root process's proxy endpoint, not a short-lived launcher PID. HTTP/SOCKS5 variants on one host and port are treated as the same lifecycle endpoint, so a protocol preference can be updated for the next natural launch without closing the current Codex session. In short, Automatic means “prove a repair is needed first,” while Strict means “repair any endpoint mismatch.” The program does not silently change a user's long-term profile from Automatic to Strict; the automatic decision is made per Codex launch from traffic evidence. Mode changes are reloaded by the guardian in the background without restarting Guardian or the current Codex process. Explicitly opening **Codex (Managed Proxy)** remains the immediate deterministic path, and the same cooldown/circuit protection applies to every repair. On Windows, any repair that would close a running Codex prompts first and proceeds only after an explicit Yes; No, timeout, or prompt failure defers it. During a Store update, an existing Codex process is left running if the replacement MSIX executable cannot yet be resolved.
 
 ## Configuration
 
@@ -190,6 +190,10 @@ Common options:
 ## Automatic updates
 
 The daily updater is bound to `CH-ZHOU-0512/codex-proxy-guardian`. It requires the Release tag, archive name, staged `VERSION`, attached `.sha256`, and the GitHub asset digest when available to agree before invoking the installer. It rejects unsafe archive paths and extraction limits, snapshots the current files, and attempts to restore the previous version and guardian after an interrupted install. Results are written to `logs\update-*.jsonl`.
+
+Starting with v1.4.4, **Check now** distinguishes a busy/skipped check from a completed current result and displays the installed version, remote version, selected channel, check time, and GitHub Releases source. It checks the channel currently selected in the UI even before the setting is applied.
+
+Windows validation also requires the critical `chatgpt.com` target to pass. Two unrelated successful probes can no longer hide a failed streaming entry point. Guardian can detect this condition and try another discovered candidate, but it cannot repair packet loss or WebSocket resets inside the user's selected proxy-provider node without changing network policy.
 
 On macOS/Linux the daemon selects only the `.tar.gz` for the current OS and architecture, checks the tag, semantic version, filename, staged `VERSION`, SHA-256, entry types, extraction size, and paths, then atomically replaces and executes the new binary. A failed update keeps the current binary or its `.previous` backup.
 

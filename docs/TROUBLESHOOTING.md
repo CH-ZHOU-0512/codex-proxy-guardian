@@ -66,6 +66,14 @@ v1.4.3 起，真正不同的代理地址或端口需要修复现有 Codex 时，
 
 运行 `Control.ps1 -Action CheckUpdate` 查看当前通道是否有新版本。更新日志位于安装目录的 `logs\update-*.jsonl`。常见原因包括 GitHub 暂时不可达、Release 资产不完整、SHA-256 不匹配或计划任务缺失；这些情况只会保留当前版本，不会部分覆盖安装。运行新版 `Install.ps1` 可以修复缺失的 `Codex Proxy Guardian Update` 任务。
 
+v1.4.4 起，Settings 会区分“更新器正忙，本次没有检查”和“检查完成，没有更高版本”，并显示本机/远端版本、通道与时间。如果界面显示“检查尚未完成”，稍后重试即可，不应把它解释为最新版。
+
+## Codex 没有被重启，但仍显示正在重新连接
+
+先查看 Guardian 日志是否在同一时间出现 `codex_restart` 或 `proxy_changed`。如果没有，而 Codex 日志出现 TLS EOF、WebSocket reset、`10054` 或请求超时，说明流式连接在代理上游被中断。
+
+v1.4.4 默认要求 `chatgpt.com` 关键目标通过；`Status.ps1` 和 `Doctor.ps1` 会显示 `ProxyCriticalTargetsPassed` 与 `ProxyCriticalFailures`。关键目标失败时，Guardian 会尝试其他已发现候选，但不会擅自切换代理软件的订阅节点。若代理软件日志同时出现上游 `i/o timeout`，请手动换一个稳定节点。
+
 检查最新日志中的 `codex_started`、`loop_error` 和 `restart_circuit_opened`。不要为了绕过限制直接删除 `state.json`，应先解决启动失败或 MSIX 包路径解析问题。
 
 ## 没有选中任何代理

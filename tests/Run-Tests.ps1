@@ -102,6 +102,7 @@ Invoke-Test 'Default configuration is conservative' {
     Assert-True ([int]$config.RecoveryLaunchRetrySeconds -ge 5)
     Assert-True ([int]$config.MinimumSuccessfulProxyTests -ge 2)
     Assert-True ([int]$config.MinimumSuccessfulProxyTests -le @($config.ProxyTestUrls).Count)
+    Assert-True ('chatgpt.com' -in @($config.RequiredProxyTestHosts))
     foreach ($url in @($config.ProxyTestUrls)) { Assert-True ([string]$url).StartsWith('https://', [System.StringComparison]::OrdinalIgnoreCase) }
 }
 
@@ -174,6 +175,8 @@ Invoke-Test 'Semantic update selection respects version order and release channe
     Assert-Equal 'v0.4.0-alpha' ([string](Select-CpgUpdateRelease $releases '0.3.1-alpha' Prerelease).tag_name)
     Assert-Equal 'v0.3.2' ([string](Select-CpgUpdateRelease $releases '0.3.1-alpha' Stable).tag_name)
     Assert-Null (Select-CpgUpdateRelease $releases '0.4.0-alpha' Prerelease)
+    Assert-Equal 'v0.4.0-alpha' ([string](Select-CpgLatestRelease $releases Prerelease).tag_name)
+    Assert-Equal 'v0.3.2' ([string](Select-CpgLatestRelease $releases Stable).tag_name)
 
     $wrappedReleases = New-Object 'object[]' 1
     $wrappedReleases[0] = $releases
@@ -185,6 +188,28 @@ Invoke-Test 'Windows PowerShell updater expands REST release arrays' {
     Assert-True ($updateSource.Contains('$releaseResponse = Invoke-RestMethod'))
     Assert-True ($updateSource.Contains('$releases = @($releaseResponse)'))
     Assert-False ($updateSource.Contains('$releases = @(Invoke-RestMethod'))
+    Assert-True ($updateSource.Contains("'Cache-Control' = 'no-cache'"))
+    Assert-True ($updateSource.Contains('LatestVersion = $latestVersion'))
+    Assert-True ($updateSource.Contains("CheckStatus = 'Busy'"))
+    Assert-True ($updateSource.Contains('ChannelOverride'))
+}
+
+Invoke-Test 'Settings never reports a skipped update check as current' {
+    $settingsSource = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'Settings.ps1')
+    Assert-True ($settingsSource.Contains('-ChannelOverride $requestedChannel'))
+    Assert-True ($settingsSource.Contains('-not [bool]$result.UpdateChecked'))
+    Assert-True ($settingsSource.Contains('$result.CurrentVersion'))
+    Assert-True ($settingsSource.Contains('$result.LatestVersion'))
+    Assert-True ($settingsSource.Contains('$result.CheckedAtUtc'))
+    Assert-True ($settingsSource.Contains('Version = $version'))
+}
+
+Invoke-Test 'Guardian serializes an empty critical failure list as a JSON array' {
+    $watcherSource = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'src\Watch-CodexProxy.ps1')
+    Assert-True ($watcherSource.Contains("proxyCriticalFailures = @(if (`$null -eq `$currentValidation)"))
+
+    $sample = [pscustomobject]@{ failures = @(if ($false) { @('chatgpt.com') } else { @() }) }
+    Assert-Equal '{"failures":[]}' ($sample | ConvertTo-Json -Compress)
 }
 
 Invoke-Test 'Release checksum parser accepts only a leading SHA-256 digest' {
@@ -268,6 +293,8 @@ Invoke-Test 'Chromium receives its supported SOCKS5 spelling' {
     Assert-Equal 'socks5://127.0.0.1:1080' (ConvertTo-CpgChromiumProxyUri -ProxyUri 'socks5h://127.0.0.1:1080')
     $root = [pscustomobject]@{ CommandLine = 'ChatGPT.exe --proxy-server=socks5://127.0.0.1:1080' }
     Assert-True (Test-CpgRootUsesProxy -RootProcess $root -ProxyUri 'socks5h://127.0.0.1:1080')
+    Assert-True (Test-CpgRootUsesProxy -RootProcess $root -ProxyUri 'http://127.0.0.1:1080')
+    Assert-False (Test-CpgRootUsesProxy -RootProcess $root -ProxyUri 'http://127.0.0.1:1081')
 }
 
 Invoke-Test 'Candidate ordering is deterministic and sticky only within a score tier' {
@@ -282,7 +309,7 @@ Invoke-Test 'Candidate ordering is deterministic and sticky only within a score 
     Assert-Equal 'http://127.0.0.1:8000' ([string]$ordered[2].Uri)
 }
 
-Invoke-Test 'Candidate ordering keeps the working scheme on the same physical endpoint' {
+Invoke-Test 'Candidate ordering prefers the higher-confidence protocol on the same endpoint' {
     $candidates = @(
         [pscustomobject]@{ Uri = 'http://127.0.0.1:7897'; Source = 'system:all'; Score = 210 },
         [pscustomobject]@{ Uri = 'http://127.0.0.1:7897'; Source = 'process:verge-mihomo'; Score = 120 },
@@ -290,8 +317,9 @@ Invoke-Test 'Candidate ordering keeps the working scheme on the same physical en
     )
 
     $ordered = @(Select-CpgProxyCandidates -Candidates $candidates -PreferredUri 'socks5h://127.0.0.1:7897')
-    Assert-Equal 'socks5h://127.0.0.1:7897' ([string]$ordered[0].Uri)
+    Assert-Equal 'http://127.0.0.1:7897' ([string]$ordered[0].Uri)
     Assert-Equal 'http://127.0.0.1:7897' ([string]$ordered[1].Uri)
+    Assert-Equal 'socks5h://127.0.0.1:7897' ([string]$ordered[2].Uri)
 }
 
 Invoke-Test 'Candidate ordering still changes to a higher-priority different endpoint' {
@@ -320,6 +348,31 @@ Invoke-Test 'Lifecycle identity ignores protocol changes on the same host and po
     Assert-Equal 'socks5h://127.0.0.1:7897' (Resolve-CpgProxyLifecycleUri -PreferredProxyUri 'socks5h://127.0.0.1:7897' -ValidatedProxyUri 'http://127.0.0.1:7897')
     Assert-Equal 'http://127.0.0.1:7898' (Resolve-CpgProxyLifecycleUri -PreferredProxyUri 'socks5h://127.0.0.1:7897' -ValidatedProxyUri 'http://127.0.0.1:7898')
     Assert-Equal 'http://127.0.0.1:7897' (Resolve-CpgProxyLifecycleUri -PreferredProxyUri 'socks5h://127.0.0.1:7897' -ValidatedProxyUri 'http://127.0.0.1:7897' -ExplicitSelection)
+
+    $protocolUpdate = Get-CpgProxyChangeDecision -CurrentProxyUri 'socks5h://127.0.0.1:7897' -ValidatedProxyUri 'http://127.0.0.1:7897'
+    Assert-Equal 'ProtocolUpdate' ([string]$protocolUpdate.Kind)
+    Assert-False $protocolUpdate.RestartRequired
+
+    $endpointChange = Get-CpgProxyChangeDecision -CurrentProxyUri 'http://127.0.0.1:7897' -ValidatedProxyUri 'http://127.0.0.1:7898'
+    Assert-Equal 'EndpointChange' ([string]$endpointChange.Kind)
+    Assert-True $endpointChange.RestartRequired
+}
+
+Invoke-Test 'Critical ChatGPT validation cannot be hidden by two unrelated successes' {
+    $results = @(
+        [pscustomobject]@{ Host = 'api.openai.com'; Passed = $true },
+        [pscustomobject]@{ Host = 'chatgpt.com'; Passed = $false },
+        [pscustomobject]@{ Host = 'auth.openai.com'; Passed = $true }
+    )
+    $decision = Get-CpgProxyValidationDecision -Results $results -MinimumSuccessCount 2 -RequiredHosts @('chatgpt.com')
+    Assert-False $decision.Passed
+    Assert-False $decision.CriticalTargetsPassed
+    Assert-Equal 'chatgpt.com' ([string]$decision.CriticalFailures[0])
+
+    $results[1].Passed = $true
+    $healthy = Get-CpgProxyValidationDecision -Results $results -MinimumSuccessCount 2 -RequiredHosts @('chatgpt.com')
+    Assert-True $healthy.Passed
+    Assert-True $healthy.CriticalTargetsPassed
 }
 
 Invoke-Test 'Restart prompt requires an explicit Yes response' {
