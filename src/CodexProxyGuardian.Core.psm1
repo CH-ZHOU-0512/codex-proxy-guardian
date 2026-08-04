@@ -403,6 +403,20 @@ function Protect-CpgProxyUri {
     return $uri.GetLeftPart([UriPartial]::Authority).Replace($uri.UserInfo + '@', '')
 }
 
+function Get-CpgProxyEndpointKey {
+    param([AllowNull()][AllowEmptyString()][string]$ProxyUri)
+
+    if ([string]::IsNullOrWhiteSpace($ProxyUri)) { return '' }
+    $uri = $null
+    if (-not [Uri]::TryCreate($ProxyUri, [UriKind]::Absolute, [ref]$uri) -or
+        [string]::IsNullOrWhiteSpace($uri.Host) -or $uri.Port -le 0) {
+        return ''
+    }
+
+    $hostName = $uri.Host.Trim('[', ']').ToLowerInvariant()
+    return "{0}|{1}" -f $hostName, $uri.Port
+}
+
 function Select-CpgProxyCandidates {
     [CmdletBinding()]
     param(
@@ -410,11 +424,34 @@ function Select-CpgProxyCandidates {
         [AllowEmptyString()][string]$PreferredUri = ''
     )
 
-    return @($Candidates | Sort-Object -Property `
+    $ordered = @($Candidates | Sort-Object -Property `
         @{ Expression = { [int]$_.Score }; Descending = $true }, `
         @{ Expression = { if ([string]$_.Uri -eq $PreferredUri) { 1 } else { 0 } }; Descending = $true }, `
         @{ Expression = { [string]$_.Source }; Ascending = $true }, `
         @{ Expression = { [string]$_.Uri }; Ascending = $true })
+
+    if ($ordered.Count -eq 0 -or [string]::IsNullOrWhiteSpace($PreferredUri)) { return $ordered }
+
+    $preferred = @($ordered | Where-Object { [string]$_.Uri -eq $PreferredUri } | Select-Object -First 1)
+    if ($preferred.Count -eq 0 -or [string]$ordered[0].Uri -eq $PreferredUri) { return $ordered }
+
+    $preferredEndpoint = Get-CpgProxyEndpointKey -ProxyUri $PreferredUri
+    $highestEndpoint = Get-CpgProxyEndpointKey -ProxyUri ([string]$ordered[0].Uri)
+    $highestSource = [string]$ordered[0].Source
+    $explicitSelection = $highestSource -in @('parameter:ProxyOverride', 'config:ExplicitProxy')
+
+    # A mixed HTTP/SOCKS listener can temporarily validate under only one scheme.
+    # Once Guardian has fallen back successfully, keep that working scheme while
+    # the physical host:port is unchanged. This prevents a later score-based
+    # scheme flip from restarting Codex a second time. Explicit user choices and
+    # genuinely different endpoints still retain their normal priority.
+    if (-not $explicitSelection -and
+        -not [string]::IsNullOrWhiteSpace($preferredEndpoint) -and
+        $preferredEndpoint -eq $highestEndpoint) {
+        return @($preferred[0]) + @($ordered | Where-Object { [string]$_.Uri -ne $PreferredUri })
+    }
+
+    return $ordered
 }
 
 function Get-CpgRestartDecision {
