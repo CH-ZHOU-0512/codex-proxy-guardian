@@ -94,6 +94,9 @@ Invoke-Test 'Default configuration is conservative' {
     Assert-True ([int]$config.PacExecutionTimeoutMilliseconds -le 1000)
     Assert-True ([int]$config.PacMaxBytes -le 1048576)
     Assert-True $config.UseChromiumProxyArgument
+    Assert-True $config.NotifyBeforeCodexRestart
+    Assert-True ([int]$config.RestartPromptTimeoutSeconds -ge 15)
+    Assert-True ([int]$config.RestartPromptSnoozeMinutes -ge 1)
     Assert-True ([int]$config.RestartCooldownSeconds -ge 10)
     Assert-True ([int]$config.RestartLimitCount -le 3)
     Assert-True ([int]$config.RecoveryLaunchRetrySeconds -ge 5)
@@ -311,6 +314,28 @@ Invoke-Test 'Explicit proxy selection overrides same-endpoint scheme stickiness'
     Assert-Equal 'http://127.0.0.1:7897' ([string]$ordered[0].Uri)
 }
 
+Invoke-Test 'Lifecycle identity ignores protocol changes on the same host and port' {
+    Assert-True (Test-CpgSameProxyEndpoint -FirstProxyUri 'http://127.0.0.1:7897' -SecondProxyUri 'socks5h://127.0.0.1:7897')
+    Assert-False (Test-CpgSameProxyEndpoint -FirstProxyUri 'http://127.0.0.1:7897' -SecondProxyUri 'http://127.0.0.1:7898')
+    Assert-Equal 'socks5h://127.0.0.1:7897' (Resolve-CpgProxyLifecycleUri -PreferredProxyUri 'socks5h://127.0.0.1:7897' -ValidatedProxyUri 'http://127.0.0.1:7897')
+    Assert-Equal 'http://127.0.0.1:7898' (Resolve-CpgProxyLifecycleUri -PreferredProxyUri 'socks5h://127.0.0.1:7897' -ValidatedProxyUri 'http://127.0.0.1:7898')
+    Assert-Equal 'http://127.0.0.1:7897' (Resolve-CpgProxyLifecycleUri -PreferredProxyUri 'socks5h://127.0.0.1:7897' -ValidatedProxyUri 'http://127.0.0.1:7897' -ExplicitSelection)
+}
+
+Invoke-Test 'Restart prompt requires an explicit Yes response' {
+    $approved = Get-CpgRestartPromptDecision -PopupResult 6
+    Assert-True $approved.Approved
+    Assert-Equal 'approved' ([string]$approved.Reason)
+
+    foreach ($result in @(7, -1, 0, 2)) {
+        $decision = Get-CpgRestartPromptDecision -PopupResult $result
+        Assert-False $decision.Approved
+    }
+    Assert-Equal 'declined' ([string](Get-CpgRestartPromptDecision -PopupResult 7).Reason)
+    Assert-Equal 'timeout' ([string](Get-CpgRestartPromptDecision -PopupResult -1).Reason)
+    Assert-Equal 'prompt_unavailable' ([string](Get-CpgRestartPromptDecision -PopupResult 0).Reason)
+}
+
 Invoke-Test 'Restart circuit breaker opens, remains open, and later recovers' {
     $now = [datetime]'2026-08-02T10:00:00Z'
     $history = @($now.AddMinutes(-8), $now.AddMinutes(-4), $now.AddMinutes(-1))
@@ -478,9 +503,18 @@ Invoke-Test 'Installer verifies the started guardian and retries one unexpected 
 
 Invoke-Test 'Watcher publishes explicit lifecycle states' {
     $watcher = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'src\Watch-CodexProxy.ps1')
-    foreach ($state in @('WaitingForProxy', 'Stabilizing', 'Ready', 'EvaluatingCodexLaunch', 'CodexNeedsManagedLaunch', 'CodexResolutionUnavailable', 'RecoveringCodex', 'RecoveryBlockedByCodex', 'RestartCircuitOpen')) {
+    foreach ($state in @('WaitingForProxy', 'Stabilizing', 'Ready', 'EvaluatingCodexLaunch', 'CodexNeedsManagedLaunch', 'CodexResolutionUnavailable', 'RecoveringCodex', 'RecoveryBlockedByCodex', 'RestartApprovalRequired', 'RestartDeferred', 'RestartCircuitOpen')) {
         Assert-True ($watcher.Contains("'$state'")) "Missing guardian lifecycle state: $state"
     }
+    Assert-True $watcher.Contains('WScript.Shell') 'Watcher does not contain a foreground restart prompt.'
+    Assert-True $watcher.Contains('Get-CpgRestartPromptDecision') 'Watcher does not require an explicit prompt decision.'
+    $restartCalls = @([regex]::Matches($watcher, '(?m)^\s*\$managedRootPid\s*=\s*Restart-CodexManaged\b[^\r\n]*'))
+    Assert-True ($restartCalls.Count -ge 3) 'Expected all managed restart call paths to be present.'
+    foreach ($restartCall in $restartCalls) {
+        Assert-True $restartCall.Value.Contains('-ApprovalGranted') "A managed restart call bypasses approval: $($restartCall.Value.Trim())"
+    }
+    $stopCalls = @([regex]::Matches($watcher, '(?m)^\s*Stop-CodexDesktop\b[^\r\n]*'))
+    Assert-Equal 1 $stopCalls.Count 'Codex shutdown must remain centralized behind the approval-guarded restart function.'
 }
 
 Invoke-Test 'Injected Codex proxy variables cannot feed back into discovery' {

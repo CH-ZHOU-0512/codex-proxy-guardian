@@ -132,7 +132,7 @@ PAC 可能为不同目标返回不同路线。只有同一候选达到多目标�
 | 模式 | 行为 | 适合谁 |
 |---|---|---|
 | **自动（Safe）** | 先等待并观察真实代理流量；已经能通信就不动 | 绝大多数用户，默认推荐 |
-| **严格（Enforce）** | 发现 Codex 缺少当前代理参数时，经防抖后直接受控修复 | 要求启动参数始终严格一致的机器 |
+| **严格（Enforce）** | 发现 Codex 缺少当前代理参数时，经防抖并由用户确认后受控修复 | 要求启动参数始终严格一致的机器 |
 
 **不确定就保持默认“自动”。** 模式可在 Windows 开始菜单的 **Codex Proxy Guardian Settings** 中切换，不需要手改 JSON，也不会因切换模式而重启 Codex。
 
@@ -140,6 +140,7 @@ PAC 可能为不同目标返回不同路线。只有同一候选达到多目标�
 
 - **不修改**系统代理、WinHTTP、DNS、路由、防火墙或永久环境变量。
 - 代理候选必须通过真实网络验证；不按常见端口盲猜协议。
+- 同一主机与端口的 HTTP/SOCKS5 波动不会关闭 Codex；真正需要关闭现有 Codex 时，Windows 默认先询问，只有明确同意才执行。
 - 默认只信任回环地址和操作系统已配置的远程代理；任意显式远程代理需主动授权。
 - PAC 下载、DNS、执行时间、大小和缓存均有上限；WPAD 只在系统已启用时使用。
 - 诊断报告默认脱敏，卸载时只删除已核对为本项目所有的资源。
@@ -175,7 +176,7 @@ codex-proxy-guardian doctor
 
 ### Codex 还在反复重启
 
-1. 先升级到 v1.4.2 或更高版本；旧版可能把同一混合端口的 HTTP/SOCKS5 波动误判为代理变化。
+1. 先升级到 v1.4.3 或更高版本；旧版可能把同一混合端口的 HTTP/SOCKS5 波动误判为代理变化，v1.4.2 仍可能在当前协议短暂失败时切换。
 2. 保持或切回“自动（Safe）”。
 3. 运行 `Status.ps1` 查看 `GuardianState` 和最近重启原因。
 4. 运行 `Doctor.ps1 -Online` 生成脱敏诊断。
@@ -206,6 +207,9 @@ v1.0.0–v1.3.0 在 Windows PowerShell 5.1 下可能误报 `update_not_available
   "ExplicitPAC": "",
   "AutomaticUpdates": true,
   "UpdateChannel": "Stable",
+  "NotifyBeforeCodexRestart": true,
+  "RestartPromptTimeoutSeconds": 45,
+  "RestartPromptSnoozeMinutes": 10,
   "AllowNonLoopbackProxy": false,
   "AllowSystemNonLoopbackProxy": true
 }

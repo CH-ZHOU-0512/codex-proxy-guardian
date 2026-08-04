@@ -31,7 +31,9 @@ Do not use `sudo` for install, repair, or uninstall.
 
 ## Codex repeatedly restarts
 
-First confirm that Guardian is v1.4.2 or newer. v1.4.1 and earlier can mistake HTTP/SOCKS5 validation fluctuations on one mixed proxy port for endpoint changes; v1.4.2 keeps the already validated scheme while the host and port stay the same.
+First confirm that Guardian is v1.4.3 or newer. v1.4.1 and earlier can mistake HTTP/SOCKS5 validation fluctuations on one mixed proxy port for endpoint changes. v1.4.2 prevents the immediate switch-back, but can still switch after the current scheme briefly fails validation. v1.4.3 treats one host and port as one lifecycle endpoint and never closes Codex for a protocol-only change.
+
+Starting with v1.4.3, Windows shows a foreground confirmation before a genuinely different proxy host or port can replace the running Codex process. Only an explicit Yes proceeds. No, timeout, or a prompt failure defers the restart and publishes `RestartDeferred`. Do not disable `NotifyBeforeCodexRestart` unless unattended restarts are explicitly acceptable.
 
 1. Stop the task immediately without changing network settings:
 

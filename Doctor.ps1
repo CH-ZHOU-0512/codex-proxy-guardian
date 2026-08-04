@@ -240,6 +240,9 @@ $report = [ordered]@{
         proxyTestRequiredCount = [int](Get-SafeProperty $status 'proxyTestRequiredCount' 0)
         restartCircuitOpen = [bool](Get-SafeProperty $status 'restartCircuitOpen' $false)
         recentRestartCount = [int](Get-SafeProperty $status 'recentRestartCount' 0)
+        restartApprovalRequired = [bool](Get-SafeProperty $status 'restartApprovalRequired' $false)
+        restartNotificationEnabled = [bool](Get-SafeProperty $status 'restartNotificationEnabled' $true)
+        restartDeferredUntilUtc = Get-SafeProperty $status 'restartDeferredUntilUtc' $null
         recoveryLaunchRequired = [bool](Get-SafeProperty $status 'recoveryLaunchRequired' $false)
     }
     updates = [ordered]@{
@@ -272,6 +275,8 @@ if ($Json) { $reportJson; return }
     ProxyTests = ('{0}/{1}' -f [int](Get-SafeProperty $status 'proxyTestSuccessCount' 0), [int](Get-SafeProperty $status 'proxyTestRequiredCount' 0))
     LaunchProxyMatch = Get-SafeProperty $status 'codexProxyArgumentMatch' $null
     ProxyTrafficObservedRecently = Get-SafeProperty $status 'codexProxyConnectionObservedRecently' $null
+    RestartApprovalRequired = [bool](Get-SafeProperty $status 'restartApprovalRequired' $false)
+    RestartDeferredUntilUtc = Get-SafeProperty $status 'restartDeferredUntilUtc' $null
     RestartCircuitOpen = [bool](Get-SafeProperty $status 'restartCircuitOpen' $false)
     SafeToShareJson = (-not [string]::IsNullOrWhiteSpace($ExportPath))
 } | Format-List

@@ -417,6 +417,45 @@ function Get-CpgProxyEndpointKey {
     return "{0}|{1}" -f $hostName, $uri.Port
 }
 
+function Test-CpgSameProxyEndpoint {
+    [CmdletBinding()]
+    param(
+        [AllowNull()][AllowEmptyString()][string]$FirstProxyUri,
+        [AllowNull()][AllowEmptyString()][string]$SecondProxyUri
+    )
+
+    $firstKey = Get-CpgProxyEndpointKey -ProxyUri $FirstProxyUri
+    $secondKey = Get-CpgProxyEndpointKey -ProxyUri $SecondProxyUri
+    return -not [string]::IsNullOrWhiteSpace($firstKey) -and $firstKey -eq $secondKey
+}
+
+function Resolve-CpgProxyLifecycleUri {
+    [CmdletBinding()]
+    param(
+        [AllowNull()][AllowEmptyString()][string]$PreferredProxyUri,
+        [Parameter(Mandatory = $true)][ValidateNotNullOrEmpty()][string]$ValidatedProxyUri,
+        [switch]$ExplicitSelection
+    )
+
+    if ($ExplicitSelection) { return $ValidatedProxyUri }
+    if (Test-CpgSameProxyEndpoint -FirstProxyUri $PreferredProxyUri -SecondProxyUri $ValidatedProxyUri) {
+        return $PreferredProxyUri
+    }
+    return $ValidatedProxyUri
+}
+
+function Get-CpgRestartPromptDecision {
+    [CmdletBinding()]
+    param([int]$PopupResult)
+
+    switch ($PopupResult) {
+        6 { return [pscustomobject]@{ Approved = $true; Reason = 'approved' } }
+        7 { return [pscustomobject]@{ Approved = $false; Reason = 'declined' } }
+        -1 { return [pscustomobject]@{ Approved = $false; Reason = 'timeout' } }
+        default { return [pscustomobject]@{ Approved = $false; Reason = 'prompt_unavailable' } }
+    }
+}
+
 function Select-CpgProxyCandidates {
     [CmdletBinding()]
     param(
@@ -667,6 +706,9 @@ Export-ModuleMember -Function @(
     'ConvertFrom-CpgProxyServer',
     'ConvertFrom-CpgPacResult',
     'Protect-CpgProxyUri',
+    'Test-CpgSameProxyEndpoint',
+    'Resolve-CpgProxyLifecycleUri',
+    'Get-CpgRestartPromptDecision',
     'Select-CpgProxyCandidates',
     'Get-CpgRestartDecision',
     'Test-CpgProxyResponseStatus',
