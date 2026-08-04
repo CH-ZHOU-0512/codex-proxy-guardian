@@ -4,6 +4,12 @@ All notable changes are documented here. This project follows semantic versionin
 
 ## [未发布 / Unreleased]
 
+## [1.4.5] - 2026-08-04
+
+- 在 README 首页、Windows 设置界面、Status、Doctor、Issue 模板与 Wiki 中统一说明：Codex 的“正在重新连接”是流式连接重试，不等于 Guardian 重启了应用；应按同一时间是否存在 `codex_restart` / `proxy_changed` 事件进行归因。
+- Status 与 Doctor 新增可分享的重连归因字段，列出 TLS EOF、WebSocket reset、Windows `10054` 与请求超时等常见上游信号，并明确代理服务商节点仍由用户的代理软件管理。
+- 收紧首页与宣传图中的表达，只承诺减少“代理未继承或端点变化”造成的重连，避免把代理服务商节点自身的丢包或超时错误归因给 Guardian。
+
 ## [1.4.4] - 2026-08-04
 
 - 修复 Settings 的“立即检查更新”把“另一个更新任务正在运行、本次并未检查”误报成“已经是最新版”的问题；结果现在明确显示本机版本、远端版本、通道、检查时间和 GitHub Release 来源，并按界面当前选中的通道实时检查。

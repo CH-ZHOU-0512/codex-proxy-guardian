@@ -1,6 +1,6 @@
 # Codex Proxy Guardian
 
-> 让 Codex 始终使用当前有效代理，减少 `Reconnecting 1/5 → 5/5` 后才开始思考的情况。
+> 让 Codex 始终使用当前有效代理，减少因代理未继承或端点变化造成的 `Reconnecting 1/5 → 5/5`。
 
 [简体中文](README.md) · [English](docs/README.en.md)
 
@@ -13,16 +13,29 @@ Codex Proxy Guardian 是一个非官方、跨平台的 **Codex 代理守护工�
 > [!NOTE]
 > 它不是代理软件，不提供订阅或节点。你的电脑上需要已有 Clash、Mihomo、v2rayN、sing-box 等可用代理。
 
+> [!IMPORTANT]
+> **Codex 显示“正在重新连接”，不等于 Guardian 重启了 Codex。** Guardian 负责代理发现、验证和 Codex 启动参数；它不能修复代理服务商节点自身的丢包、TLS EOF、WebSocket reset、Windows `10054` 或请求超时。请对照同一时间的 Guardian 日志：存在 `codex_restart` / `proxy_changed` 才说明 Guardian 生命周期操作可能相关；两者都没有时，通常是上游流式连接断开。详见[重连归因](#如何判断是谁造成的重连)。
+
 ## 30 秒看懂
 
 | 你遇到的问题 | Guardian 会做什么 | 你需要做什么 |
 |---|---|---|
-| 浏览器能上网，Codex 却一直重连 | 验证 Codex 实际需要的代理端点 | 安装一次 |
+| Codex 没有继承当前代理，或仍使用旧端口 | 验证并跟随 Codex 实际需要的代理端点 | 安装一次 |
 | 切换节点后端口变了 | 重新发现、防抖、验证，再更新 Codex | Windows/macOS 继续点原图标 |
 | 守护脚本让 Codex 反复重启 | 使用冷却、频率限制和熔断 | 保持默认“自动”模式 |
 | Linux CLI 没有继承新代理 | 将已验证代理注入新进程 | 用 `codex-guard` 启动 Codex |
 
 [![Codex Proxy Guardian 项目页预览](assets/website-preview.png)](https://ch-zhou-0512.github.io/codex-proxy-guardian/)
+
+## 如何判断是谁造成的重连
+
+| 同一时间的证据 | 更可能的原因 | 怎么处理 |
+|---|---|---|
+| Guardian 日志出现 `codex_restart` 或 `proxy_changed` | Guardian 执行了生命周期操作 | 附上脱敏 Doctor 与时间提交 Issue |
+| 没有上述事件，Codex 出现 TLS EOF、WebSocket reset、`10054` 或超时 | 当前代理服务商节点或其上游链路断流 | 在代理软件中换稳定节点 |
+| `ProxyCriticalTargetsPassed=false` | `chatgpt.com` 关键入口没有通过验证 | 查看 `ProxyCriticalFailures`，再检查节点 |
+
+Guardian 会尝试其他已经发现且通过验证的地址或协议，但不会擅自切换 Clash/Mihomo/v2rayN 等软件里的订阅节点，也不会修改系统网络配置。这个边界既避免误操作，也意味着服务商节点不稳定时仍需要用户在代理软件中换节点。
 
 ## 快速开始
 

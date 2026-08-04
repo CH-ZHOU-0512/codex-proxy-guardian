@@ -207,7 +207,7 @@ function New-SocialPreview {
 
         Draw-Text -Graphics $graphics -Text 'Codex Proxy' -Font $fontBrand -Brush $white -X 58 -Y 117 -Width 570 -Height 70
         Draw-Text -Graphics $graphics -Text 'Guardian' -Font $fontBrand -Brush $green -X 58 -Y 177 -Width 540 -Height 75
-        Draw-Text -Graphics $graphics -Text '不再重连四五次，才开始思考' -Font $fontTagline -Brush $white -X 60 -Y 282 -Width 610 -Height 55
+        Draw-Text -Graphics $graphics -Text '减少代理未继承导致的反复重连' -Font $fontTagline -Brush $white -X 60 -Y 282 -Width 610 -Height 55
         Draw-Text -Graphics $graphics -Text '自动发现  ·  实际验证  ·  安全切换代理' -Font $fontSub -Brush $muted -X 61 -Y 348 -Width 590 -Height 40
 
         Fill-RoundedRectangle -Graphics $graphics -Brush $panelSoft -X 58 -Y 430 -Width 162 -Height 46 -Radius 15
@@ -303,7 +303,7 @@ function New-WorkflowGraphic {
         Draw-Arrow -Graphics $graphics -Color (New-Color 255 124 124) -X1 510 -Y1 275 -X2 620 -Y2 275 -Width 4
         Draw-Text -Graphics $graphics -Text 'Codex 仍用旧端口' -Font $fontStage -Brush $white -X 630 -Y 250 -Width 280 -Height 45 -Alignment Center
         Draw-Arrow -Graphics $graphics -Color (New-Color 255 124 124) -X1 920 -Y1 275 -X2 1030 -Y2 275 -Width 4
-        Draw-Text -Graphics $graphics -Text '反复重连 / 卡住' -Font $fontStage -Brush $red -X 1045 -Y 250 -Width 290 -Height 45 -Alignment Center
+        Draw-Text -Graphics $graphics -Text '代理未继承 / 旧端口' -Font $fontStage -Brush $red -X 1045 -Y 250 -Width 290 -Height 45 -Alignment Center
         Draw-Text -Graphics $graphics -Text '浏览器能联网，不等于已经运行的 Codex 自动拿到了同一个代理。' -Font $fontBody -Brush $muted -X 280 -Y 316 -Width 1055 -Height 34 -Alignment Center
 
         $cards = @(
