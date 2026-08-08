@@ -56,6 +56,14 @@ stateDiagram-v2
 
 In Safe mode, an ordinary Codex root missing the launch argument enters an evidence grace period. If that exact process tree is observed using the validated proxy, it is left untouched; otherwise one managed repair is attempted after the grace period. In Enforce mode the missing argument is sufficient to trigger a debounced repair. Either mode can restart a running Codex instance after a validated endpoint change, and every repair uses the same cooldown, restart budget, and circuit breaker.
 
+On Windows, the resolved Store/MSIX package version is persisted separately from the active proxy. When that version changes, Guardian does not disturb an old process that is still running. Once a root from the new executable path appears, it starts a post-update observation that requires three fresh critical-target validations over at least 60 seconds by default. Cached validations do not increment the sample count. Until the observation completes, Safe-mode local traffic evidence cannot exempt a missing launch argument.
+
+The same version transition immediately starts the installation-owned update scheduled task when automatic updates are enabled. Before starting it, Guardian verifies the install marker, canonical install root, task name, PowerShell action, and exact `Update.ps1` path. This reuses the existing fixed-repository, semantic-version, SHA-256, staged-version, and rollback trust chain instead of introducing remote executable configuration. The daily task remains the fallback when an adapter release is not yet available.
+
+A capability fingerprint covers package identity, version, application ID, root executable name, manifest resolution method, and launch-strategy selection. If a user-approved managed launch returns a Codex root but neither the expected proxy argument nor current-root proxy traffic can be confirmed within the configured timeout, `CodexCompatibilityReviewRequired` is persisted for that Codex/Guardian pair. Recovery intent is cleared and all automatic lifecycle paths are held. A Codex version change or verified Guardian upgrade clears the old pair-specific hold and starts a new audit.
+
+Listener reachability and upstream validation are separate states. A reachable listener with a failed critical external validation becomes `UpstreamSuspected`; the current Codex process is preserved, candidate failover is held for that active physical endpoint, and no lifecycle action is requested for the degradation. A later fresh critical-target success clears the condition. Guardian does not select subscription nodes inside a proxy provider application.
+
 A recovery flag is written before the old Codex process is stopped and cleared only after a matching new root is observed. A failed launch is retried only while the proxy is still valid. A sliding restart window opens a persistent circuit breaker after the configured limit; while open, the guardian performs no further lifecycle action. This converts a bad detection or launch environment into a diagnosable degraded state instead of an endless restart loop or an unreported closed application.
 
 ## Mode and update control plane
@@ -71,8 +79,10 @@ The macOS/Linux daemon performs the same fixed-repository and channel selection 
 1. **ValidatedProxy**: the chosen endpoint has a listener and reaches the configured HTTPS quorum through an explicit HTTP/HTTPS/SOCKS5 transport. Windows uses .NET for HTTP(S) and inbox `curl.exe` for SOCKS5; the Go core uses an explicit standard-library transport.
 2. **LaunchConfigured**: a current Codex root command line contains the exact normalized `--proxy-server` token.
 3. **TrafficObserved**: an established TCP connection from the Codex process tree to the chosen endpoint was observed within the configured evidence window.
+4. **PostUpdateObservation**: a new Codex package root is running, but the required sequence of fresh critical-target validations has not completed.
+5. **EndpointReachableOnly**: the local listener is reachable while a critical external validation is failing; this is a diagnostic degradation, never a reason to restart Codex.
 
-Connection evidence reads only Windows TCP metadata: process ID, remote address, and remote port. It does not inspect packets, URLs, request bodies, authentication, or response content. The evidence proves local use of the endpoint, not its exit geography or policy.
+Connection evidence reads only Windows TCP metadata: process ID, remote address, and remote port. It does not inspect packets, URLs, request bodies, authentication, or response content. The evidence proves local use of the endpoint, not its exit geography or policy. Likewise, short unauthenticated HTTPS probes cannot prove the stability of an authenticated long-lived SSE/HTTP stream, so the public status reports this limitation as `StreamStability=IndirectEvidenceOnly`.
 
 The [official Codex network-isolation documentation](https://learn.chatgpt.com/docs/agent-approvals-security#network-isolation) describes upstream proxy handling for sandboxed command networking when that networking feature is enabled. Desktop control-plane connectivity and the Chromium launch flag used here remain best-effort observed compatibility behavior, so the project reports evidence rather than presenting the flag as a guaranteed Codex API.
 

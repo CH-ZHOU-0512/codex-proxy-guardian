@@ -180,17 +180,26 @@ if ($Online -and $null -ne $onlineResult -and -not [bool](Get-SafeProperty ([psc
     $issues += 'online_proxy_validation_failed'
     $recommendations += 'Set ExplicitProxy to a working HTTP/mixed endpoint, then run Doctor.ps1 -Online again.'
 }
-if ($guardianAlive -and $null -ne $status -and -not [bool](Get-SafeProperty $status 'proxyCriticalTargetsPassed' $false)) {
+if ($guardianAlive -and [bool](Get-SafeProperty $status 'upstreamSuspected' $false)) {
+    $issues += 'proxy_upstream_suspected'
+    $recommendations += 'Keep Codex open. If reconnects continue, change the provider node in the proxy application; Guardian will not restart Codex or switch the provider node for this condition.'
+}
+if ($guardianLifecycle -eq 'CodexCompatibilityReviewRequired' -or [bool](Get-SafeProperty $status 'codexCompatibilitySafeHold' $false)) {
+    $issues += 'codex_compatibility_review_required'
+    $recommendations += 'Keep Codex open. Automatic lifecycle repair is paused for this Codex/Guardian combination; the verified update task was requested immediately and continues checking daily for an adapter update.'
+}
+elseif ($guardianAlive -and $null -ne $status -and -not [bool](Get-SafeProperty $status 'proxyCriticalTargetsPassed' $false)) {
     $issues += 'critical_stream_target_failed'
     $recommendations += 'If Codex shows Reconnecting without a matching codex_restart/proxy_changed event, inspect the proxy-provider node for TLS EOF, WebSocket reset, Windows 10054, or timeout errors.'
 }
 
 $health = 'Ready'
 if (@($issues).Count -gt 0) { $health = 'NeedsAttention' }
+if (@($issues).Count -eq 0 -and $guardianLifecycle -eq 'ObservingAfterCodexUpdate') { $health = 'Observing' }
 if ($issues -contains 'unsupported_os' -or $issues -contains 'powershell_too_old' -or $issues -contains 'constrained_language_mode' -or $issues -contains 'codex_msix_not_found') { $health = 'Blocked' }
 
 $report = [ordered]@{
-    reportSchema = 4
+    reportSchema = 6
     generatedUtc = (Get-Date).ToUniversalTime().ToString('o')
     safeForSharing = $true
     health = $health
@@ -240,6 +249,25 @@ $report = [ordered]@{
         externalLaunchState = Get-SafeProperty $status 'externalLaunchState' $null
         activeProxyValid = [bool](Get-SafeProperty $status 'activeProxyValid' $false)
         effectivenessEvidence = Get-SafeProperty $status 'effectivenessEvidence' $null
+        proxyReachability = Get-SafeProperty $status 'proxyReachability' $null
+        proxyEndpointReachable = Get-SafeProperty $status 'proxyEndpointReachable' $null
+        streamStability = Get-SafeProperty $status 'streamStability' $null
+        streamStabilityLimitation = Get-SafeProperty $status 'streamStabilityLimitation' $null
+        upstreamSuspected = [bool](Get-SafeProperty $status 'upstreamSuspected' $false)
+        upstreamSuspectedSinceUtc = Get-SafeProperty $status 'upstreamSuspectedSinceUtc' $null
+        safeTrafficEvidenceAccepted = [bool](Get-SafeProperty $status 'safeTrafficEvidenceAccepted' $false)
+        postUpdateObservationState = Get-SafeProperty $status 'postUpdateObservationState' $null
+        postUpdateObservationActive = [bool](Get-SafeProperty $status 'postUpdateObservationActive' $false)
+        postUpdateVersion = Get-SafeProperty $status 'postUpdateVersion' $null
+        postUpdateSuccessfulSamples = [int](Get-SafeProperty $status 'postUpdateSuccessfulSamples' 0)
+        postUpdateRequiredSamples = [int](Get-SafeProperty $status 'postUpdateRequiredSamples' 0)
+        codexCompatibilityState = Get-SafeProperty $status 'codexCompatibilityState' $null
+        codexCompatibilityEvidence = Get-SafeProperty $status 'codexCompatibilityEvidence' $null
+        codexCompatibilityFingerprint = Get-SafeProperty $status 'codexCompatibilityFingerprint' $null
+        codexCompatibilitySafeHold = [bool](Get-SafeProperty $status 'codexCompatibilitySafeHold' $false)
+        compatibilityUpdateCheckState = Get-SafeProperty $status 'compatibilityUpdateCheckState' $null
+        compatibilityUpdateRequestedVersion = Get-SafeProperty $status 'compatibilityUpdateRequestedVersion' $null
+        compatibilityAutomation = Get-SafeProperty $status 'compatibilityAutomation' $null
         proxyTestSuccessCount = [int](Get-SafeProperty $status 'proxyTestSuccessCount' 0)
         proxyTestRequiredCount = [int](Get-SafeProperty $status 'proxyTestRequiredCount' 0)
         restartCircuitOpen = [bool](Get-SafeProperty $status 'restartCircuitOpen' $false)
@@ -250,7 +278,7 @@ $report = [ordered]@{
         recoveryLaunchRequired = [bool](Get-SafeProperty $status 'recoveryLaunchRequired' $false)
     }
     reconnectAttribution = [ordered]@{
-        meaning = 'CodexStreamRetryNotProofOfGuardianRestart'
+        meaning = 'CodexStreamRetryNotProofOfGuardianRestartOrEndpointFailure'
         guardianEvidenceEvents = @('codex_restart', 'proxy_changed')
         commonUpstreamSignals = @('TLS EOF', 'WebSocket reset', 'Windows 10054', 'request timeout')
         providerNodeManagedByGuardian = $false
@@ -283,6 +311,15 @@ if ($Json) { $reportJson; return }
     GuardianAlive = $guardianAlive
     GuardianState = Get-SafeProperty $status 'guardianState' $null
     EffectivenessEvidence = Get-SafeProperty $status 'effectivenessEvidence' $null
+    ProxyReachability = Get-SafeProperty $status 'proxyReachability' $null
+    StreamStability = Get-SafeProperty $status 'streamStability' $null
+    UpstreamSuspected = [bool](Get-SafeProperty $status 'upstreamSuspected' $false)
+    PostUpdateObservationState = Get-SafeProperty $status 'postUpdateObservationState' $null
+    PostUpdateSamples = ('{0}/{1}' -f [int](Get-SafeProperty $status 'postUpdateSuccessfulSamples' 0), [int](Get-SafeProperty $status 'postUpdateRequiredSamples' 0))
+    CodexCompatibilityState = Get-SafeProperty $status 'codexCompatibilityState' $null
+    CodexCompatibilityEvidence = Get-SafeProperty $status 'codexCompatibilityEvidence' $null
+    CodexCompatibilitySafeHold = [bool](Get-SafeProperty $status 'codexCompatibilitySafeHold' $false)
+    CompatibilityUpdateCheckState = Get-SafeProperty $status 'compatibilityUpdateCheckState' $null
     ProxyTests = ('{0}/{1}' -f [int](Get-SafeProperty $status 'proxyTestSuccessCount' 0), [int](Get-SafeProperty $status 'proxyTestRequiredCount' 0))
     ProxyCriticalTargetsPassed = [bool](Get-SafeProperty $status 'proxyCriticalTargetsPassed' $false)
     ProxyCriticalFailures = @((Get-SafeProperty $status 'proxyCriticalFailures' @()))

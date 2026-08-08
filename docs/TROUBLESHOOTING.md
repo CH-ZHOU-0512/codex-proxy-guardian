@@ -72,7 +72,15 @@ v1.4.4 起，Settings 会区分“更新器正忙，本次没有检查”和“�
 
 先查看 Guardian 日志是否在同一时间出现 `codex_restart` 或 `proxy_changed`。如果没有，而 Codex 日志出现 TLS EOF、WebSocket reset、`10054` 或请求超时，说明流式连接在代理上游被中断。
 
-v1.4.4 默认要求 `chatgpt.com` 关键目标通过；`Status.ps1` 和 `Doctor.ps1` 会显示 `ProxyCriticalTargetsPassed` 与 `ProxyCriticalFailures`。关键目标失败时，Guardian 会尝试其他已发现候选，但不会擅自切换代理软件的订阅节点。若代理软件日志同时出现上游 `i/o timeout`，请手动换一个稳定节点。
+v1.4.4 默认要求 `chatgpt.com` 关键目标通过；`Status.ps1` 和 `Doctor.ps1` 会显示 `ProxyCriticalTargetsPassed` 与 `ProxyCriticalFailures`。若代理软件日志同时出现上游 `i/o timeout`，请手动换一个稳定节点。
+
+v1.5.0 起，Codex Store/MSIX 包版本变化后，新版进程会进入 `ObservingAfterCodexUpdate`：默认至少 60 秒并累计 3 次新鲜关键入口验证，缓存结果不计数。Guardian 同时立即启动经过安装所有权校验的更新任务；观察期间一次本地代理流量不会被 Safe 模式过早当成稳定结论。
+
+若 `GuardianState=UpstreamSuspected`，表示本地代理监听仍可达、但关键外部验证失败。Guardian 会保留当前 Codex，不会因此重启应用、切换代理软件里的订阅节点或修改系统代理。保持 Codex 打开；若重连持续，请在 Clash/Mihomo/v2rayN 等代理软件中换节点。一次新的关键入口验证通过后，该状态会自动清除。
+
+`StreamStability=IndirectEvidenceOnly` 不是报错。它是在说明短 HTTPS 探测与本地 TCP 元数据无法从外部证明登录态下的长时 SSE/HTTP 流绝对稳定。
+
+若出现 `CodexCompatibilityReviewRequired`，表示用户已批准的一次 Managed 启动在超时后仍没有得到参数或流量证据。为避免反复关闭任务，Guardian 已停止该 Codex/Guardian 组合的自动生命周期操作；当前 Codex 会保持打开。即时更新检查与每日更新仍会自动运行，新 Guardian 版本安装后会清除旧保持并重新审计。
 
 检查最新日志中的 `codex_started`、`loop_error` 和 `restart_circuit_opened`。不要为了绕过限制直接删除 `state.json`，应先解决启动失败或 MSIX 包路径解析问题。
 

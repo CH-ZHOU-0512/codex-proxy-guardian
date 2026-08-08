@@ -16,12 +16,16 @@ Codex Proxy Guardian 是一个非官方、跨平台的 **Codex 代理守护工�
 > [!IMPORTANT]
 > **Codex 显示“正在重新连接”，不等于 Guardian 重启了 Codex。** Guardian 负责代理发现、验证和 Codex 启动参数；它不能修复代理服务商节点自身的丢包、TLS EOF、WebSocket reset、Windows `10054` 或请求超时。请对照同一时间的 Guardian 日志：存在 `codex_restart` / `proxy_changed` 才说明 Guardian 生命周期操作可能相关；两者都没有时，通常是上游流式连接断开。详见[重连归因](#如何判断是谁造成的重连)。
 
+> [!TIP]
+> **v1.5.0 会专门处理 Codex 更新后的风险窗口。** 新版 Codex 第一次启动后，Guardian 会进行至少 60 秒、3 次新鲜关键入口验证；观察完成前不会把一次本地代理流量过早判成“稳定”。同时立即触发受信的 Guardian 更新检查；如果启动适配无法确认，会暂停自动重启并等待适配更新，而不是继续试错关闭 Codex。
+
 ## 30 秒看懂
 
 | 你遇到的问题 | Guardian 会做什么 | 你需要做什么 |
 |---|---|---|
 | Codex 没有继承当前代理，或仍使用旧端口 | 验证并跟随 Codex 实际需要的代理端点 | 安装一次 |
 | 切换节点后端口变了 | 重新发现、防抖、验证，再更新 Codex | Windows/macOS 继续点原图标 |
+| Codex 更新后又开始重连 | 等新版进程启动后连续验证关键入口；异常时保留 Codex | 持续异常时在代理软件中换节点 |
 | 守护脚本让 Codex 反复重启 | 使用冷却、频率限制和熔断 | 保持默认“自动”模式 |
 | Linux CLI 没有继承新代理 | 将已验证代理注入新进程 | 用 `codex-guard` 启动 Codex |
 
@@ -34,6 +38,9 @@ Codex Proxy Guardian 是一个非官方、跨平台的 **Codex 代理守护工�
 | Guardian 日志出现 `codex_restart` 或 `proxy_changed` | Guardian 执行了生命周期操作 | 附上脱敏 Doctor 与时间提交 Issue |
 | 没有上述事件，Codex 出现 TLS EOF、WebSocket reset、`10054` 或超时 | 当前代理服务商节点或其上游链路断流 | 在代理软件中换稳定节点 |
 | `ProxyCriticalTargetsPassed=false` | `chatgpt.com` 关键入口没有通过验证 | 查看 `ProxyCriticalFailures`，再检查节点 |
+| `GuardianState=ObservingAfterCodexUpdate` | 新版 Codex 正在完成连续验证 | 保持 Codex 打开，等待观察完成 |
+| `GuardianState=UpstreamSuspected` | 本地端口可达，但关键外部验证失败 | 保持 Codex 打开，在代理软件中换节点 |
+| `GuardianState=CodexCompatibilityReviewRequired` | 新版的启动适配未能自动确认，已进入安全保持 | 保持 Codex 打开；Guardian 会自动检查适配更新 |
 
 Guardian 会尝试其他已经发现且通过验证的地址或协议，但不会擅自切换 Clash/Mihomo/v2rayN 等软件里的订阅节点，也不会修改系统网络配置。这个边界既避免误操作，也意味着服务商节点不稳定时仍需要用户在代理软件中换节点。
 
@@ -144,7 +151,7 @@ PAC 可能为不同目标返回不同路线。只有同一候选达到多目标�
 
 | 模式 | 行为 | 适合谁 |
 |---|---|---|
-| **自动（Safe）** | 先等待并观察真实代理流量；已经能通信就不动 | 绝大多数用户，默认推荐 |
+| **自动（Safe）** | 先等待并观察真实代理流量；Codex 更新后还要通过连续关键入口验证，确认后才保持不动 | 绝大多数用户，默认推荐 |
 | **严格（Enforce）** | 发现 Codex 缺少当前代理参数时，经防抖并由用户确认后受控修复 | 要求启动参数始终严格一致的机器 |
 
 **不确定就保持默认“自动”。** 模式可在 Windows 开始菜单的 **Codex Proxy Guardian Settings** 中切换，不需要手改 JSON，也不会因切换模式而重启 Codex。
@@ -182,14 +189,18 @@ codex-proxy-guardian doctor
 | `ValidatedProxy` | 代理端口可连接、真实 HTTPS 请求达到成功门槛，且 `chatgpt.com` 关键目标通过 |
 | `LaunchConfigured` | Codex 根进程带有同一个规范化代理参数 |
 | `TrafficObserved` | 近期观察到 Codex 进程树连接了该代理端点 |
+| `PostUpdateObservation` | 新版 Codex 已启动，正在累计新鲜关键入口验证，期间不接受一次流量作为稳定结论 |
+| `EndpointReachableOnly` | 本地监听存在，但关键外部验证失败；Guardian 保留 Codex 并提示检查上游节点 |
 
-`TrafficObserved` 是不抓包时能提供的最强本地证据，但不代表特定出口 IP、地区或代理规则一定符合预期。完整标准见[兼容性与有效性测试](docs/COMPATIBILITY-TESTING.md)。
+`TrafficObserved` 是不抓包时能提供的最强本地证据，但不代表特定出口 IP、地区或代理规则一定符合预期。短 HTTPS 探测和本地 TCP 流量也不能从外部证明登录态下的长时 SSE/HTTP 流绝对稳定，所以正常状态会诚实显示 `StreamStability=IndirectEvidenceOnly`。完整标准见[兼容性与有效性测试](docs/COMPATIBILITY-TESTING.md)。
+
+Codex 每次更新时，Guardian 会重新解析 MSIX 清单与真实入口进程、生成能力指纹、执行上述观察，并立即启动仓库 Release 的受信更新任务。若现有通用适配仍有效，会自动继续；若 Codex 改掉了未公开的启动机制，Guardian 会失败安全地保持当前进程、停止自动重启，并等待本项目自动更新到新适配。任何社区工具都无法在上游彻底改变未知接口时“凭空发明”新代码，但这一机制让普通用户不必手动重装、改配置或反复试错。
 
 ## 常见问题
 
 ### Codex 还在反复重启
 
-1. 先升级到 v1.4.3 或更高版本；旧版可能把同一混合端口的 HTTP/SOCKS5 波动误判为代理变化，v1.4.2 仍可能在当前协议短暂失败时切换。
+1. 先升级到 v1.5.0 或更高版本；旧版可能过早接受一次本地代理流量，或把同一混合端口的 HTTP/SOCKS5 波动误判为代理变化。
 2. 保持或切回“自动（Safe）”。
 3. 运行 `Status.ps1` 查看 `GuardianState` 和最近重启原因。
 4. 运行 `Doctor.ps1 -Online` 生成脱敏诊断。
@@ -203,7 +214,7 @@ v1.4.4 起，Settings 不会把“更新器正忙、本次没有执行检查”�
 
 ### Guardian 没有重启，为什么仍出现“正在重新连接”？
 
-这通常表示 Codex 到 OpenAI 的流式连接被代理上游节点重置或超时，不等于 Guardian 重启了应用。v1.4.4 起，`chatgpt.com` 是硬性验证目标，不能再由其他两个目标成功掩盖；同端口协议变化也只更新后续自然启动的首选，不会关闭当前任务。
+这通常表示 Codex 到 OpenAI 的流式连接被代理上游节点重置或超时，不等于 Guardian 重启了应用。v1.5.0 起，Codex 包版本变化后会进行连续稳定性观察和即时兼容更新检查；本地端口可达但关键入口失败时显示 `UpstreamSuspected`，并明确保持当前 Codex 不动。
 
 Guardian 无法在不改变用户网络选择的前提下修复代理服务商节点自身的丢包。若 `Status.ps1` 显示关键目标失败，或代理软件日志出现 `i/o timeout`、TLS EOF、WebSocket reset，请在代理软件中换一个稳定节点；Guardian 不会擅自替你切节点或修改系统代理。
 

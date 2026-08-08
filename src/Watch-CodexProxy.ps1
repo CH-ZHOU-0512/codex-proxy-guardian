@@ -481,10 +481,26 @@ function Test-Socks5Proxy {
 function Test-ProxyCandidate {
     param($Candidate, $Config)
 
+    $requiredHosts = @((Get-CpgConfigValue $Config 'RequiredProxyTestHosts' @()) | ForEach-Object { ([string]$_).Trim().ToLowerInvariant() } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
     $tcpTimeout = [int](Get-CpgConfigValue $Config 'TcpTimeoutMilliseconds' 1500)
     if (-not (Test-TcpEndpoint $Candidate.Host $Candidate.Port $tcpTimeout)) {
         $script:ValidationCache.Remove($Candidate.Uri)
-        $Candidate | Add-Member -MemberType NoteProperty -Name ValidationResult -Value ([pscustomobject]@{ Passed = $false; SuccessCount = 0; RequiredCount = 1; TargetCount = 0; AttemptedCount = 0; Results = @() }) -Force
+        $checkedAt = Get-Date
+        $Candidate | Add-Member -MemberType NoteProperty -Name ValidationResult -Value ([pscustomobject]@{
+            Passed = $false
+            SuccessCount = 0
+            RequiredCount = [Math]::Max(1, [int](Get-CpgConfigValue $Config 'MinimumSuccessfulProxyTests' 1))
+            TargetCount = @((Get-CpgConfigValue $Config 'ProxyTestUrls' @())).Count
+            AttemptedCount = 0
+            EndpointReachable = $false
+            CriticalTargetsPassed = $false
+            CriticalFailures = @()
+            CriticalMissing = @($requiredHosts)
+            Results = @()
+        }) -Force
+        $Candidate | Add-Member -MemberType NoteProperty -Name ValidationCheckedAt -Value $checkedAt -Force
+        $Candidate | Add-Member -MemberType NoteProperty -Name ValidationFresh -Value $true -Force
+        $Candidate | Add-Member -MemberType NoteProperty -Name EndpointReachable -Value $false -Force
         return $false
     }
 
@@ -493,6 +509,9 @@ function Test-ProxyCandidate {
         $cached = $script:ValidationCache[$Candidate.Uri]
         if (((Get-Date) - $cached.CheckedAt).TotalSeconds -lt $interval) {
             $Candidate | Add-Member -MemberType NoteProperty -Name ValidationResult -Value $cached.Result -Force
+            $Candidate | Add-Member -MemberType NoteProperty -Name ValidationCheckedAt -Value $cached.CheckedAt -Force
+            $Candidate | Add-Member -MemberType NoteProperty -Name ValidationFresh -Value $false -Force
+            $Candidate | Add-Member -MemberType NoteProperty -Name EndpointReachable -Value $true -Force
             return [bool]$cached.Valid
         }
     }
@@ -503,7 +522,6 @@ function Test-ProxyCandidate {
     } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
     if ($urls.Count -eq 0) { throw 'ProxyTestUrls must contain at least one absolute HTTPS URL.' }
     $minimum = [int](Get-CpgConfigValue $Config 'MinimumSuccessfulProxyTests' 1)
-    $requiredHosts = @((Get-CpgConfigValue $Config 'RequiredProxyTestHosts' @()) | ForEach-Object { ([string]$_).Trim().ToLowerInvariant() } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
     $proxyScheme = ([Uri]$Candidate.Uri).Scheme.ToLowerInvariant()
     $validation = if ($proxyScheme -in @('socks5', 'socks5h')) {
         Test-Socks5Proxy $Candidate.Uri $urls ([int](Get-CpgConfigValue $Config 'HttpTimeoutSeconds' 8)) $minimum $requiredHosts
@@ -511,14 +529,20 @@ function Test-ProxyCandidate {
     else {
         Test-HttpProxy $Candidate.Uri $urls ([int](Get-CpgConfigValue $Config 'HttpTimeoutSeconds' 8)) $minimum $requiredHosts
     }
+    $validation | Add-Member -MemberType NoteProperty -Name EndpointReachable -Value $true -Force
+    $checkedAt = Get-Date
     $Candidate | Add-Member -MemberType NoteProperty -Name ValidationResult -Value $validation -Force
-    $script:ValidationCache[$Candidate.Uri] = [pscustomobject]@{ Valid = [bool]$validation.Passed; CheckedAt = Get-Date; Result = $validation }
+    $Candidate | Add-Member -MemberType NoteProperty -Name ValidationCheckedAt -Value $checkedAt -Force
+    $Candidate | Add-Member -MemberType NoteProperty -Name ValidationFresh -Value $true -Force
+    $Candidate | Add-Member -MemberType NoteProperty -Name EndpointReachable -Value $true -Force
+    $script:ValidationCache[$Candidate.Uri] = [pscustomobject]@{ Valid = [bool]$validation.Passed; CheckedAt = $checkedAt; Result = $validation }
     return [bool]$validation.Passed
 }
 
 function Find-EffectiveProxy {
     param($Config, [string]$PreferredUri = '')
 
+    $script:LastProxyValidationAttempts = @()
     $candidates = @()
     if (-not [string]::IsNullOrWhiteSpace($ProxyOverride)) {
         $allowRemote = [bool](Get-CpgConfigValue $Config 'AllowNonLoopbackProxy' $false)
@@ -533,7 +557,14 @@ function Find-EffectiveProxy {
     foreach ($candidate in @(Select-CpgProxyCandidates -Candidates $candidates -PreferredUri $PreferredUri)) {
         if ($null -eq $candidate -or $seen.ContainsKey($candidate.Uri)) { continue }
         $seen[$candidate.Uri] = $true
-        if (Test-ProxyCandidate $candidate $Config) { return $candidate }
+        $valid = Test-ProxyCandidate $candidate $Config
+        $script:LastProxyValidationAttempts += $candidate
+        if ($valid) { return $candidate }
+        if (-not [string]::IsNullOrWhiteSpace($PreferredUri) -and
+            [bool](Get-CpgConfigValue $candidate 'EndpointReachable' $false) -and
+            (Test-CpgSameProxyEndpoint -FirstProxyUri $PreferredUri -SecondProxyUri ([string]$candidate.Uri))) {
+            return $null
+        }
     }
     return $null
 }
@@ -789,6 +820,21 @@ function Save-PersistentState {
         lastProxyConnectionUtc = $trafficText
         recoveryLaunchRequired = $script:RecoveryLaunchRequired
         restartDeferredUntilUtc = if ($script:RestartDeferredUntil -gt (Get-Date)) { $script:RestartDeferredUntil.ToUniversalTime().ToString('o') } else { $null }
+        lastCodexPackageVersion = $script:LastCodexPackageVersion
+        pendingCodexPackageVersion = $script:PendingCodexPackageVersion
+        postUpdateObservationVersion = $script:PostUpdateObservationVersion
+        postUpdateObservationStartedUtc = if ($script:PostUpdateObservationStarted -gt [datetime]::MinValue) { $script:PostUpdateObservationStarted.ToUniversalTime().ToString('o') } else { $null }
+        postUpdateSuccessfulSamples = $script:PostUpdateSuccessfulSamples
+        postUpdateLastValidationUtc = if ($script:PostUpdateLastValidation -gt [datetime]::MinValue) { $script:PostUpdateLastValidation.ToUniversalTime().ToString('o') } else { $null }
+        postUpdateObservationPassedVersion = $script:PostUpdateObservationPassedVersion
+        upstreamSuspected = $script:UpstreamSuspected
+        upstreamSuspectedSinceUtc = if ($script:UpstreamSuspectedSince -gt [datetime]::MinValue) { $script:UpstreamSuspectedSince.ToUniversalTime().ToString('o') } else { $null }
+        compatibilityUpdateRequestedVersion = $script:CompatibilityUpdateRequestedVersion
+        compatibilityUpdateLastAttemptUtc = if ($script:CompatibilityUpdateLastAttempt -gt [datetime]::MinValue) { $script:CompatibilityUpdateLastAttempt.ToUniversalTime().ToString('o') } else { $null }
+        compatibilityHold = $script:CompatibilityHold
+        compatibilityHoldCodexVersion = $script:CompatibilityHoldCodexVersion
+        compatibilityHoldGuardianVersion = $script:CompatibilityHoldGuardianVersion
+        lastCompatibleCodexFingerprint = $script:LastCompatibleCodexFingerprint
         updatedUtc = (Get-Date).ToUniversalTime().ToString('o')
     })
 }
@@ -855,6 +901,10 @@ $circuitBreakerMinutes = [Math]::Max(1, [int](Get-CpgConfigValue $config 'Circui
 $recoveryLaunchRetrySeconds = [Math]::Max(5, [int](Get-CpgConfigValue $config 'RecoveryLaunchRetrySeconds' 10))
 $codexResolveIntervalSeconds = [Math]::Max(10, [int](Get-CpgConfigValue $config 'CodexResolveIntervalSeconds' 60))
 $trafficEvidenceWindowSeconds = [Math]::Max(30, [int](Get-CpgConfigValue $config 'ProxyConnectionEvidenceWindowSeconds' 300))
+$postUpdateStabilityEnabled = [bool](Get-CpgConfigValue $config 'PostUpdateStabilityEnabled' $true)
+$postUpdateStabilitySamples = [Math]::Max(1, [int](Get-CpgConfigValue $config 'PostUpdateStabilitySamples' 3))
+$postUpdateStabilitySeconds = [Math]::Max(0, [int](Get-CpgConfigValue $config 'PostUpdateStabilitySeconds' 60))
+$compatibilityConfirmationSeconds = [Math]::Max(15, [int](Get-CpgConfigValue $config 'CodexCompatibilityConfirmationSeconds' 45))
 $unavailableLogSeconds = [Math]::Max(30, [int](Get-CpgConfigValue $config 'UnavailableLogIntervalSeconds' 300))
 $guardianMode = [string](Get-CpgConfigValue $config 'Mode' 'Safe')
 $manageExternalLaunches = ($guardianMode -eq 'Enforce' -or [bool](Get-CpgConfigValue $config 'ManageExternalCodexLaunches' $false)) -and -not $ObserveOnly
@@ -881,6 +931,22 @@ $script:CircuitBreakerUntil = [datetime]::MinValue
 $script:LastProxyConnection = [datetime]::MinValue
 $script:RecoveryLaunchRequired = $false
 $script:RestartDeferredUntil = [datetime]::MinValue
+$script:LastCodexPackageVersion = if ($null -eq $codexApp) { '' } else { [string]$codexApp.Version }
+$script:PendingCodexPackageVersion = ''
+$script:PostUpdateObservationVersion = ''
+$script:PostUpdateObservationStarted = [datetime]::MinValue
+$script:PostUpdateSuccessfulSamples = 0
+$script:PostUpdateLastValidation = [datetime]::MinValue
+$script:PostUpdateObservationPassedVersion = ''
+$script:UpstreamSuspected = $false
+$script:UpstreamSuspectedSince = [datetime]::MinValue
+$script:CompatibilityUpdateRequestedVersion = ''
+$script:CompatibilityUpdateLastAttempt = [datetime]::MinValue
+$script:CompatibilityHold = $false
+$script:CompatibilityHoldCodexVersion = ''
+$script:CompatibilityHoldGuardianVersion = ''
+$script:LastCompatibleCodexFingerprint = ''
+$hadStoredCodexPackageVersion = $false
 $lastEquivalentValidationUri = ''
 if ($null -ne $persistentState) {
     $lastRestartText = [string](Get-CpgConfigValue $persistentState 'lastRestartUtc' '')
@@ -903,6 +969,130 @@ if ($null -ne $persistentState) {
     if (-not [string]::IsNullOrWhiteSpace($deferredText)) {
         try { $script:RestartDeferredUntil = ([datetime]::Parse($deferredText)).ToLocalTime() } catch { $script:RestartDeferredUntil = [datetime]::MinValue }
     }
+    $storedCodexVersion = [string](Get-CpgConfigValue $persistentState 'lastCodexPackageVersion' '')
+    if (-not [string]::IsNullOrWhiteSpace($storedCodexVersion)) {
+        $hadStoredCodexPackageVersion = $true
+        $script:LastCodexPackageVersion = $storedCodexVersion
+    }
+    $script:PendingCodexPackageVersion = [string](Get-CpgConfigValue $persistentState 'pendingCodexPackageVersion' '')
+    $script:PostUpdateObservationVersion = [string](Get-CpgConfigValue $persistentState 'postUpdateObservationVersion' '')
+    $observationText = [string](Get-CpgConfigValue $persistentState 'postUpdateObservationStartedUtc' '')
+    if (-not [string]::IsNullOrWhiteSpace($observationText)) {
+        try { $script:PostUpdateObservationStarted = ([datetime]::Parse($observationText)).ToLocalTime() } catch { $script:PostUpdateObservationStarted = [datetime]::MinValue }
+    }
+    $script:PostUpdateSuccessfulSamples = [Math]::Max(0, [int](Get-CpgConfigValue $persistentState 'postUpdateSuccessfulSamples' 0))
+    $observationValidationText = [string](Get-CpgConfigValue $persistentState 'postUpdateLastValidationUtc' '')
+    if (-not [string]::IsNullOrWhiteSpace($observationValidationText)) {
+        try { $script:PostUpdateLastValidation = ([datetime]::Parse($observationValidationText)).ToLocalTime() } catch { $script:PostUpdateLastValidation = [datetime]::MinValue }
+    }
+    $script:PostUpdateObservationPassedVersion = [string](Get-CpgConfigValue $persistentState 'postUpdateObservationPassedVersion' '')
+    $script:UpstreamSuspected = [bool](Get-CpgConfigValue $persistentState 'upstreamSuspected' $false)
+    $upstreamText = [string](Get-CpgConfigValue $persistentState 'upstreamSuspectedSinceUtc' '')
+    if (-not [string]::IsNullOrWhiteSpace($upstreamText)) {
+        try { $script:UpstreamSuspectedSince = ([datetime]::Parse($upstreamText)).ToLocalTime() } catch { $script:UpstreamSuspectedSince = [datetime]::MinValue }
+    }
+    $script:CompatibilityUpdateRequestedVersion = [string](Get-CpgConfigValue $persistentState 'compatibilityUpdateRequestedVersion' '')
+    $compatibilityAttemptText = [string](Get-CpgConfigValue $persistentState 'compatibilityUpdateLastAttemptUtc' '')
+    if (-not [string]::IsNullOrWhiteSpace($compatibilityAttemptText)) {
+        try { $script:CompatibilityUpdateLastAttempt = ([datetime]::Parse($compatibilityAttemptText)).ToLocalTime() } catch { $script:CompatibilityUpdateLastAttempt = [datetime]::MinValue }
+    }
+    $script:CompatibilityHold = [bool](Get-CpgConfigValue $persistentState 'compatibilityHold' $false)
+    $script:CompatibilityHoldCodexVersion = [string](Get-CpgConfigValue $persistentState 'compatibilityHoldCodexVersion' '')
+    $script:CompatibilityHoldGuardianVersion = [string](Get-CpgConfigValue $persistentState 'compatibilityHoldGuardianVersion' '')
+    $script:LastCompatibleCodexFingerprint = [string](Get-CpgConfigValue $persistentState 'lastCompatibleCodexFingerprint' '')
+}
+
+function Request-CompatibilityUpdateCheck {
+    param([string]$CodexVersion, $Config)
+
+    if ([string]::IsNullOrWhiteSpace($CodexVersion)) { return 'NotNeeded' }
+    if (-not [bool](Get-CpgConfigValue $Config 'AutomaticUpdates' $true) -or
+        -not [bool](Get-CpgConfigValue $Config 'CheckForGuardianUpdateOnCodexChange' $true)) {
+        return 'Disabled'
+    }
+    if ([string]::Equals($script:CompatibilityUpdateRequestedVersion, $CodexVersion, [System.StringComparison]::OrdinalIgnoreCase)) {
+        return 'Requested'
+    }
+
+    $now = Get-Date
+    $retryMinutes = [Math]::Max(5, [int](Get-CpgConfigValue $Config 'CompatibilityUpdateRetryMinutes' 60))
+    if ($script:CompatibilityUpdateLastAttempt -gt [datetime]::MinValue -and ($now - $script:CompatibilityUpdateLastAttempt).TotalMinutes -lt $retryMinutes) {
+        return 'RetryDeferred'
+    }
+    $script:CompatibilityUpdateLastAttempt = $now
+
+    try {
+        $markerPath = Join-Path $script:Root '.cpg-install.json'
+        if (-not (Test-Path -LiteralPath $markerPath)) { throw 'The install marker is unavailable.' }
+        $marker = Get-Content -Raw -LiteralPath $markerPath | ConvertFrom-Json
+        if (-not (Test-CpgInstallMarker -InstallRoot $script:Root -Marker $marker)) { throw 'The install marker does not own this directory.' }
+        $updateTaskName = [string](Get-CpgConfigValue $marker 'updateTaskName' 'Codex Proxy Guardian Update')
+        $task = Get-ScheduledTask -TaskName $updateTaskName -ErrorAction Stop
+        $expectedUpdater = Join-Path $script:Root 'Update.ps1'
+        $expectedFileArgument = '-File "{0}"' -f $expectedUpdater
+        $ownedAction = @($task.Actions | Where-Object {
+            ([string]$_.Execute).EndsWith('powershell.exe', [System.StringComparison]::OrdinalIgnoreCase) -and
+            ([string]$_.Arguments).IndexOf($expectedFileArgument, [System.StringComparison]::OrdinalIgnoreCase) -ge 0
+        }).Count -gt 0
+        if (-not $ownedAction) { throw 'The update task action is not owned by this installation.' }
+        if ([string]$task.State -ne 'Running') { Start-ScheduledTask -TaskName $updateTaskName }
+        $script:CompatibilityUpdateRequestedVersion = $CodexVersion
+        Write-GuardianLog 'INFO' 'codex_compatibility_update_requested' 'A Codex package change triggered the verified Guardian update task immediately; the daily update schedule remains as fallback.' @{
+            codex_version = $CodexVersion
+            guardian_version = $guardianVersion
+            update_task = $updateTaskName
+        }
+        return 'Requested'
+    }
+    catch {
+        Write-GuardianLog 'WARN' 'codex_compatibility_update_request_failed' 'The immediate compatibility update check could not be started. The normal daily updater remains available.' @{
+            codex_version = $CodexVersion
+            error = $_.Exception.Message
+            retry_minutes = $retryMinutes
+        }
+        return 'Failed'
+    }
+}
+
+function Get-CodexCompatibilityFingerprint {
+    param($CodexApp, [bool]$UseProxyArgument)
+    if ($null -eq $CodexApp) { return $null }
+    $text = @(
+        [string]$CodexApp.PackageName,
+        [string]$CodexApp.Version,
+        [string]$CodexApp.ApplicationId,
+        [string]$CodexApp.ProcessName,
+        [string]$CodexApp.ResolutionMethod,
+        [string]$UseProxyArgument
+    ) -join '|'
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try { return ([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($text)))).Replace('-', '').ToLowerInvariant() }
+    finally { $sha.Dispose() }
+}
+if ($postUpdateStabilityEnabled -and $null -ne $codexApp) {
+    if (-not $hadStoredCodexPackageVersion -or
+        (-not [string]::IsNullOrWhiteSpace($script:LastCodexPackageVersion) -and
+        -not [string]::Equals($script:LastCodexPackageVersion, [string]$codexApp.Version, [System.StringComparison]::OrdinalIgnoreCase))) {
+        $script:PendingCodexPackageVersion = [string]$codexApp.Version
+        $script:LastCodexPackageVersion = [string]$codexApp.Version
+    }
+}
+if ($script:CompatibilityHold -and (
+    -not [string]::Equals($script:CompatibilityHoldGuardianVersion, $guardianVersion, [System.StringComparison]::OrdinalIgnoreCase) -or
+    $null -eq $codexApp -or
+    -not [string]::Equals($script:CompatibilityHoldCodexVersion, [string]$codexApp.Version, [System.StringComparison]::OrdinalIgnoreCase))) {
+    $script:CompatibilityHold = $false
+    $script:CompatibilityHoldCodexVersion = ''
+    $script:CompatibilityHoldGuardianVersion = ''
+}
+$compatibilityUpdateCheckState = if ($null -eq $codexApp) {
+    'NotNeeded'
+}
+elseif (-not [string]::Equals($script:CompatibilityUpdateRequestedVersion, [string]$codexApp.Version, [System.StringComparison]::OrdinalIgnoreCase)) {
+    'Pending'
+}
+else {
+    'Requested'
 }
 $restartRequired = $false
 $consecutiveErrors = 0
@@ -990,19 +1180,41 @@ try {
                 $lastCodexResolve = Get-Date
                 if ($null -ne $resolvedApp) {
                     $appChanged = $null -eq $codexApp -or -not [string]::Equals([string]$codexApp.ExecutablePath, [string]$resolvedApp.ExecutablePath, [System.StringComparison]::OrdinalIgnoreCase)
+                    $versionChanged = -not [string]::IsNullOrWhiteSpace($script:LastCodexPackageVersion) -and
+                        -not [string]::Equals($script:LastCodexPackageVersion, [string]$resolvedApp.Version, [System.StringComparison]::OrdinalIgnoreCase)
+                    if ($postUpdateStabilityEnabled -and $versionChanged) {
+                        $script:PendingCodexPackageVersion = [string]$resolvedApp.Version
+                    }
+                    if ($versionChanged) {
+                        $script:CompatibilityHold = $false
+                        $script:CompatibilityHoldCodexVersion = ''
+                        $script:CompatibilityHoldGuardianVersion = ''
+                        $compatibilityUpdateCheckState = 'Pending'
+                    }
+                    $script:LastCodexPackageVersion = [string]$resolvedApp.Version
                     $codexApp = $resolvedApp
                     if (@($codexApps | Where-Object { [string]::Equals([string]$_.ExecutablePath, [string]$resolvedApp.ExecutablePath, [System.StringComparison]::OrdinalIgnoreCase) }).Count -eq 0) {
                         $codexApps = @($codexApps) + @($resolvedApp)
                         $codexApps = @($codexApps | Select-Object -Last 3)
                     }
-                    if ($appChanged) {
+                    if ($appChanged -or $versionChanged) {
                         Write-GuardianLog 'INFO' 'codex_package_refreshed' 'The current Codex MSIX executable was refreshed from its package manifest.' @{
                             package = [string]$resolvedApp.PackageName
                             version = [string]$resolvedApp.Version
+                            stability_observation_pending = (-not [string]::IsNullOrWhiteSpace($script:PendingCodexPackageVersion))
                         }
                     }
                 }
                 elseif ($null -ne $codexApp -and -not (Test-Path -LiteralPath ([string]$codexApp.ExecutablePath))) { $codexApp = $null }
+            }
+
+            if ($null -ne $codexApp -and
+                -not [string]::Equals($script:CompatibilityUpdateRequestedVersion, [string]$codexApp.Version, [System.StringComparison]::OrdinalIgnoreCase)) {
+                $compatibilityUpdateCheckState = Request-CompatibilityUpdateCheck -CodexVersion ([string]$codexApp.Version) -Config $config
+                if ($compatibilityUpdateCheckState -in @('Requested', 'Failed')) {
+                    $proxyToPersist = if ([string]::IsNullOrWhiteSpace($activeProxy)) { $previousActiveProxy } else { $activeProxy }
+                    Save-PersistentState $proxyToPersist $activeSource $lastRestart
+                }
             }
 
             $preferredProxy = if (-not [string]::IsNullOrWhiteSpace($activeProxy)) { $activeProxy } else { $previousActiveProxy }
@@ -1023,7 +1235,21 @@ try {
             elseif ($null -ne $candidate -and [string]$candidate.Uri -eq $preferredProxy) {
                 $lastEquivalentValidationUri = ''
             }
-            $currentValidation = if ($null -eq $candidate) { $null } else { $candidate.ValidationResult }
+            $validationCandidate = $candidate
+            if ($null -eq $validationCandidate -and @($script:LastProxyValidationAttempts).Count -gt 0) {
+                if (-not [string]::IsNullOrWhiteSpace($preferredProxy)) {
+                    $validationCandidate = @($script:LastProxyValidationAttempts | Where-Object {
+                        Test-CpgSameProxyEndpoint -FirstProxyUri $preferredProxy -SecondProxyUri ([string]$_.Uri)
+                    } | Select-Object -First 1)[0]
+                }
+                if ($null -eq $validationCandidate) { $validationCandidate = @($script:LastProxyValidationAttempts)[0] }
+            }
+            $currentValidation = if ($null -eq $validationCandidate) { $null } else { $validationCandidate.ValidationResult }
+            $currentValidationFresh = if ($null -eq $validationCandidate) { $false } else { [bool](Get-CpgConfigValue $validationCandidate 'ValidationFresh' $false) }
+            $currentValidationCheckedAt = if ($null -eq $validationCandidate) { [datetime]::MinValue } else { [datetime](Get-CpgConfigValue $validationCandidate 'ValidationCheckedAt' ([datetime]::MinValue)) }
+            $currentEndpointReachable = if ($null -eq $validationCandidate) { $false } else { [bool](Get-CpgConfigValue $validationCandidate 'EndpointReachable' $false) }
+            $currentValidationPassed = if ($null -eq $currentValidation) { $false } else { [bool](Get-CpgConfigValue $currentValidation 'Passed' $false) }
+            $currentCriticalTargetsPassed = if ($null -eq $currentValidation) { $false } else { [bool](Get-CpgConfigValue $currentValidation 'CriticalTargetsPassed' $false) }
             $proxyIsValid = $false
             if ($null -ne $candidate) {
                 if ($pendingProxy -eq $candidate.Uri) { $pendingSamples++ }
@@ -1088,6 +1314,82 @@ try {
 
             $roots = @(Get-CodexRootProcesses $codexApps)
             $rootIds = @($roots | ForEach-Object { [int]$_.ProcessId })
+            $currentPackageRoots = @()
+            if ($null -ne $codexApp) {
+                $currentPackageRoots = @($roots | Where-Object {
+                    -not [string]::IsNullOrWhiteSpace([string]$_.ExecutablePath) -and
+                    [string]::Equals([string]$_.ExecutablePath, [string]$codexApp.ExecutablePath, [System.StringComparison]::OrdinalIgnoreCase)
+                })
+            }
+
+            $stateChanged = $false
+            if ($postUpdateStabilityEnabled -and -not [string]::IsNullOrWhiteSpace($script:PendingCodexPackageVersion) -and $currentPackageRoots.Count -gt 0) {
+                $script:PostUpdateObservationVersion = $script:PendingCodexPackageVersion
+                $script:PendingCodexPackageVersion = ''
+                $script:PostUpdateObservationStarted = Get-Date
+                $script:PostUpdateSuccessfulSamples = 0
+                $script:PostUpdateLastValidation = [datetime]::MinValue
+                $script:LastProxyConnection = [datetime]::MinValue
+                $pendingExternalTrafficObserved = $false
+                $stateChanged = $true
+                Write-GuardianLog 'INFO' 'codex_update_observation_started' 'A newly updated Codex process was detected. Guardian will require consecutive fresh critical-target validations before accepting indirect traffic evidence.' @{
+                    version = $script:PostUpdateObservationVersion
+                    required_samples = $postUpdateStabilitySamples
+                    minimum_seconds = $postUpdateStabilitySeconds
+                    codex_pids = @($currentPackageRoots | ForEach-Object { [int]$_.ProcessId })
+                }
+            }
+
+            $observationActive = $postUpdateStabilityEnabled -and
+                -not [string]::IsNullOrWhiteSpace($script:PostUpdateObservationVersion) -and
+                $script:PostUpdateObservationStarted -gt [datetime]::MinValue
+            $freshForStability = $currentValidationFresh -and
+                $currentValidationCheckedAt -gt $script:PostUpdateLastValidation
+            $elapsedObservationSeconds = if ($observationActive) { ((Get-Date) - $script:PostUpdateObservationStarted).TotalSeconds } else { 0 }
+            $previousUpstreamSuspected = $script:UpstreamSuspected
+            $stabilityDecision = Get-CpgProxyStabilityDecision -ObservationActive:$observationActive `
+                -ValidationFresh:$freshForStability -EndpointReachable:$currentEndpointReachable `
+                -ValidationPassed:$currentValidationPassed -CriticalTargetsPassed:$currentCriticalTargetsPassed `
+                -SuccessfulSamples $script:PostUpdateSuccessfulSamples -RequiredSamples $postUpdateStabilitySamples `
+                -ElapsedSeconds $elapsedObservationSeconds -MinimumObservationSeconds $postUpdateStabilitySeconds `
+                -UpstreamSuspected:$script:UpstreamSuspected
+            $script:PostUpdateSuccessfulSamples = [int]$stabilityDecision.SuccessfulSamples
+            $script:UpstreamSuspected = [bool]$stabilityDecision.UpstreamSuspected
+            if ($freshForStability) { $script:PostUpdateLastValidation = $currentValidationCheckedAt; $stateChanged = $true }
+            if ($script:UpstreamSuspected -and -not $previousUpstreamSuspected) {
+                $script:UpstreamSuspectedSince = Get-Date
+                $stateChanged = $true
+                Write-GuardianLog 'WARN' 'proxy_upstream_suspected' 'The local proxy listener is reachable, but a critical external validation failed. Codex was left running; change the provider node if reconnects continue.' @{
+                    proxy = if ([string]::IsNullOrWhiteSpace($activeProxy)) { $null } else { Protect-CpgProxyUri $activeProxy }
+                    critical_failures = @(Get-CpgConfigValue $currentValidation 'CriticalFailures' @())
+                    critical_missing = @(Get-CpgConfigValue $currentValidation 'CriticalMissing' @())
+                    codex_restart_requested = $false
+                    system_proxy_modified = $false
+                }
+            }
+            elseif (-not $script:UpstreamSuspected -and $previousUpstreamSuspected -and $freshForStability) {
+                $script:UpstreamSuspectedSince = [datetime]::MinValue
+                $stateChanged = $true
+                Write-GuardianLog 'INFO' 'proxy_upstream_recovered' 'Fresh critical-target validation passed again; the suspected upstream incident is cleared.' @{}
+            }
+            if ($stabilityDecision.ObservationComplete) {
+                $completedVersion = $script:PostUpdateObservationVersion
+                $script:PostUpdateObservationPassedVersion = $completedVersion
+                $script:PostUpdateObservationVersion = ''
+                $script:PostUpdateObservationStarted = [datetime]::MinValue
+                $stateChanged = $true
+                $observationActive = $false
+                Write-GuardianLog 'INFO' 'codex_update_observation_passed' 'Post-update critical-target observation passed. Indirect proxy traffic evidence may now be accepted for this Codex version.' @{
+                    version = $completedVersion
+                    successful_samples = $script:PostUpdateSuccessfulSamples
+                    observed_seconds = [Math]::Round($elapsedObservationSeconds, 1)
+                }
+            }
+            $stabilityReady = -not $observationActive -and -not $script:UpstreamSuspected
+            if ($stateChanged) {
+                $proxyToPersist = if ([string]::IsNullOrWhiteSpace($activeProxy)) { $previousActiveProxy } else { $activeProxy }
+                Save-PersistentState $proxyToPersist $activeSource $lastRestart
+            }
             $matchingRoots = @()
             if ($proxyIsValid) {
                 $useArgument = [bool](Get-CpgConfigValue $config 'UseChromiumProxyArgument' $true)
@@ -1124,7 +1426,54 @@ try {
             }
             $trafficObservedRecently = $script:LastProxyConnection -gt [datetime]::MinValue -and ((Get-Date) - $script:LastProxyConnection).TotalSeconds -le $trafficEvidenceWindowSeconds
 
-            if (-not $ObserveOnly -and $script:RecoveryLaunchRequired -and $proxyIsValid -and $roots.Count -eq 0 -and $null -ne $codexApp) {
+            $postUpdateObservationPassed = $null -ne $codexApp -and
+                [string]::Equals($script:PostUpdateObservationPassedVersion, [string]$codexApp.Version, [System.StringComparison]::OrdinalIgnoreCase)
+            $secondsSinceManagedLaunch = if ($lastRestart -gt [datetime]::MinValue) { ((Get-Date) - $lastRestart).TotalSeconds } else { 0 }
+            $compatibilityFingerprint = Get-CodexCompatibilityFingerprint -CodexApp $codexApp -UseProxyArgument:([bool](Get-CpgConfigValue $config 'UseChromiumProxyArgument' $true))
+            $compatibilityDecision = Get-CpgCodexCompatibilityDecision -ObservationActive:$observationActive `
+                -ObservationPassed:$postUpdateObservationPassed -LaunchConfigured:($matchingRoots.Count -gt 0) `
+                -TrafficObserved:$trafficObservedRecently -RecoveryPending:$script:RecoveryLaunchRequired `
+                -CodexRunning:($roots.Count -gt 0) -SecondsSinceManagedLaunch $secondsSinceManagedLaunch `
+                -ConfirmationSeconds $compatibilityConfirmationSeconds -CompatibilityBlocked:$script:CompatibilityHold
+            if ([string]$compatibilityDecision.State -eq 'Compatible') {
+                $compatibilityRecovered = $script:CompatibilityHold
+                $script:CompatibilityHold = $false
+                $script:CompatibilityHoldCodexVersion = ''
+                $script:CompatibilityHoldGuardianVersion = ''
+                if (-not [string]::IsNullOrWhiteSpace($compatibilityFingerprint) -and $script:LastCompatibleCodexFingerprint -ne $compatibilityFingerprint) {
+                    $script:LastCompatibleCodexFingerprint = $compatibilityFingerprint
+                    $stateChanged = $true
+                }
+                if ($compatibilityRecovered) {
+                    $stateChanged = $true
+                    Write-GuardianLog 'INFO' 'codex_compatibility_recovered' 'The current Codex version now has verified launch or traffic evidence; the compatibility safety hold is cleared.' @{
+                        codex_version = if ($null -eq $codexApp) { $null } else { [string]$codexApp.Version }
+                        evidence = [string]$compatibilityDecision.Evidence
+                    }
+                }
+            }
+            elseif ($compatibilityDecision.ReviewRequired -and -not $script:CompatibilityHold) {
+                $script:CompatibilityHold = $true
+                $script:CompatibilityHoldCodexVersion = if ($null -eq $codexApp) { '' } else { [string]$codexApp.Version }
+                $script:CompatibilityHoldGuardianVersion = $guardianVersion
+                $script:RecoveryLaunchRequired = $false
+                $restartRequired = $false
+                $stateChanged = $true
+                Write-GuardianLog 'ERROR' 'codex_compatibility_review_required' 'A managed launch on this Codex version could not be confirmed. Guardian entered a fail-safe hold and will not restart Codex again; verified Guardian updates are checked automatically.' @{
+                    codex_version = $script:CompatibilityHoldCodexVersion
+                    guardian_version = $guardianVersion
+                    evidence = [string]$compatibilityDecision.Evidence
+                    codex_pids = $rootIds
+                    codex_restart_requested = $false
+                }
+                $compatibilityDecision = Get-CpgCodexCompatibilityDecision -ObservationPassed:$postUpdateObservationPassed -CompatibilityBlocked:$true
+            }
+            if ($stateChanged) {
+                $proxyToPersist = if ([string]::IsNullOrWhiteSpace($activeProxy)) { $previousActiveProxy } else { $activeProxy }
+                Save-PersistentState $proxyToPersist $activeSource $lastRestart
+            }
+
+            if (-not $ObserveOnly -and -not $script:CompatibilityHold -and $script:RecoveryLaunchRequired -and $proxyIsValid -and $roots.Count -eq 0 -and $null -ne $codexApp) {
                 if (((Get-Date) - $lastRestart).TotalSeconds -ge $recoveryLaunchRetrySeconds -and (Test-GuardianRestartBudget)) {
                     $lastRestart = Get-Date
                     Register-GuardianRestart $lastRestart
@@ -1138,7 +1487,7 @@ try {
                 }
             }
 
-            if (-not $ObserveOnly -and $restartRequired -and $proxyIsValid -and $roots.Count -gt 0 -and $null -ne $codexApp) {
+            if (-not $ObserveOnly -and -not $script:CompatibilityHold -and $restartRequired -and $proxyIsValid -and $stabilityReady -and $roots.Count -gt 0 -and $null -ne $codexApp) {
                 if (((Get-Date) - $lastRestart).TotalSeconds -ge $restartCooldownSeconds -and (Test-GuardianRestartBudget)) {
                     if (Request-CodexRestartApproval -Reason 'proxy_endpoint_changed' -ProxyUri $activeProxy -Config $config) {
                         $lastRestart = Get-Date
@@ -1171,13 +1520,16 @@ try {
                 $externalDecision = Get-CpgExternalLaunchDecision -Mode $decisionMode `
                     -SafeRepairEnabled:$safeRepairExternalLaunches -ProxyValid:$proxyIsValid `
                     -ArgumentMatches:$false -TrafficObserved:$pendingExternalTrafficObserved `
+                    -StabilityReady:$stabilityReady -UpstreamSuspected:$script:UpstreamSuspected `
+                    -CompatibilityBlocked:$script:CompatibilityHold `
                     -PendingSeconds ((Get-Date) - $pendingExternalSince).TotalSeconds `
                     -SafeGraceSeconds $safeExternalGraceSeconds -EnforceDebounceSeconds $externalDebounceSeconds
 
                 switch ([string]$externalDecision.Action) {
                     'Wait' {
-                        $externalLaunchState = if ($decisionMode -eq 'Enforce') { 'EnforceDebounce' } else { 'SafeEvidenceGrace' }
+                        $externalLaunchState = if ([string]$externalDecision.Reason -eq 'post_update_stability_observation') { 'PostUpdateStabilityObservation' } elseif ($decisionMode -eq 'Enforce') { 'EnforceDebounce' } else { 'SafeEvidenceGrace' }
                     }
+                    'Hold' { $externalLaunchState = if ([string]$externalDecision.Reason -eq 'codex_compatibility_review_required') { 'CodexCompatibilityReviewRequired' } else { 'UpstreamSuspected' } }
                     'Keep' { $externalLaunchState = 'ProxyTrafficObserved' }
                     'ManagedShortcut' { $externalLaunchState = 'ManagedShortcutRequired' }
                     'Repair' {
@@ -1214,7 +1566,7 @@ try {
                 else { $externalLaunchState = 'WaitingForValidatedProxy' }
             }
 
-            if (-not $ObserveOnly -and (Test-Path -LiteralPath $script:LaunchRequestPath)) {
+            if (-not $ObserveOnly -and -not $script:CompatibilityHold -and (Test-Path -LiteralPath $script:LaunchRequestPath)) {
                 if ($proxyIsValid -and $matchingRoots.Count -gt 0) {
                     Remove-Item -LiteralPath $script:LaunchRequestPath -Force -ErrorAction SilentlyContinue
                 }
@@ -1246,16 +1598,53 @@ try {
             $effectiveness = 'NoValidatedProxy'
             if ($proxyIsValid) { $effectiveness = 'ValidatedProxy' }
             if ($proxyIsValid -and $matchingRoots.Count -gt 0) { $effectiveness = 'LaunchConfigured' }
-            if ($proxyIsValid -and $roots.Count -gt 0 -and $trafficObservedRecently) { $effectiveness = 'TrafficObserved' }
+            if ($proxyIsValid -and $roots.Count -gt 0 -and $trafficObservedRecently -and $stabilityReady) { $effectiveness = 'TrafficObserved' }
+            if ($observationActive) { $effectiveness = 'PostUpdateObservation' }
+            if ($script:UpstreamSuspected) { $effectiveness = 'EndpointReachableOnly' }
+
+            $proxyReachability = if ($null -eq $currentValidation) {
+                'Unknown'
+            }
+            elseif (-not $currentEndpointReachable) {
+                'ListenerUnavailable'
+            }
+            elseif ($currentValidationPassed -and $currentCriticalTargetsPassed) {
+                'CriticalTargetsPassed'
+            }
+            else {
+                'CriticalTargetsFailed'
+            }
+            $streamStability = if ($script:UpstreamSuspected) { 'UpstreamSuspected' } elseif ($observationActive) { 'ObservingAfterCodexUpdate' } else { 'IndirectEvidenceOnly' }
+            $postUpdateObservationState = if ($observationActive) {
+                'Observing'
+            }
+            elseif (-not [string]::IsNullOrWhiteSpace($script:PendingCodexPackageVersion)) {
+                'WaitingForUpdatedCodexLaunch'
+            }
+            elseif ($null -ne $codexApp -and [string]::Equals($script:PostUpdateObservationPassedVersion, [string]$codexApp.Version, [System.StringComparison]::OrdinalIgnoreCase)) {
+                'Passed'
+            }
+            else {
+                'NotRequired'
+            }
+            $displayPostUpdateSuccessfulSamples = if ($postUpdateObservationState -eq 'Passed') {
+                [Math]::Max($script:PostUpdateSuccessfulSamples, $postUpdateStabilitySamples)
+            }
+            else {
+                $script:PostUpdateSuccessfulSamples
+            }
 
             $guardianState = 'WaitingForProxy'
             if (-not $proxyIsValid -and -not [string]::IsNullOrWhiteSpace([string]$pendingProxy)) { $guardianState = 'Stabilizing' }
             if ($proxyIsValid) { $guardianState = 'Ready' }
             if ($proxyIsValid -and $externalLaunchState -in @('SafeEvidenceGrace', 'EnforceDebounce', 'WaitingForRestartBudget')) { $guardianState = 'EvaluatingCodexLaunch' }
+            if ($observationActive) { $guardianState = 'ObservingAfterCodexUpdate' }
+            if ($script:UpstreamSuspected) { $guardianState = 'UpstreamSuspected' }
             if ($proxyIsValid -and $externalLaunchState -eq 'ManagedShortcutRequired') { $guardianState = 'CodexNeedsManagedLaunch' }
             if ($externalLaunchState -eq 'CodexResolutionUnavailable') { $guardianState = 'CodexResolutionUnavailable' }
             if ($script:RecoveryLaunchRequired) { $guardianState = 'RecoveringCodex' }
             if ($script:RecoveryLaunchRequired -and $roots.Count -gt 0 -and $matchingRoots.Count -eq 0 -and -not $manageExternalLaunches -and -not $safeRepairExternalLaunches) { $guardianState = 'RecoveryBlockedByCodex' }
+            if ([string]$compatibilityDecision.State -eq 'ReviewRequired') { $guardianState = 'CodexCompatibilityReviewRequired' }
             $restartApprovalRequired = $restartRequired -or $externalLaunchState -eq 'RestartDeferred'
             if ($restartApprovalRequired) {
                 $guardianState = if ($script:RestartDeferredUntil -gt (Get-Date)) { 'RestartDeferred' } else { 'RestartApprovalRequired' }
@@ -1277,6 +1666,36 @@ try {
                 activeSource = $activeSource
                 activeProxyValid = $proxyIsValid
                 effectivenessEvidence = $effectiveness
+                proxyReachability = $proxyReachability
+                proxyEndpointReachable = $currentEndpointReachable
+                streamStability = $streamStability
+                streamStabilityLimitation = 'Critical HTTPS probes and local traffic are indirect evidence; authenticated long-lived Codex streams cannot be proven externally.'
+                upstreamSuspected = $script:UpstreamSuspected
+                upstreamSuspectedSinceUtc = if ($script:UpstreamSuspectedSince -gt [datetime]::MinValue) { $script:UpstreamSuspectedSince.ToUniversalTime().ToString('o') } else { $null }
+                upstreamRecommendedAction = if ($script:UpstreamSuspected) { 'Keep Codex open and change the provider node in the proxy application if reconnects continue.' } else { $null }
+                safeTrafficEvidenceAccepted = ($trafficObservedRecently -and $stabilityReady)
+                postUpdateObservationState = $postUpdateObservationState
+                postUpdateObservationActive = $observationActive
+                postUpdateVersion = if ($observationActive) { $script:PostUpdateObservationVersion } elseif (-not [string]::IsNullOrWhiteSpace($script:PendingCodexPackageVersion)) { $script:PendingCodexPackageVersion } else { $script:PostUpdateObservationPassedVersion }
+                postUpdateSuccessfulSamples = $displayPostUpdateSuccessfulSamples
+                postUpdateRequiredSamples = $postUpdateStabilitySamples
+                postUpdateObservationStartedUtc = if ($script:PostUpdateObservationStarted -gt [datetime]::MinValue) { $script:PostUpdateObservationStarted.ToUniversalTime().ToString('o') } else { $null }
+                postUpdateMinimumSeconds = $postUpdateStabilitySeconds
+                codexCompatibilityState = [string]$compatibilityDecision.State
+                codexCompatibilityEvidence = [string]$compatibilityDecision.Evidence
+                codexCompatibilityFingerprint = $compatibilityFingerprint
+                lastCompatibleCodexFingerprint = $script:LastCompatibleCodexFingerprint
+                codexCompatibilitySafeHold = $script:CompatibilityHold
+                compatibilityUpdateCheckState = $compatibilityUpdateCheckState
+                compatibilityUpdateRequestedVersion = $script:CompatibilityUpdateRequestedVersion
+                compatibilityUpdateLastAttemptUtc = if ($script:CompatibilityUpdateLastAttempt -gt [datetime]::MinValue) { $script:CompatibilityUpdateLastAttempt.ToUniversalTime().ToString('o') } else { $null }
+                compatibilityAutomation = @{
+                    manifestReresolution = $true
+                    postUpdateCapabilityAudit = $postUpdateStabilityEnabled
+                    immediateVerifiedGuardianUpdateCheck = [bool](Get-CpgConfigValue $config 'CheckForGuardianUpdateOnCodexChange' $true)
+                    dailyVerifiedGuardianUpdateFallback = [bool](Get-CpgConfigValue $config 'AutomaticUpdates' $true)
+                    failSafeNoRestartOnUnconfirmedAdapter = $true
+                }
                 proxyTestSuccessCount = if ($null -eq $currentValidation) { 0 } else { $currentValidation.SuccessCount }
                 proxyTestRequiredCount = if ($null -eq $currentValidation) { [int](Get-CpgConfigValue $config 'MinimumSuccessfulProxyTests' 1) } else { $currentValidation.RequiredCount }
                 proxyTestTargetCount = if ($null -eq $currentValidation) { @((Get-CpgConfigValue $config 'ProxyTestUrls' @())).Count } else { $currentValidation.TargetCount }

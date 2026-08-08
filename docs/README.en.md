@@ -26,6 +26,9 @@ The manual workaround is to find the current port, close Codex, set proxy enviro
 > [!IMPORTANT]
 > **A Codex “Reconnecting” banner does not prove that Guardian restarted Codex.** Guardian manages proxy discovery, validation, and Codex launch configuration; it cannot repair packet loss, TLS EOF, WebSocket resets, Windows `10054`, or request timeouts inside a proxy-provider node. Compare the same timestamp with Guardian logs: `codex_restart` or `proxy_changed` indicates a possibly related lifecycle action; if neither event exists, the streaming connection normally failed upstream.
 
+> [!TIP]
+> **v1.5.0 adds a post-update compatibility lifecycle.** After a newly updated Codex process starts, Guardian requires at least 60 seconds and three fresh critical-target validations. It also triggers the owned verified Guardian update task immediately. If launch adaptation cannot be confirmed, automatic relaunches are paused while Codex stays open and the updater waits for an adapter release.
+
 ## Attributing a reconnect
 
 | Evidence at the same timestamp | More likely cause | Next action |
@@ -33,6 +36,9 @@ The manual workaround is to find the current port, close Codex, set proxy enviro
 | Guardian logged `codex_restart` or `proxy_changed` | Guardian performed a lifecycle action | Share a redacted Doctor report and timestamp in an Issue |
 | Neither event exists; Codex logged TLS EOF, WebSocket reset, `10054`, or timeout | The selected provider node or its upstream path dropped the stream | Select a healthier node in the proxy application |
 | `ProxyCriticalTargetsPassed=false` | The critical `chatgpt.com` entry point did not validate | Inspect `ProxyCriticalFailures` and the provider node |
+| `GuardianState=ObservingAfterCodexUpdate` | A newly updated Codex is accumulating fresh validation samples | Keep Codex open and let the observation finish |
+| `GuardianState=UpstreamSuspected` | The local listener works, but critical external validation failed | Keep Codex open and select a healthier provider node |
+| `GuardianState=CodexCompatibilityReviewRequired` | Launch adaptation for the new version could not be confirmed and is safely held | Keep Codex open; Guardian checks verified adapter updates automatically |
 
 Guardian may try another discovered and validated endpoint or protocol. It never silently switches subscription nodes inside Clash/Mihomo/v2rayN, and it never changes system network settings.
 
@@ -49,9 +55,9 @@ Guardian may try another discovered and validated endpoint or protocol. It never
 - A restart-rate circuit breaker opens after three restarts in ten minutes by default, preventing an unstable environment from relaunching Codex indefinitely.
 - Before a managed restart, recovery intent is persisted. If the new Codex process does not start, the guardian retries within the same rate limit instead of silently leaving Codex closed.
 - Candidate ordering is deterministic and keeps the current endpoint within the same priority tier, avoiding port flip-flop.
-- The MSIX manifest is periodically re-read, so a Store update can move the executable without leaving the guardian on a stale version path.
+- The MSIX manifest is periodically re-read. When a Store update moves the executable, Guardian waits for the new process and requires consecutive fresh critical-target validations before accepting Safe-mode traffic evidence.
 - Uninstall removes only resources whose installation marker and target paths match.
-- Automatic (`Safe`) is the default mode. For a normally launched Codex process missing the current proxy argument, it waits for traffic evidence before performing one controlled repair; a process already observed using the validated proxy is left untouched.
+- Automatic (`Safe`) is the default mode. For a normally launched Codex process missing the current proxy argument, it waits for traffic evidence before performing one controlled repair. After a Codex package update, traffic evidence is accepted only after the post-update observation passes.
 - A daily current-user task checks this project's GitHub Releases and installs an update only after tag, filename, staged `VERSION`, and SHA-256 checks agree.
 - A single-file graphical installer lets normal users install or upgrade without administrator rights.
 
@@ -153,7 +159,7 @@ To stage on a machine without Codex installed:
 
 | User profile | Internal mode | Behavior | Recommendation |
 |---|---|---|---|
-| Automatic | `Safe` | Waits 20 seconds for proxy-traffic evidence; leaves a working process alone or performs one controlled repair | Default for public installs |
+| Automatic | `Safe` | Waits for proxy-traffic evidence; after a Codex update, also requires consecutive fresh critical-target checks before leaving the process alone | Default for public installs |
 | Strict | `Enforce` | Repairs a missing proxy argument after debounce, without the Safe traffic-evidence exemption | Opt in when exact launch arguments must be enforced |
 
 Use the Start Menu settings window, or switch with one command:
@@ -247,10 +253,14 @@ The status reports progressive effectiveness evidence:
 | `ValidatedProxy` | The endpoint accepted a TCP connection and met the configured HTTPS-test quorum |
 | `LaunchConfigured` | A current Codex root also carries the same normalized proxy argument |
 | `TrafficObserved` | A Codex process-tree connection to that proxy endpoint was observed recently |
+| `PostUpdateObservation` | A newly updated Codex is accumulating fresh critical-target validations; one local connection is not yet accepted as stable |
+| `EndpointReachableOnly` | The local listener works but a critical external validation failed; Codex is kept open |
 
-`TrafficObserved` is the strongest local evidence this project can provide without packet capture. It does not claim a particular exit IP, location, anonymity level, or proxy policy. Run `Doctor.ps1 -Online -Json` to create a deliberately redacted compatibility report; it omits raw proxy URLs, user paths, and logs.
+`TrafficObserved` is the strongest local evidence this project can provide without packet capture. Short HTTPS probes and local TCP metadata still cannot prove that an authenticated, long-lived Codex SSE/HTTP stream will remain stable, so the normal status deliberately says `StreamStability=IndirectEvidenceOnly`. It does not claim a particular exit IP, location, anonymity level, or proxy policy. Run `Doctor.ps1 -Online -Json` to create a deliberately redacted compatibility report; it omits raw proxy URLs, user paths, and logs.
 
-`GuardianState` distinguishes `Stabilizing`, `Ready`, `WaitingForProxy`, `RecoveringCodex`, `RecoveryBlockedByCodex`, and `RestartCircuitOpen`. `Control.ps1 -Action Start` waits through the normal debounce phase and reports the resulting state.
+For every detected Codex package version, Guardian re-resolves the MSIX manifest and real root executable, records a capability fingerprint, runs the post-update audit, and starts the repository's verified Release updater immediately. A still-compatible generic adapter continues automatically. If Codex changes an undocumented launch mechanism, Guardian cannot invent unknown upstream behavior; instead it fails safe, leaves Codex open, prevents repeated relaunch attempts, and adopts an adapter release automatically when one becomes available.
+
+`GuardianState` distinguishes `Stabilizing`, `Ready`, `WaitingForProxy`, `ObservingAfterCodexUpdate`, `UpstreamSuspected`, `CodexCompatibilityReviewRequired`, `RecoveringCodex`, `RecoveryBlockedByCodex`, and `RestartCircuitOpen`. `Control.ps1 -Action Start` waits through the normal debounce phase and reports the resulting state.
 
 Control the guardian itself without touching Codex or Windows networking:
 
