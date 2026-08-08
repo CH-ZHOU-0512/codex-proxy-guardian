@@ -29,6 +29,46 @@ $profile = Get-CpgModeProfile -Config $config
 $automaticUpdates = [bool](Get-CpgConfigValue $config 'AutomaticUpdates' $true)
 $updateChannel = [string](Get-CpgConfigValue $config 'UpdateChannel' 'Stable')
 $version = (Get-Content -Raw -LiteralPath $versionPath).Trim()
+$statusPath = Join-Path $resolvedRoot 'status.json'
+$status = try { if (Test-Path -LiteralPath $statusPath) { Get-Content -Raw -LiteralPath $statusPath | ConvertFrom-Json } else { $null } } catch { $null }
+function Get-SettingsStatusValue {
+    param($Object, [string]$Name, $Default)
+    if ($null -eq $Object) { return $Default }
+    $property = $Object.PSObject.Properties[$Name]
+    if ($null -eq $property -or $null -eq $property.Value) { return $Default }
+    return $property.Value
+}
+$proxyReachability = [string](Get-SettingsStatusValue $status 'proxyReachability' 'Unknown')
+$streamStability = [string](Get-SettingsStatusValue $status 'streamStability' 'Unknown')
+$compatibilityState = [string](Get-SettingsStatusValue $status 'codexCompatibilityState' 'Unknown')
+$compatibilityUpdateState = [string](Get-SettingsStatusValue $status 'compatibilityUpdateCheckState' 'NotNeeded')
+$postUpdateSamples = '{0}/{1}' -f [int](Get-SettingsStatusValue $status 'postUpdateSuccessfulSamples' 0), [int](Get-SettingsStatusValue $status 'postUpdateRequiredSamples' 0)
+$reachabilityText = switch ($proxyReachability) {
+    'CriticalTargetsPassed' { '关键入口已通过' }
+    'CriticalTargetsFailed' { '关键入口失败' }
+    'ListenerUnavailable' { '本地端口不可达' }
+    default { '尚无结论' }
+}
+$stabilityText = switch ($streamStability) {
+    'ObservingAfterCodexUpdate' { "Codex 更新后观察中（$postUpdateSamples）" }
+    'UpstreamSuspected' { '疑似代理上游异常；请保持 Codex 打开并尝试换节点' }
+    'IndirectEvidenceOnly' { '仅有间接证据；无法从外部证明登录态长连接绝对稳定' }
+    default { '尚无结论' }
+}
+$compatibilityText = switch ($compatibilityState) {
+    'Auditing' { '新版能力自动审计中' }
+    'Compatible' { '当前 Codex 已取得兼容证据' }
+    'AwaitingEvidence' { '新版入口已自动解析，等待真实使用证据' }
+    'ReviewRequired' { '适配未确认：已暂停自动重启并请求受信更新' }
+    default { '使用通用 MSIX 清单适配' }
+}
+$updateAuditText = switch ($compatibilityUpdateState) {
+    'Requested' { '已触发 Guardian 兼容更新检查' }
+    'RetryDeferred' { '更新检查稍后自动重试' }
+    'Failed' { '即时检查失败，保留每日自动检查' }
+    'Disabled' { '兼容更新检查已关闭' }
+    default { '兼容更新按需检查' }
+}
 
 $form = New-Object System.Windows.Forms.Form
 $form.Text = 'Codex Proxy Guardian 设置'
@@ -36,7 +76,7 @@ $form.StartPosition = 'CenterScreen'
 $form.FormBorderStyle = 'FixedDialog'
 $form.MaximizeBox = $false
 $form.MinimizeBox = $false
-$form.ClientSize = New-Object System.Drawing.Size(560, 565)
+$form.ClientSize = New-Object System.Drawing.Size(560, 630)
 $form.Font = New-Object System.Drawing.Font('Microsoft YaHei UI', 9)
 
 $title = New-Object System.Windows.Forms.Label
@@ -117,31 +157,38 @@ $updateGroup.Controls.Add($checkButton)
 $reconnectGroup = New-Object System.Windows.Forms.GroupBox
 $reconnectGroup.Text = '关于“正在重新连接”'
 $reconnectGroup.Location = New-Object System.Drawing.Point(20, 372)
-$reconnectGroup.Size = New-Object System.Drawing.Size(520, 105)
+$reconnectGroup.Size = New-Object System.Drawing.Size(520, 165)
 $form.Controls.Add($reconnectGroup)
 
 $reconnectDescription = New-Object System.Windows.Forms.Label
-$reconnectDescription.Text = '这表示 Codex 的流式连接正在重试，不等于 Guardian 重启了应用。若同一时间的 Guardian 日志没有 codex_restart / proxy_changed，通常是代理上游 TLS、WebSocket 或超时问题；请用 Status / Doctor 核对，并在代理软件中换稳定节点。'
+$reconnectDescription.Text = '这表示 Codex 的流式连接正在重试，不等于 Guardian 重启了应用。本地端口可达也不等于登录态长连接稳定。若日志没有 codex_restart / proxy_changed，通常是代理上游 TLS、WebSocket 或超时问题；请保持 Codex 打开，并在代理软件中换稳定节点。'
 $reconnectDescription.Location = New-Object System.Drawing.Point(18, 25)
 $reconnectDescription.Size = New-Object System.Drawing.Size(480, 70)
 $reconnectGroup.Controls.Add($reconnectDescription)
 
+$connectionStatusLabel = New-Object System.Windows.Forms.Label
+$connectionStatusLabel.Text = "连接判定：$reachabilityText；$stabilityText`r`n兼容机制：$compatibilityText；$updateAuditText"
+$connectionStatusLabel.Font = New-Object System.Drawing.Font('Microsoft YaHei UI', 9, [System.Drawing.FontStyle]::Bold)
+$connectionStatusLabel.Location = New-Object System.Drawing.Point(18, 99)
+$connectionStatusLabel.Size = New-Object System.Drawing.Size(480, 55)
+$reconnectGroup.Controls.Add($connectionStatusLabel)
+
 $statusLabel = New-Object System.Windows.Forms.Label
 $statusLabel.Text = "当前：$profile；自动更新：$(if ($automaticUpdates) { '开启' } else { '关闭' })"
-$statusLabel.Location = New-Object System.Drawing.Point(22, 490)
+$statusLabel.Location = New-Object System.Drawing.Point(22, 550)
 $statusLabel.Size = New-Object System.Drawing.Size(340, 25)
 $form.Controls.Add($statusLabel)
 
 $applyButton = New-Object System.Windows.Forms.Button
 $applyButton.Text = '应用'
-$applyButton.Location = New-Object System.Drawing.Point(365, 518)
+$applyButton.Location = New-Object System.Drawing.Point(365, 583)
 $applyButton.Size = New-Object System.Drawing.Size(82, 32)
 $applyButton.DialogResult = [System.Windows.Forms.DialogResult]::None
 $form.Controls.Add($applyButton)
 
 $closeButton = New-Object System.Windows.Forms.Button
 $closeButton.Text = '关闭'
-$closeButton.Location = New-Object System.Drawing.Point(458, 518)
+$closeButton.Location = New-Object System.Drawing.Point(458, 583)
 $closeButton.Size = New-Object System.Drawing.Size(82, 32)
 $closeButton.Add_Click({ $form.Close() })
 $form.Controls.Add($closeButton)
@@ -222,6 +269,8 @@ if ($SelfTest) {
         AutomaticUpdates = $automaticUpdates
         UpdateChannel = $updateChannel
         ReconnectGuidanceVisible = ($reconnectDescription.Text -like '*不等于 Guardian 重启*')
+        StreamStabilityVisible = ($connectionStatusLabel.Text -like '*连接判定*')
+        CompatibilityAutomationVisible = ($connectionStatusLabel.Text -like '*兼容机制*')
         ControlExists = (Test-Path -LiteralPath $controlPath)
         UpdaterExists = (Test-Path -LiteralPath $updatePath)
     }

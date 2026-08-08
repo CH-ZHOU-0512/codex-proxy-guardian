@@ -4,6 +4,16 @@ All notable changes are documented here. This project follows semantic versionin
 
 ## [未发布 / Unreleased]
 
+## [1.5.0] - 2026-08-08
+
+- Codex Store/MSIX 包版本变化后，不再把一次本地代理流量直接视为“已稳定”：新版进程启动后会进入至少 60 秒、3 次新鲜关键入口验证的观察期，缓存结果不重复计数。
+- 将本地监听可达、关键 HTTPS 入口结果和长流稳定性拆分为独立状态；Status、Doctor 与 Settings 会显示 `ProxyReachability`、`StreamStability`、`PostUpdateObservationState` 和 `UpstreamSuspected`。
+- 当前本地代理监听存在、但关键外部验证失败时，Guardian 会标记 `UpstreamSuspected`、保留当前 Codex，并建议用户在代理软件中换节点；不会因此重启 Codex、切换订阅节点或修改系统代理。
+- 当前活动端点疑似上游故障时，不再因为其他本地候选暂时通过而误触发端点切换；恢复必须由一次新的关键入口验证确认。
+- 明确限制：短 HTTPS 探测和本地 TCP 流量只能提供间接证据，无法从 Guardian 外部证明已登录 Codex 的长时 SSE/HTTP 流绝对稳定。
+- Codex 包版本变化时立即启动现有的、经过所有权校验的 Guardian 更新任务，不再只等每日检查；如果适配版本尚未发布，每日受信更新仍会自动继续跟进。
+- 新增版本能力指纹和兼容审计。若一次用户已批准的 Managed 启动在超时后仍无法确认代理参数或真实流量，自动进入 `CodexCompatibilityReviewRequired`，停止后续自动重启并等待新版适配；Codex 或 Guardian 版本变化后自动重新审计。
+
 ## [1.4.5] - 2026-08-04
 
 - 在 README 首页、Windows 设置界面、Status、Doctor、Issue 模板与 Wiki 中统一说明：Codex 的“正在重新连接”是流式连接重试，不等于 Guardian 重启了应用；应按同一时间是否存在 `codex_restart` / `proxy_changed` 事件进行归因。

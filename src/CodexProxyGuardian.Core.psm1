@@ -172,6 +172,9 @@ function Get-CpgExternalLaunchDecision {
         [bool]$ProxyValid = $false,
         [bool]$ArgumentMatches = $false,
         [bool]$TrafficObserved = $false,
+        [bool]$StabilityReady = $true,
+        [bool]$UpstreamSuspected = $false,
+        [bool]$CompatibilityBlocked = $false,
         [double]$PendingSeconds = 0,
         [int]$SafeGraceSeconds = 20,
         [int]$EnforceDebounceSeconds = 15
@@ -182,6 +185,15 @@ function Get-CpgExternalLaunchDecision {
     }
     if ($ArgumentMatches) {
         return [pscustomobject]@{ Action = 'None'; Reason = 'proxy_argument_matches' }
+    }
+    if ($UpstreamSuspected) {
+        return [pscustomobject]@{ Action = 'Hold'; Reason = 'proxy_upstream_suspected' }
+    }
+    if ($CompatibilityBlocked) {
+        return [pscustomobject]@{ Action = 'Hold'; Reason = 'codex_compatibility_review_required' }
+    }
+    if (-not $StabilityReady) {
+        return [pscustomobject]@{ Action = 'Wait'; Reason = 'post_update_stability_observation' }
     }
 
     if ($Mode -eq 'Enforce') {
@@ -201,6 +213,102 @@ function Get-CpgExternalLaunchDecision {
         return [pscustomobject]@{ Action = 'Wait'; Reason = 'safe_evidence_grace' }
     }
     return [pscustomobject]@{ Action = 'Repair'; Reason = 'safe_missing_argument_without_proxy_traffic' }
+}
+
+function Get-CpgProxyStabilityDecision {
+    [CmdletBinding()]
+    param(
+        [bool]$ObservationActive = $false,
+        [bool]$ValidationFresh = $false,
+        [bool]$EndpointReachable = $false,
+        [bool]$ValidationPassed = $false,
+        [bool]$CriticalTargetsPassed = $false,
+        [int]$SuccessfulSamples = 0,
+        [int]$RequiredSamples = 3,
+        [double]$ElapsedSeconds = 0,
+        [int]$MinimumObservationSeconds = 60,
+        [bool]$UpstreamSuspected = $false
+    )
+
+    $required = [Math]::Max(1, $RequiredSamples)
+    $minimumSeconds = [Math]::Max(0, $MinimumObservationSeconds)
+    $nextSamples = [Math]::Max(0, $SuccessfulSamples)
+    $suspected = $UpstreamSuspected
+
+    if ($ValidationFresh) {
+        if ($EndpointReachable -and (-not $ValidationPassed -or -not $CriticalTargetsPassed)) {
+            $suspected = $true
+            $nextSamples = 0
+        }
+        elseif ($ValidationPassed -and $CriticalTargetsPassed) {
+            $suspected = $false
+            if ($ObservationActive) { $nextSamples++ }
+        }
+        elseif ($ObservationActive) {
+            $nextSamples = 0
+        }
+    }
+
+    $observationComplete = $ObservationActive -and -not $suspected -and
+        $nextSamples -ge $required -and $ElapsedSeconds -ge $minimumSeconds
+    $stabilityReady = -not $suspected -and (-not $ObservationActive -or $observationComplete)
+    $state = if ($suspected) {
+        'UpstreamSuspected'
+    }
+    elseif ($ObservationActive -and -not $observationComplete) {
+        'ObservingAfterCodexUpdate'
+    }
+    elseif ($observationComplete) {
+        'StableAfterCodexUpdate'
+    }
+    else {
+        'IndirectEvidenceOnly'
+    }
+
+    return [pscustomobject]@{
+        State = $state
+        StabilityReady = $stabilityReady
+        ObservationComplete = $observationComplete
+        SuccessfulSamples = $nextSamples
+        UpstreamSuspected = $suspected
+    }
+}
+
+function Get-CpgCodexCompatibilityDecision {
+    [CmdletBinding()]
+    param(
+        [bool]$ObservationActive = $false,
+        [bool]$ObservationPassed = $false,
+        [bool]$LaunchConfigured = $false,
+        [bool]$TrafficObserved = $false,
+        [bool]$RecoveryPending = $false,
+        [bool]$CodexRunning = $false,
+        [double]$SecondsSinceManagedLaunch = 0,
+        [int]$ConfirmationSeconds = 45,
+        [bool]$CompatibilityBlocked = $false
+    )
+
+    if ($ObservationActive) {
+        return [pscustomobject]@{ State = 'Auditing'; Evidence = 'PostUpdateObservation'; ReviewRequired = $false }
+    }
+    if ($LaunchConfigured) {
+        return [pscustomobject]@{ State = 'Compatible'; Evidence = 'LaunchArgumentMatched'; ReviewRequired = $false }
+    }
+    if ($TrafficObserved) {
+        return [pscustomobject]@{ State = 'Compatible'; Evidence = 'ProxyTrafficObserved'; ReviewRequired = $false }
+    }
+    if ($CompatibilityBlocked) {
+        return [pscustomobject]@{ State = 'ReviewRequired'; Evidence = 'PreviousManagedVerificationFailed'; ReviewRequired = $true }
+    }
+
+    $timeout = [Math]::Max(15, $ConfirmationSeconds)
+    if ($ObservationPassed -and $RecoveryPending -and $CodexRunning -and $SecondsSinceManagedLaunch -ge $timeout) {
+        return [pscustomobject]@{ State = 'ReviewRequired'; Evidence = 'ManagedLaunchNotConfirmed'; ReviewRequired = $true }
+    }
+    if ($ObservationPassed) {
+        return [pscustomobject]@{ State = 'AwaitingEvidence'; Evidence = 'PackageResolvedAndTargetsPassed'; ReviewRequired = $false }
+    }
+    return [pscustomobject]@{ State = 'Baseline'; Evidence = 'PackageManifestResolved'; ReviewRequired = $false }
 }
 
 function Test-CpgGuardianProcessIdentity {
@@ -751,6 +859,8 @@ Export-ModuleMember -Function @(
     'Select-CpgUpdateRelease',
     'Get-CpgDeclaredSha256',
     'Get-CpgExternalLaunchDecision',
+    'Get-CpgProxyStabilityDecision',
+    'Get-CpgCodexCompatibilityDecision',
     'Test-CpgGuardianProcessIdentity',
     'Test-CpgLoopbackHost',
     'ConvertTo-CpgProxyUri',

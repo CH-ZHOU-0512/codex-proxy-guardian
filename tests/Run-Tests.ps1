@@ -103,6 +103,12 @@ Invoke-Test 'Default configuration is conservative' {
     Assert-True ([int]$config.MinimumSuccessfulProxyTests -ge 2)
     Assert-True ([int]$config.MinimumSuccessfulProxyTests -le @($config.ProxyTestUrls).Count)
     Assert-True ('chatgpt.com' -in @($config.RequiredProxyTestHosts))
+    Assert-True $config.PostUpdateStabilityEnabled
+    Assert-True ([int]$config.PostUpdateStabilitySamples -ge 3)
+    Assert-True ([int]$config.PostUpdateStabilitySeconds -ge 60)
+    Assert-True $config.CheckForGuardianUpdateOnCodexChange
+    Assert-True ([int]$config.CompatibilityUpdateRetryMinutes -ge 5)
+    Assert-True ([int]$config.CodexCompatibilityConfirmationSeconds -ge 30)
     foreach ($url in @($config.ProxyTestUrls)) { Assert-True ([string]$url).StartsWith('https://', [System.StringComparison]::OrdinalIgnoreCase) }
 }
 
@@ -121,6 +127,65 @@ Invoke-Test 'Safe external launches are repaired only after an evidence grace pe
     $enforced = Get-CpgExternalLaunchDecision -Mode Enforce -ProxyValid:$true -ArgumentMatches:$false -TrafficObserved:$true -PendingSeconds 15 -EnforceDebounceSeconds 15
     Assert-Equal 'Repair' ([string]$enforced.Action)
     Assert-Equal 'enforce_missing_proxy_argument' ([string]$enforced.Reason)
+
+    $observing = Get-CpgExternalLaunchDecision -Mode Safe -SafeRepairEnabled:$true -ProxyValid:$true -ArgumentMatches:$false -TrafficObserved:$true -StabilityReady:$false -PendingSeconds 60
+    Assert-Equal 'Wait' ([string]$observing.Action)
+    Assert-Equal 'post_update_stability_observation' ([string]$observing.Reason)
+
+    $upstream = Get-CpgExternalLaunchDecision -Mode Enforce -ProxyValid:$true -ArgumentMatches:$false -TrafficObserved:$true -UpstreamSuspected:$true -PendingSeconds 60
+    Assert-Equal 'Hold' ([string]$upstream.Action)
+    Assert-Equal 'proxy_upstream_suspected' ([string]$upstream.Reason)
+
+    $compatibilityHold = Get-CpgExternalLaunchDecision -Mode Safe -ProxyValid:$true -ArgumentMatches:$false -TrafficObserved:$false -CompatibilityBlocked:$true -PendingSeconds 120
+    Assert-Equal 'Hold' ([string]$compatibilityHold.Action)
+    Assert-Equal 'codex_compatibility_review_required' ([string]$compatibilityHold.Reason)
+}
+
+Invoke-Test 'Post-update stability requires fresh consecutive critical validations' {
+    $first = Get-CpgProxyStabilityDecision -ObservationActive:$true -ValidationFresh:$true -EndpointReachable:$true -ValidationPassed:$true -CriticalTargetsPassed:$true -SuccessfulSamples 0 -RequiredSamples 3 -ElapsedSeconds 10 -MinimumObservationSeconds 60
+    Assert-Equal 'ObservingAfterCodexUpdate' ([string]$first.State)
+    Assert-Equal 1 ([int]$first.SuccessfulSamples)
+    Assert-False $first.StabilityReady
+
+    $cached = Get-CpgProxyStabilityDecision -ObservationActive:$true -ValidationFresh:$false -EndpointReachable:$true -ValidationPassed:$true -CriticalTargetsPassed:$true -SuccessfulSamples $first.SuccessfulSamples -RequiredSamples 3 -ElapsedSeconds 40 -MinimumObservationSeconds 60
+    Assert-Equal 1 ([int]$cached.SuccessfulSamples)
+    Assert-False $cached.StabilityReady
+
+    $failed = Get-CpgProxyStabilityDecision -ObservationActive:$true -ValidationFresh:$true -EndpointReachable:$true -ValidationPassed:$false -CriticalTargetsPassed:$false -SuccessfulSamples 2 -RequiredSamples 3 -ElapsedSeconds 61 -MinimumObservationSeconds 60
+    Assert-Equal 'UpstreamSuspected' ([string]$failed.State)
+    Assert-Equal 0 ([int]$failed.SuccessfulSamples)
+    Assert-True $failed.UpstreamSuspected
+    Assert-False $failed.StabilityReady
+
+    $recovered = Get-CpgProxyStabilityDecision -ObservationActive:$true -ValidationFresh:$true -EndpointReachable:$true -ValidationPassed:$true -CriticalTargetsPassed:$true -SuccessfulSamples 2 -RequiredSamples 3 -ElapsedSeconds 90 -MinimumObservationSeconds 60 -UpstreamSuspected:$true
+    Assert-Equal 'StableAfterCodexUpdate' ([string]$recovered.State)
+    Assert-True $recovered.ObservationComplete
+    Assert-True $recovered.StabilityReady
+
+    $listenerDown = Get-CpgProxyStabilityDecision -ObservationActive:$false -ValidationFresh:$true -EndpointReachable:$false -ValidationPassed:$false -CriticalTargetsPassed:$false
+    Assert-Equal 'IndirectEvidenceOnly' ([string]$listenerDown.State)
+    Assert-False $listenerDown.UpstreamSuspected
+}
+
+Invoke-Test 'Codex compatibility audit fails safe after an unconfirmed managed launch' {
+    $auditing = Get-CpgCodexCompatibilityDecision -ObservationActive:$true
+    Assert-Equal 'Auditing' ([string]$auditing.State)
+    Assert-False $auditing.ReviewRequired
+
+    $traffic = Get-CpgCodexCompatibilityDecision -ObservationPassed:$true -TrafficObserved:$true
+    Assert-Equal 'Compatible' ([string]$traffic.State)
+    Assert-Equal 'ProxyTrafficObserved' ([string]$traffic.Evidence)
+
+    $waiting = Get-CpgCodexCompatibilityDecision -ObservationPassed:$true -RecoveryPending:$true -CodexRunning:$true -SecondsSinceManagedLaunch 44 -ConfirmationSeconds 45
+    Assert-Equal 'AwaitingEvidence' ([string]$waiting.State)
+
+    $blocked = Get-CpgCodexCompatibilityDecision -ObservationPassed:$true -RecoveryPending:$true -CodexRunning:$true -SecondsSinceManagedLaunch 45 -ConfirmationSeconds 45
+    Assert-Equal 'ReviewRequired' ([string]$blocked.State)
+    Assert-True $blocked.ReviewRequired
+
+    $recovered = Get-CpgCodexCompatibilityDecision -ObservationPassed:$true -LaunchConfigured:$true -CompatibilityBlocked:$true
+    Assert-Equal 'Compatible' ([string]$recovered.State)
+    Assert-False $recovered.ReviewRequired
 }
 
 Invoke-Test 'Stale guardian PIDs cannot identify unrelated processes' {
@@ -203,6 +268,7 @@ Invoke-Test 'Settings never reports a skipped update check as current' {
     Assert-True ($settingsSource.Contains('$result.CheckedAtUtc'))
     Assert-True ($settingsSource.Contains('Version = $version'))
     Assert-True ($settingsSource.Contains('ReconnectGuidanceVisible'))
+    Assert-True ($settingsSource.Contains('StreamStabilityVisible'))
     Assert-True ($settingsSource.Contains('codex_restart / proxy_changed'))
 }
 
@@ -216,6 +282,8 @@ Invoke-Test 'Public diagnostics explain how to attribute reconnects' {
     }
     Assert-True ($issueTemplate.Contains('reconnect_attribution'))
     Assert-True ($issueTemplate.Contains('codex_restart'))
+    Assert-True ($statusSource.Contains('PostUpdateObservationState'))
+    Assert-True ($statusSource.Contains('UpstreamSuspected'))
     Assert-True ($issueTemplate.Contains('proxy_changed'))
 }
 
@@ -503,6 +571,23 @@ Invoke-Test 'Installer provisions settings and a verified-release update task' {
     Assert-False $control.Contains('::Replace($temporaryPath, $configPath, $null') 'Mode changes use an invalid File.Replace backup path.'
 }
 
+Invoke-Test 'Codex package changes trigger owned verified updates and fail safe' {
+    $watcher = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'src\Watch-CodexProxy.ps1')
+    foreach ($required in @(
+        'Request-CompatibilityUpdateCheck',
+        'Test-CpgInstallMarker -InstallRoot $script:Root',
+        'Start-ScheduledTask -TaskName $updateTaskName',
+        "'codex_compatibility_update_requested'",
+        "'codex_compatibility_review_required'",
+        'failSafeNoRestartOnUnconfirmedAdapter',
+        'codexCompatibilityFingerprint'
+    )) {
+        Assert-True $watcher.Contains($required) "Watcher is missing compatibility automation: $required"
+    }
+    Assert-True $watcher.Contains('-not $script:CompatibilityHold -and $restartRequired') 'A compatibility hold does not block endpoint-change restarts.'
+    Assert-True $watcher.Contains('-CompatibilityBlocked:$script:CompatibilityHold') 'External-launch decisions ignore the compatibility hold.'
+}
+
 Invoke-Test 'One-click installer embeds and safely verifies the exact release payload' {
     $bootstrapper = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'setup\Program.cs')
     foreach ($required in @(
@@ -624,8 +709,8 @@ Invoke-Test 'Doctor emits a redacted, share-safe JSON report' {
     $reportText = & (Join-Path $repoRoot 'Doctor.ps1') -InstallRoot $diagnosticRoot -Json
     $report = $reportText | ConvertFrom-Json
     Assert-True $report.safeForSharing
-    Assert-Equal 4 ([int]$report.reportSchema)
-    Assert-Equal 'CodexStreamRetryNotProofOfGuardianRestart' ([string]$report.reconnectAttribution.meaning)
+    Assert-Equal 6 ([int]$report.reportSchema)
+    Assert-Equal 'CodexStreamRetryNotProofOfGuardianRestartOrEndpointFailure' ([string]$report.reconnectAttribution.meaning)
     Assert-False ([bool]$report.reconnectAttribution.providerNodeManagedByGuardian)
     Assert-False (($reportText -join '') -match [regex]::Escape($env:USERPROFILE)) 'The diagnostic report exposed the user profile path.'
     Assert-False (($reportText -join '') -match '(?i)"(?:activeProxy|systemProxy|proxyUri|proxyServer)"\s*:') 'The diagnostic report exposed a raw proxy field.'

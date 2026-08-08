@@ -12,7 +12,7 @@ body:
     id: version
     attributes:
       label: Guardian 版本
-      placeholder: 1.4.5
+      placeholder: 1.5.0
     validations:
       required: true
   - type: input
@@ -80,6 +80,12 @@ body:
         - 尚未核对
     validations:
       required: true
+  - type: input
+    id: compatibility_state
+    attributes:
+      label: Codex 兼容审计状态
+      description: 从 Status/Doctor 复制 CodexCompatibilityState、CodexCompatibilityEvidence 与 CompatibilityUpdateCheckState；不要粘贴原始代理地址。
+      placeholder: Compatible / ProxyTrafficObserved / Requested
   - type: textarea
     id: provider_log
     attributes:

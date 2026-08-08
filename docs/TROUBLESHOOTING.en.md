@@ -64,7 +64,15 @@ Starting with v1.4.4, Settings distinguishes “another updater is running; this
 
 Compare the timestamp with Guardian's `codex_restart` and `proxy_changed` events. If neither is present while Codex records TLS EOF, WebSocket reset, Windows `10054`, or a request timeout, the streaming connection was interrupted upstream of Guardian.
 
-Version 1.4.4 requires the critical `chatgpt.com` probe to pass and exposes `ProxyCriticalTargetsPassed` and `ProxyCriticalFailures` in status and Doctor output. Guardian can try another discovered endpoint or protocol, but it does not silently change the proxy application's provider node. If the proxy application's own log reports upstream `i/o timeout`, select a healthier node there.
+Version 1.4.4 requires the critical `chatgpt.com` probe to pass and exposes `ProxyCriticalTargetsPassed` and `ProxyCriticalFailures` in status and Doctor output. If the proxy application's own log reports upstream `i/o timeout`, select a healthier node there.
+
+Starting with v1.5.0, a newly started Store/MSIX Codex package enters `ObservingAfterCodexUpdate`: by default it must accumulate three fresh critical-target validations over at least 60 seconds. Guardian also starts its owned verified update task immediately. Cached results do not count, and one local proxy connection is not accepted prematurely as a stable Safe-mode conclusion.
+
+`GuardianState=UpstreamSuspected` means the local proxy listener remains reachable while a critical external validation failed. Guardian keeps Codex open and does not restart it, change subscription nodes inside the proxy application, or modify the system proxy for this condition. If reconnects continue, select a healthier node in Clash/Mihomo/v2rayN. A later fresh critical-target success clears the state automatically.
+
+`StreamStability=IndirectEvidenceOnly` is not an error. It states that short HTTPS probes and local TCP metadata cannot externally prove the stability of an authenticated long-lived SSE/HTTP stream.
+
+`CodexCompatibilityReviewRequired` means one user-approved Managed launch was still not confirmed by launch-argument or traffic evidence after the timeout. Guardian keeps the current Codex open and disables further automatic lifecycle actions for that Codex/Guardian combination. Immediate and daily verified update checks continue; installation of a newer Guardian clears the old hold and reruns the audit.
 
 ## No proxy is selected
 

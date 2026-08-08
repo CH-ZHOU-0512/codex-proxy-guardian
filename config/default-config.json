@@ -21,6 +21,12 @@
   "TcpTimeoutMilliseconds": 1500,
   "HttpTimeoutSeconds": 8,
   "HttpValidationIntervalSeconds": 30,
+  "PostUpdateStabilityEnabled": true,
+  "PostUpdateStabilitySamples": 3,
+  "PostUpdateStabilitySeconds": 60,
+  "CheckForGuardianUpdateOnCodexChange": true,
+  "CompatibilityUpdateRetryMinutes": 60,
+  "CodexCompatibilityConfirmationSeconds": 45,
   "UnavailableLogIntervalSeconds": 300,
   "ProxyTestUrls": [
     "https://api.openai.com/v1/models",
