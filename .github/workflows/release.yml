@@ -4,6 +4,12 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to rebuild and verify
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -11,10 +17,13 @@ permissions:
 jobs:
   release:
     runs-on: windows-latest
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
@@ -23,8 +32,8 @@ jobs:
         shell: powershell
         run: |
           $version = (Get-Content -Raw -LiteralPath .\VERSION).Trim()
-          if ($env:GITHUB_REF_NAME -ne "v$version") {
-            throw "Tag '$env:GITHUB_REF_NAME' does not match VERSION '$version'."
+          if ($env:RELEASE_TAG -ne "v$version") {
+            throw "Tag '$env:RELEASE_TAG' does not match VERSION '$version'."
           }
       - name: Build and test release archive
         shell: powershell
@@ -39,7 +48,7 @@ jobs:
           if ($assets.Count -lt 12) { throw "Expected at least 12 release assets, found $($assets.Count)." }
           $notesFile = ".\docs\releases\v$version.md"
 
-          $releaseJson = & gh release view $env:GITHUB_REF_NAME --json assets 2>$null
+          $releaseJson = & gh release view $env:RELEASE_TAG --json assets 2>$null
           if ($LASTEXITCODE -eq 0) {
             $release = $releaseJson | ConvertFrom-Json
             $remoteAssets = @{}
@@ -64,13 +73,13 @@ jobs:
             }
 
             if ($missingAssets.Count -gt 0) {
-              & gh release upload $env:GITHUB_REF_NAME @missingAssets
+              & gh release upload $env:RELEASE_TAG @missingAssets
               if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             }
 
             $verifyDirectory = Join-Path $env:RUNNER_TEMP "release-verify-$version"
             New-Item -ItemType Directory -Path $verifyDirectory -Force | Out-Null
-            & gh release download $env:GITHUB_REF_NAME --dir $verifyDirectory --clobber
+            & gh release download $env:RELEASE_TAG --dir $verifyDirectory --clobber
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             foreach ($payload in $payloads) {
               $payloadName = Split-Path -Leaf $payload
@@ -86,11 +95,11 @@ jobs:
               }
             }
 
-            $arguments = @('release', 'edit', $env:GITHUB_REF_NAME, '--verify-tag', '--title', "Codex Proxy Guardian $env:GITHUB_REF_NAME")
+            $arguments = @('release', 'edit', $env:RELEASE_TAG, '--verify-tag', '--title', "Codex Proxy Guardian $env:RELEASE_TAG")
             if (Test-Path -LiteralPath $notesFile) {
               $arguments += @('--notes-file', $notesFile)
             }
-            if ($env:GITHUB_REF_NAME -match '-') {
+            if ($env:RELEASE_TAG -match '-') {
               $arguments += '--prerelease'
             }
             else {
@@ -100,14 +109,14 @@ jobs:
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
           else {
-            $arguments = @('release', 'create', $env:GITHUB_REF_NAME) + $assets + @('--verify-tag', '--title', "Codex Proxy Guardian $env:GITHUB_REF_NAME")
+            $arguments = @('release', 'create', $env:RELEASE_TAG) + $assets + @('--verify-tag', '--title', "Codex Proxy Guardian $env:RELEASE_TAG")
             if (Test-Path -LiteralPath $notesFile) {
               $arguments += @('--notes-file', $notesFile)
             }
             else {
               $arguments += '--generate-notes'
             }
-            if ($env:GITHUB_REF_NAME -match '-') { $arguments += '--prerelease' }
+            if ($env:RELEASE_TAG -match '-') { $arguments += '--prerelease' }
             & gh @arguments
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
