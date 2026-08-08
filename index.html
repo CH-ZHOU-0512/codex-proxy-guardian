@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Codex 重连 5 次怎么办？Windows、macOS、Linux 代理守护</title>
-    <meta name="description" content="Codex Proxy Guardian 是开源的跨平台 Codex 代理守护工具：发现并验证 HTTP/HTTPS、SOCKS5 及 PAC/WPAD 代理，减少因代理未继承或端点变化造成的 Codex Reconnecting，并用日志区分 Guardian 操作与代理上游断流。">
+    <meta name="description" content="Codex Proxy Guardian 是开源的跨平台 Codex 代理守护工具：发现并验证 HTTP/HTTPS、SOCKS5 及 PAC/WPAD 代理，减少因代理未继承或端点变化造成的 Codex Reconnecting，并在 Codex 更新后自动重新审计兼容性、检查 Guardian 适配更新。">
     <meta name="keywords" content="Codex 重连 5 次,Codex Reconnecting 5/5,Codex 连接不上,Codex 代理,Windows 11,macOS,Linux,Codex CLI,Clash,Mihomo,v2rayN,sing-box,代理端口,Codex Proxy Guardian">
     <meta name="author" content="CH-ZHOU-0512">
     <meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1,max-video-preview:-1">
@@ -45,7 +45,7 @@
           "@id": "https://ch-zhou-0512.github.io/codex-proxy-guardian/#software",
           "name": "Codex Proxy Guardian",
           "alternateName": "Codex 代理守护程序",
-          "softwareVersion": "1.4.5",
+          "softwareVersion": "1.5.0",
           "operatingSystem": "Windows 11, macOS, Linux",
           "applicationCategory": "UtilitiesApplication",
           "isAccessibleForFree": true,
@@ -107,6 +107,14 @@
                 "@type": "Answer",
                 "text": "不一定。只有同一时间的 Guardian 日志出现 codex_restart 或 proxy_changed，Guardian 生命周期操作才可能相关；没有这两个事件且出现 TLS EOF、WebSocket reset、10054 或超时时，更可能是当前代理服务商节点或上游链路断流。"
               }
+            },
+            {
+              "@type": "Question",
+              "name": "Codex 更新后，Guardian 会自动适应吗？",
+              "acceptedAnswer": {
+                "@type": "Answer",
+                "text": "会自动重新解析新版应用入口、审计启动参数和代理流量，并立即检查经过校验的 Guardian 适配更新。若无法确认兼容，会保持 Codex 打开并暂停自动修复，等待正式适配版，而不是反复重启。"
+              }
             }
           ]
         }
@@ -140,7 +148,7 @@
           <div class="hero-copy" data-reveal>
             <p class="eyebrow">Windows · macOS · Linux · Open Source</p>
             <h1>让 Codex 跟上代理，<br>也把重连说清楚。</h1>
-            <p class="lead">持续确认真正可用的本地代理，减少因代理未继承或端点变化造成的重连；不会把服务商节点自身的断流算到 Guardian 头上。</p>
+            <p class="lead">持续确认真正可用的本地代理，减少因代理未继承或端点变化造成的重连；Codex 更新后自动重新审计并检查适配更新，也不会把服务商节点自身的断流算到 Guardian 头上。</p>
             <div class="actions">
               <a class="button button-primary" href="https://github.com/CH-ZHOU-0512/codex-proxy-guardian/releases/latest">3 分钟开始使用 <span aria-hidden="true">→</span></a>
               <a class="text-link" href="#workflow">先看看它怎么工作</a>
@@ -234,6 +242,18 @@
                 <em>Restart</em>
               </div>
             </article>
+            <article class="feature-row" data-reveal>
+              <span class="feature-index">04</span>
+              <div class="feature-copy">
+                <h3>跟上 Codex 自身更新</h3>
+                <p>发现 Store/MSIX 包版本变化后重新解析入口、审计兼容证据并立即检查 Guardian 适配更新；证据不足时保留 Codex，暂停自动修复。</p>
+              </div>
+              <div class="feature-evidence" aria-label="兼容审计示例">
+                <span>Adapt</span>
+                <strong>Audit</strong>
+                <em>Fail safe</em>
+              </div>
+            </article>
           </div>
         </div>
       </section>
@@ -298,7 +318,7 @@
       <section class="install" id="install" aria-labelledby="install-title">
         <div class="shell install-grid">
           <div data-reveal>
-              <p class="eyebrow">Install · v1.4.5 stable</p>
+              <p class="eyebrow">Install · v1.5.0 stable</p>
             <h2 id="install-title">选对系统包，<br>安装一次即可。</h2>
             <p>Windows 双击 Setup EXE，安装时会显示阶段和 0–100% 进度，完成前还会核对 Guardian 真实存活；macOS/Linux 解压后运行 <code>./install.sh</code>。全部安装到当前用户，不使用管理员权限或 sudo。</p>
             <a class="button button-accent" href="https://github.com/CH-ZHOU-0512/codex-proxy-guardian/releases/latest">下载最新正式版 <span aria-hidden="true">↓</span></a>
@@ -308,7 +328,7 @@
           <div class="terminal" data-reveal aria-label="一键安装步骤">
             <div class="terminal-head"><strong>Choose your platform</strong><span aria-hidden="true">● ● ●</span></div>
             <ol>
-              <li><span>WIN</span><code>CodexProxyGuardian-Setup-1.4.5.exe</code></li>
+              <li><span>WIN</span><code>CodexProxyGuardian-Setup-1.5.0.exe</code></li>
               <li><span>MAC</span><code>darwin-arm64 / darwin-amd64<br>./install.sh</code></li>
               <li><span>LNX</span><code>linux-arm64 / linux-amd64<br>./install.sh && codex-guard</code></li>
             </ol>
@@ -327,7 +347,7 @@
             <div><dt>0</dt><dd>不修改系统网络配置</dd></div>
             <div><dt>1×</dt><dd>单实例守护</dd></div>
             <div><dt>20s</dt><dd>自动模式证据等待期</dd></div>
-            <div><dt>Daily</dt><dd>校验后检查稳定版更新</dd></div>
+            <div><dt>Auto</dt><dd>Codex 更新后重新审计并检查适配</dd></div>
           </dl>
         </div>
       </section>
@@ -361,8 +381,8 @@
               <p>绝大多数人保持默认“自动”即可。它会先根据真实流量判断；只有你要求 Codex 启动参数绝对一致时，才需要严格模式。</p>
             </details>
             <details>
-              <summary>项目更新后，我也要手动更新吗？</summary>
-              <p>默认每天检查 Stable Release，并在版本、资产名称、包内 VERSION 与 SHA-256 等校验全部通过后安全更新；失败会保留原版本。</p>
+              <summary>Codex 更新后，我还要手动重新适配吗？</summary>
+              <p>通常不用。v1.5.0 会重新发现新版入口、审计兼容证据并立即检查正式适配更新；没有新版时继续每日检查。若完全未知的上游改动暂时无法确认，Guardian 会保持 Codex 打开并暂停自动修复，等适配版通过原有校验链自动安装。</p>
             </details>
             <details>
               <summary>为什么 Windows 说安装器无法识别？</summary>
@@ -397,7 +417,7 @@
           <a href="https://github.com/CH-ZHOU-0512/codex-proxy-guardian/discussions/4">使用指南</a>
           <a href="https://github.com/CH-ZHOU-0512/codex-proxy-guardian/discussions">Discussions</a>
         </nav>
-        <p>MIT License · v1.4.5 · <a href="https://github.com/CH-ZHOU-0512">CH-ZHOU-0512</a></p>
+        <p>MIT License · v1.5.0 · <a href="https://github.com/CH-ZHOU-0512">CH-ZHOU-0512</a></p>
       </div>
     </footer>
   </body>

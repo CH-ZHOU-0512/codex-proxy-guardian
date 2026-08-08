@@ -14,6 +14,10 @@ Windows 推荐下载 `CodexProxyGuardian-Setup-版本号.exe` 双击安装，v1.
 
 Codex 显示“正在重新连接”不等于 Guardian 重启了应用。只有同一时间的 Guardian 日志出现 `codex_restart` 或 `proxy_changed`，Guardian 生命周期操作才可能相关；没有这两个事件，而 Codex 或代理软件出现 TLS EOF、WebSocket reset、Windows `10054`、请求超时或上游 `i/o timeout` 时，更可能是当前服务商节点或其上游链路断流。Guardian 不会擅自切换代理软件里的订阅节点。
 
+Windows v1.5.0 起，每次检测到 Store/MSIX Codex 包版本变化，Guardian 都会从新包重新解析应用 ID、可执行文件和根进程，生成兼容能力指纹，重新审计关键入口、启动参数与真实代理流量，并立即触发一次经过安装路径和任务动作校验的 Stable Release 更新检查。若新版本暂时无法确认兼容，Guardian 会进入 `CodexCompatibilityReviewRequired`，保持 Codex 打开并暂停自动修复；正式适配发布后继续通过版本、标签、包内容与 SHA-256 校验链自动更新。完全未知且未公开的上游机制仍可能需要维护者发布适配，但普通用户无需反复重装或手动改配置。
+
+本地代理端口可达但关键外部验证失败时，Windows v1.5.0 会报告 `UpstreamSuspected` 并保留当前 Codex，不切换代理服务商节点、不修改系统网络配置。短 HTTPS 探测与本地 TCP 元数据不能证明登录态长时间 SSE/HTTP 流绝对稳定，因此 `StreamStability=IndirectEvidenceOnly` 是有意保留的诚实边界。
+
 ## Official links
 
 - Project: https://github.com/CH-ZHOU-0512/codex-proxy-guardian
@@ -29,4 +33,4 @@ Codex 显示“正在重新连接”不等于 Guardian 重启了应用。只有�
 
 ## Current stable version
 
-Version 1.4.5. Windows 11 Store/MSIX desktop (x64/ARM64), macOS ChatGPT/Codex desktop (Intel/Apple Silicon), and Linux Codex CLI (x64/ARM64). Supports HTTP/HTTPS, SOCKS5/SOCKS5H, and PAC/WPAD discovery with real target validation. `chatgpt.com` is a required Windows validation target. Status and Doctor explain reconnect attribution and distinguish Guardian lifecycle evidence from common upstream failures. Stable Release includes Windows EXE/ZIP and four native macOS/Linux archives, each with SHA-256.
+Version 1.5.0. Windows 11 Store/MSIX desktop (x64/ARM64), macOS ChatGPT/Codex desktop (Intel/Apple Silicon), and Linux Codex CLI (x64/ARM64). Supports HTTP/HTTPS, SOCKS5/SOCKS5H, and PAC/WPAD discovery with real target validation. Windows automatically re-discovers and audits compatibility after a Codex package update, immediately checks for a verified Guardian adapter update, and fails safe without restarting Codex when compatibility cannot be confirmed. `chatgpt.com` is a required Windows validation target. Status and Doctor distinguish endpoint reachability, indirect stream-stability evidence, Guardian lifecycle actions, and common upstream failures. Stable Release includes Windows EXE/ZIP and four native macOS/Linux archives, each with SHA-256.
