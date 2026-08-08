@@ -1,15 +1,17 @@
 (() => {
   const root = document.documentElement;
+  const body = document.body;
   const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
   const revealNodes = [...document.querySelectorAll('[data-reveal]')];
-  const timeline = document.querySelector('[data-timeline]');
+  const nav = document.querySelector('[data-nav]');
+  const navToggle = document.querySelector('[data-nav-toggle]');
+  const navLinks = [...document.querySelectorAll('[data-nav] a[href^="#"]')];
+  const sections = navLinks
+    .map((link) => document.querySelector(link.getAttribute('href')))
+    .filter(Boolean);
 
   const revealEverything = () => {
     revealNodes.forEach((node) => node.classList.add('is-visible'));
-    if (timeline) {
-      timeline.classList.add('is-active');
-      timeline.style.setProperty('--timeline-progress', '1');
-    }
   };
 
   if (reducedMotion.matches || !('IntersectionObserver' in window)) {
@@ -23,39 +25,80 @@
       });
     }, {
       threshold: 0.12,
-      rootMargin: '0px 0px -6% 0px'
+      rootMargin: '0px 0px -7% 0px'
     });
 
     revealNodes.forEach((node) => revealObserver.observe(node));
-
-    if (timeline) {
-      const timelineObserver = new IntersectionObserver((entries) => {
-        if (!entries.some((entry) => entry.isIntersecting)) return;
-        timeline.classList.add('is-active');
-        timeline.style.setProperty('--timeline-progress', '1');
-        timelineObserver.disconnect();
-      }, { threshold: 0.25 });
-      timelineObserver.observe(timeline);
-    }
   }
 
+  const setNavOpen = (open) => {
+    if (!nav || !navToggle) return;
+    nav.classList.toggle('is-open', open);
+    navToggle.setAttribute('aria-expanded', String(open));
+    navToggle.setAttribute('aria-label', open ? '关闭导航' : '打开导航');
+    body.classList.toggle('nav-open', open && window.innerWidth <= 1040);
+  };
+
+  navToggle?.addEventListener('click', () => {
+    setNavOpen(navToggle.getAttribute('aria-expanded') !== 'true');
+  });
+
+  navLinks.forEach((link) => {
+    link.addEventListener('click', () => setNavOpen(false));
+  });
+
+  document.addEventListener('click', (event) => {
+    if (!nav?.classList.contains('is-open')) return;
+    if (nav.contains(event.target) || navToggle?.contains(event.target)) return;
+    setNavOpen(false);
+  });
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') setNavOpen(false);
+  });
+
+  const updateActiveNav = () => {
+    if (!sections.length) return;
+    const marker = window.scrollY + 150;
+    let activeId = '';
+
+    sections.forEach((section) => {
+      if (section.offsetTop <= marker) activeId = section.id;
+    });
+
+    if (window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 8) {
+      activeId = sections[sections.length - 1].id;
+    }
+
+    navLinks.forEach((link) => {
+      const active = link.getAttribute('href') === `#${activeId}`;
+      link.classList.toggle('is-active', active);
+      if (active) link.setAttribute('aria-current', 'location');
+      else link.removeAttribute('aria-current');
+    });
+  };
+
   let ticking = false;
-  const updateProgress = () => {
+  const updatePage = () => {
     const available = document.documentElement.scrollHeight - window.innerHeight;
     const progress = available > 0 ? Math.min(1, Math.max(0, window.scrollY / available)) : 0;
     root.style.setProperty('--page-progress', progress.toFixed(4));
+    updateActiveNav();
     ticking = false;
   };
 
-  const requestProgressUpdate = () => {
+  const requestPageUpdate = () => {
     if (ticking) return;
     ticking = true;
-    requestAnimationFrame(updateProgress);
+    requestAnimationFrame(updatePage);
   };
 
-  updateProgress();
-  window.addEventListener('scroll', requestProgressUpdate, { passive: true });
-  window.addEventListener('resize', requestProgressUpdate, { passive: true });
+  updatePage();
+  window.addEventListener('scroll', requestPageUpdate, { passive: true });
+  window.addEventListener('resize', () => {
+    if (window.innerWidth > 1040) setNavOpen(false);
+    requestPageUpdate();
+  }, { passive: true });
 
   reducedMotion.addEventListener?.('change', (event) => {
     if (event.matches) revealEverything();
