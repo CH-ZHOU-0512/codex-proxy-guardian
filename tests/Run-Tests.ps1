@@ -644,6 +644,9 @@ Invoke-Test 'One-click installer embeds and safely verifies the exact release pa
     $releaseWorkflow = Get-Content -Raw -LiteralPath (Join-Path $repoRoot '.github\workflows\release.yml')
 	Assert-True $releaseWorkflow.Contains('Get-ChildItem -LiteralPath .\artifacts -File') 'GitHub Release does not publish all generated assets.'
 	Assert-True $releaseWorkflow.Contains('Expected at least 12 release assets') 'GitHub Release does not enforce the complete cross-platform asset set.'
+    Assert-True $releaseWorkflow.Contains("`$ErrorActionPreference = 'SilentlyContinue'") 'A missing first-time Release can terminate Windows PowerShell before the create branch.'
+    Assert-True $releaseWorkflow.Contains('$releaseViewExitCode = $LASTEXITCODE') 'Release creation does not preserve the probe exit code.'
+    Assert-True $releaseWorkflow.Contains('if ($releaseViewExitCode -eq 0)') 'Release creation still branches on a stale native exit code.'
 }
 
 Invoke-Test 'Installer progress protocol reports determinate stages' {
