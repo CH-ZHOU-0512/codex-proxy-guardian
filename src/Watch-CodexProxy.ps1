@@ -611,6 +611,8 @@ function Start-CodexManaged {
         throw 'The configured Codex MSIX application could not be resolved.'
     }
 
+    # Traffic observed before this launch cannot prove that the new process inherited the proxy.
+    $script:LastProxyConnection = [datetime]::MinValue
     Set-ScopedProxyEnvironment $ProxyUri $Config
     $arguments = @()
     if ([bool](Get-CpgConfigValue $Config 'UseChromiumProxyArgument' $true)) {
@@ -1065,7 +1067,7 @@ function Request-CompatibilityUpdateCheck {
 }
 
 function Get-CodexCompatibilityFingerprint {
-    param($CodexApp, [bool]$UseProxyArgument)
+    param($CodexApp, [bool]$UseProxyArgument, [bool]$RequireManagedStreaming)
     if ($null -eq $CodexApp) { return $null }
     $text = @(
         [string]$CodexApp.PackageName,
@@ -1073,7 +1075,9 @@ function Get-CodexCompatibilityFingerprint {
         [string]$CodexApp.ApplicationId,
         [string]$CodexApp.ProcessName,
         [string]$CodexApp.ResolutionMethod,
-        [string]$UseProxyArgument
+        [string]$UseProxyArgument,
+        [string]$RequireManagedStreaming,
+        'managed-streaming-contract-v2'
     ) -join '|'
     $sha = [Security.Cryptography.SHA256]::Create()
     try { return ([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($text)))).Replace('-', '').ToLowerInvariant() }
@@ -1442,7 +1446,9 @@ try {
             $postUpdateObservationPassed = $null -ne $codexApp -and
                 [string]::Equals($script:PostUpdateObservationPassedVersion, [string]$codexApp.Version, [System.StringComparison]::OrdinalIgnoreCase)
             $secondsSinceManagedLaunch = if ($lastRestart -gt [datetime]::MinValue) { ((Get-Date) - $lastRestart).TotalSeconds } else { 0 }
-            $compatibilityFingerprint = Get-CodexCompatibilityFingerprint -CodexApp $codexApp -UseProxyArgument:([bool](Get-CpgConfigValue $config 'UseChromiumProxyArgument' $true))
+            $compatibilityFingerprint = Get-CodexCompatibilityFingerprint -CodexApp $codexApp `
+                -UseProxyArgument:([bool](Get-CpgConfigValue $config 'UseChromiumProxyArgument' $true)) `
+                -RequireManagedStreaming:$requireManagedLaunchForStreaming
             $compatibilityDecision = Get-CpgCodexCompatibilityDecision -ObservationActive:$observationActive `
                 -ObservationPassed:$postUpdateObservationPassed -LaunchConfigured:($matchingRoots.Count -gt 0) `
                 -TrafficObserved:$trafficObservedRecently -RequireManagedLaunchForStreaming:$requireManagedLaunchForStreaming `
@@ -1722,6 +1728,10 @@ try {
                 compatibilityUpdateRequestedVersion = $script:CompatibilityUpdateRequestedVersion
                 compatibilityUpdateLastAttemptUtc = if ($script:CompatibilityUpdateLastAttempt -gt [datetime]::MinValue) { $script:CompatibilityUpdateLastAttempt.ToUniversalTime().ToString('o') } else { $null }
                 compatibilityAutomation = @{
+                    contractVersion = 2
+                    behaviorBasedEvidence = $true
+                    codexVersionInvalidatesPreviousEvidence = $true
+                    managedLaunchAndFreshTrafficRequired = $requireManagedLaunchForStreaming
                     manifestReresolution = $true
                     postUpdateCapabilityAudit = $postUpdateStabilityEnabled
                     immediateVerifiedGuardianUpdateCheck = [bool](Get-CpgConfigValue $config 'CheckForGuardianUpdateOnCodexChange' $true)

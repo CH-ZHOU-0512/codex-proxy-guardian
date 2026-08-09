@@ -190,6 +190,18 @@ Invoke-Test 'Codex compatibility audit fails safe after an unconfirmed managed l
     Assert-Equal 'SystemProxyHttpTrafficOnly' ([string]$httpOnlyTraffic.Evidence)
     Assert-False $httpOnlyTraffic.ReviewRequired
 
+    $managedPending = Get-CpgCodexCompatibilityDecision -ObservationPassed:$true -LaunchConfigured:$true -RequireManagedLaunchForStreaming:$true -RecoveryPending:$true -CodexRunning:$true -SecondsSinceManagedLaunch 44 -ConfirmationSeconds 45
+    Assert-Equal 'AwaitingEvidence' ([string]$managedPending.State)
+    Assert-Equal 'ManagedStreamingTrafficPending' ([string]$managedPending.Evidence)
+
+    $managedConfirmed = Get-CpgCodexCompatibilityDecision -ObservationPassed:$true -LaunchConfigured:$true -TrafficObserved:$true -RequireManagedLaunchForStreaming:$true
+    Assert-Equal 'Compatible' ([string]$managedConfirmed.State)
+    Assert-Equal 'ManagedLaunchAndTrafficObserved' ([string]$managedConfirmed.Evidence)
+
+    $managedUnconfirmed = Get-CpgCodexCompatibilityDecision -ObservationPassed:$true -LaunchConfigured:$true -RequireManagedLaunchForStreaming:$true -RecoveryPending:$true -CodexRunning:$true -SecondsSinceManagedLaunch 45 -ConfirmationSeconds 45
+    Assert-Equal 'ReviewRequired' ([string]$managedUnconfirmed.State)
+    Assert-Equal 'ManagedStreamingTrafficNotConfirmed' ([string]$managedUnconfirmed.Evidence)
+
     $waiting = Get-CpgCodexCompatibilityDecision -ObservationPassed:$true -RecoveryPending:$true -CodexRunning:$true -SecondsSinceManagedLaunch 44 -ConfirmationSeconds 45
     Assert-Equal 'AwaitingEvidence' ([string]$waiting.State)
 
@@ -595,7 +607,10 @@ Invoke-Test 'Codex package changes trigger owned verified updates and fail safe'
         "'codex_compatibility_update_requested'",
         "'codex_compatibility_review_required'",
         'failSafeNoRestartOnUnconfirmedAdapter',
-        'codexCompatibilityFingerprint'
+        'codexCompatibilityFingerprint',
+        'managed-streaming-contract-v2',
+        'codexVersionInvalidatesPreviousEvidence',
+        'managedLaunchAndFreshTrafficRequired'
     )) {
         Assert-True $watcher.Contains($required) "Watcher is missing compatibility automation: $required"
     }
@@ -687,6 +702,7 @@ Invoke-Test 'Watcher publishes explicit lifecycle states' {
     Assert-True $watcher.Contains('Get-CpgRestartPromptDecision') 'Watcher does not require an explicit prompt decision.'
     Assert-True $watcher.Contains('safe_streaming_proxy_not_guaranteed') 'Watcher does not distinguish HTTP fallback from guaranteed streaming proxy injection.'
     Assert-True $watcher.Contains('[Math]::Max(60, $configuredSnoozeMinutes)') 'A declined streaming repair can prompt too frequently.'
+    Assert-True $watcher.Contains('$script:LastProxyConnection = [datetime]::MinValue') 'A managed launch can reuse stale traffic evidence.'
     $restartCalls = @([regex]::Matches($watcher, '(?m)^\s*\$managedRootPid\s*=\s*Restart-CodexManaged\b[^\r\n]*'))
     Assert-True ($restartCalls.Count -ge 3) 'Expected all managed restart call paths to be present.'
     foreach ($restartCall in $restartCalls) {

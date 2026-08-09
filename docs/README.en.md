@@ -264,6 +264,12 @@ The status reports progressive effectiveness evidence:
 
 For every detected Codex package version, Guardian re-resolves the MSIX manifest and real root executable, records a capability fingerprint, runs the post-update audit, and starts the repository's verified Release updater immediately. A still-compatible generic adapter continues automatically. If Codex changes an undocumented launch mechanism, Guardian cannot invent unknown upstream behavior; instead it fails safe, leaves Codex open, prevents repeated relaunch attempts, and adopts an adapter release automatically when one becomes available.
 
+### Compatibility contract for every future Codex version
+
+This is behavior-based rather than a whitelist of known version numbers. Every Codex package version change invalidates previous evidence, re-resolves the manifest entry point, and requires fresh critical-target validation. On Windows, compatibility additionally requires both matching managed-launch configuration and fresh proxy traffic from the new process. A failure enters a no-restart safety hold and triggers the verified Guardian updater immediately, with the daily updater as fallback.
+
+Automation can detect change, apply a generic adapter, revalidate behavior, fail precisely, and install an adapter that has been published. No local tool can invent support before code exists if a future Codex release removes the current launch mechanism or introduces an unknown protocol. Guardian therefore protects the active task and reports machine-readable evidence until a verified adapter Release is available.
+
 `GuardianState` distinguishes `Stabilizing`, `Ready`, `WaitingForProxy`, `ObservingAfterCodexUpdate`, `UpstreamSuspected`, `CodexCompatibilityReviewRequired`, `RecoveringCodex`, `RecoveryBlockedByCodex`, and `RestartCircuitOpen`. `Control.ps1 -Action Start` waits through the normal debounce phase and reports the resulting state.
 
 Control the guardian itself without touching Codex or Windows networking:

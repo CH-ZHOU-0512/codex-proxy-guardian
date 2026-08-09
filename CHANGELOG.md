@@ -9,6 +9,7 @@ All notable changes are documented here. This project follows semantic versionin
 - 修复 Windows 新版 Codex 的关键误判：普通启动时，HTTP 请求可能通过系统代理成功，但 WebSocket/流式子进程并未继承显式代理环境。此类流量不再被当成完整代理生效证据。
 - 默认要求受管流式启动证据。Safe 模式先防抖观察，再以前台确认框说明原因；只有用户明确点击“是”才关闭并重启 Codex，点击“否”、超时或提示失败都会保留当前任务，且此类提示至少延后 60 分钟再询问。
 - 受管启动同时注入 HTTP/HTTPS/ALL/WS/WSS 大小写代理变量和 Chromium 代理参数；状态新增 `SystemProxyHttpTrafficOnly`、`ManagedTrafficObserved`、`StreamingProxyGuaranteed` 与 `StreamingRepairRequired`。
+- 将后续 Codex 更新固化为行为兼容契约：每个新包版本使旧证据失效；只有“受管启动匹配 + 新进程真实代理流量”才通过 Windows 兼容审计，旧流量不会跨启动复用。失败时安全保持并触发受信更新，不按版本号猜测。
 - Settings、Status、Doctor、安装结果、健康采样和中英文文档同步区分“HTTP 经过系统代理”与“流式代理已受管保障”；不修改 Windows 系统代理或永久环境变量。
 
 ## [1.5.0] - 2026-08-08
