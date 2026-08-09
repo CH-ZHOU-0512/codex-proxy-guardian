@@ -72,6 +72,13 @@ v1.4.4 起，Settings 会区分“更新器正忙，本次没有检查”和“�
 
 先查看 Guardian 日志是否在同一时间出现 `codex_restart` 或 `proxy_changed`。如果没有，而 Codex 日志出现 TLS EOF、WebSocket reset、`10054` 或请求超时，说明流式连接在代理上游被中断。
 
+v1.5.1 起还要先看 `StreamingProxyGuaranteed`：
+
+- `false` 或 `EffectivenessEvidence=SystemProxyHttpTrafficOnly`：普通启动只证明 HTTP 通过了 Windows 系统代理，不能证明新版 Codex 的 WebSocket/流式子进程继承了显式代理。先完成当前任务，再批准 Guardian 的前台修复提示；也可以关闭 Codex 后打开 **Codex (Managed Proxy)**。
+- `true` 且 `EffectivenessEvidence=ManagedTrafficObserved`：受管启动与实际端点流量都已观察到。若仍重连且没有 Guardian 生命周期事件，再检查代理节点上游。
+
+修复提示只有明确点击“是”才会关闭并重启 Codex；点击“否”、超时或提示失败都会保留当前任务并按配置延后询问。Guardian 不会为此修改系统代理或永久环境变量。
+
 v1.4.4 默认要求 `chatgpt.com` 关键目标通过；`Status.ps1` 和 `Doctor.ps1` 会显示 `ProxyCriticalTargetsPassed` 与 `ProxyCriticalFailures`。若代理软件日志同时出现上游 `i/o timeout`，请手动换一个稳定节点。
 
 v1.5.0 起，Codex Store/MSIX 包版本变化后，新版进程会进入 `ObservingAfterCodexUpdate`：默认至少 60 秒并累计 3 次新鲜关键入口验证，缓存结果不计数。Guardian 同时立即启动经过安装所有权校验的更新任务；观察期间一次本地代理流量不会被 Safe 模式过早当成稳定结论。
@@ -113,9 +120,9 @@ v1.5.0 起，Codex Store/MSIX 包版本变化后，新版进程会进入 `Observ
 - 企业 PAC 返回远程代理时，确认 `AllowSystemNonLoopbackProxy` 没有被关闭。手写 `ExplicitPAC` 返回远程代理则仍需 `AllowNonLoopbackProxy: true`。
 - PAC 下载、DNS 或脚本执行超过安全时限会被拒绝；不要通过无限增大限制掩盖损坏或恶意脚本。
 
-## 显示 ValidatedProxy，但没有 TrafficObserved
+## 显示 ValidatedProxy，但没有 ManagedTrafficObserved
 
-`ValidatedProxy` 证明该端点能够承载配置的 HTTPS 验证请求；`LaunchConfigured` 进一步证明当前 Codex 根进程带有相同代理参数；只有实际观察到 Codex 进程树连接该端点后才会出现 `TrafficObserved`。
+`ValidatedProxy` 证明该端点能够承载配置的 HTTPS 验证请求；`LaunchConfigured` 进一步证明当前 Codex 根进程带有相同代理参数；只有受管启动后又实际观察到 Codex 进程树连接该端点，才会出现 `ManagedTrafficObserved`。`SystemProxyHttpTrafficOnly` 只证明普通启动的 HTTP 流量经过代理，不再被当成流式代理完整生效。
 
 请在 Codex 中打开或继续一个任务，然后再次查看状态。持续时间很短的连接可能没有被采样到，因此缺少流量证据本身不能直接证明代理无效。
 

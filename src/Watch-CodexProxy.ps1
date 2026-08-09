@@ -707,13 +707,22 @@ function Request-CodexRestartApproval {
     if ($script:RestartDeferredUntil -gt $now) { return $false }
 
     $timeoutSeconds = [Math]::Max(15, [Math]::Min(300, [int](Get-CpgConfigValue $Config 'RestartPromptTimeoutSeconds' 45)))
-    $snoozeMinutes = [Math]::Max(1, [Math]::Min(1440, [int](Get-CpgConfigValue $Config 'RestartPromptSnoozeMinutes' 10)))
+    $configuredSnoozeMinutes = [Math]::Max(1, [Math]::Min(1440, [int](Get-CpgConfigValue $Config 'RestartPromptSnoozeMinutes' 10)))
     $endpoint = Protect-CpgProxyUri $ProxyUri
+    $streamingRepair = $Reason -eq 'safe_streaming_proxy_not_guaranteed'
+    $snoozeMinutes = if ($streamingRepair) { [Math]::Max(60, $configuredSnoozeMinutes) } else { $configuredSnoozeMinutes }
+    $reasonText = if ($streamingRepair) {
+        '当前 Codex 是普通启动：HTTP 流量已走代理，但新版 Codex 的 WebSocket/流式连接未继承显式代理环境，仍可能反复“正在重新连接”。'
+    }
+    else {
+        ('代理地址或启动参数需要调整（{0}）。' -f $Reason)
+    }
     $message = @(
-        'Codex Proxy Guardian 检测到代理地址或启动参数需要调整。',
+        'Codex Proxy Guardian 检测到一次需要确认的修复。',
         '',
-        ('原因：{0}' -f $Reason),
-        ('新代理：{0}' -f $endpoint),
+        $reasonText,
+        ('将使用的代理：{0}' -f $endpoint),
+        $(if ($streamingRepair) { '修复会同时注入 HTTP/HTTPS/WS/WSS 代理环境，并保留 Chromium 启动参数。' } else { $null }),
         '',
         '点击“是”才会关闭并重启 Codex。',
         ('点击“否”或等待窗口自动关闭，将延后 {0} 分钟。' -f $snoozeMinutes),
@@ -894,6 +903,7 @@ $debounceSeconds = [Math]::Max(0, [int](Get-CpgConfigValue $config 'DebounceSeco
 if ($RunOnce) { $stableSamples = 1; $debounceSeconds = 0 }
 $externalDebounceSeconds = [Math]::Max(0, [int](Get-CpgConfigValue $config 'ExternalLaunchDebounceSeconds' 15))
 $safeExternalGraceSeconds = [Math]::Max(10, [int](Get-CpgConfigValue $config 'SafeExternalLaunchGraceSeconds' 20))
+$requireManagedLaunchForStreaming = [bool](Get-CpgConfigValue $config 'RequireManagedLaunchForStreaming' $true)
 $restartCooldownSeconds = [Math]::Max(10, [int](Get-CpgConfigValue $config 'RestartCooldownSeconds' 45))
 $restartLimitCount = [Math]::Max(1, [int](Get-CpgConfigValue $config 'RestartLimitCount' 3))
 $restartLimitWindowMinutes = [Math]::Max(1, [int](Get-CpgConfigValue $config 'RestartLimitWindowMinutes' 10))
@@ -909,7 +919,7 @@ $unavailableLogSeconds = [Math]::Max(30, [int](Get-CpgConfigValue $config 'Unava
 $guardianMode = [string](Get-CpgConfigValue $config 'Mode' 'Safe')
 $manageExternalLaunches = ($guardianMode -eq 'Enforce' -or [bool](Get-CpgConfigValue $config 'ManageExternalCodexLaunches' $false)) -and -not $ObserveOnly
 $safeRepairExternalLaunches = $guardianMode -eq 'Safe' -and [bool](Get-CpgConfigValue $config 'SafeRepairExternalCodexLaunches' $true) -and -not $ObserveOnly
-$externalLaunchPolicy = if ($ObserveOnly) { 'ObserveOnly' } elseif ($manageExternalLaunches) { 'Enforce' } elseif ($safeRepairExternalLaunches) { 'SafeEvidenceRepair' } else { 'ManagedShortcutOnly' }
+$externalLaunchPolicy = if ($ObserveOnly) { 'ObserveOnly' } elseif ($manageExternalLaunches) { 'Enforce' } elseif ($safeRepairExternalLaunches -and $requireManagedLaunchForStreaming) { 'SafeStreamingRepair' } elseif ($safeRepairExternalLaunches) { 'SafeEvidenceRepair' } else { 'ManagedShortcutOnly' }
 $guardianVersion = Get-GuardianVersion
 
 $persistentState = Read-PersistentState
@@ -1157,13 +1167,16 @@ try {
                 $updatedMode = [string](Get-CpgConfigValue $updatedConfig 'Mode' 'Safe')
                 $updatedManageExternal = ($updatedMode -eq 'Enforce' -or [bool](Get-CpgConfigValue $updatedConfig 'ManageExternalCodexLaunches' $false)) -and -not $ObserveOnly
                 $updatedSafeRepair = $updatedMode -eq 'Safe' -and [bool](Get-CpgConfigValue $updatedConfig 'SafeRepairExternalCodexLaunches' $true) -and -not $ObserveOnly
-                $updatedPolicy = if ($ObserveOnly) { 'ObserveOnly' } elseif ($updatedManageExternal) { 'Enforce' } elseif ($updatedSafeRepair) { 'SafeEvidenceRepair' } else { 'ManagedShortcutOnly' }
+                $updatedRequireManagedStreaming = [bool](Get-CpgConfigValue $updatedConfig 'RequireManagedLaunchForStreaming' $true)
+                $updatedPolicy = if ($ObserveOnly) { 'ObserveOnly' } elseif ($updatedManageExternal) { 'Enforce' } elseif ($updatedSafeRepair -and $updatedRequireManagedStreaming) { 'SafeStreamingRepair' } elseif ($updatedSafeRepair) { 'SafeEvidenceRepair' } else { 'ManagedShortcutOnly' }
                 $config.Mode = $updatedMode
                 $config.ManageExternalCodexLaunches = [bool](Get-CpgConfigValue $updatedConfig 'ManageExternalCodexLaunches' $false)
                 $config.SafeRepairExternalCodexLaunches = [bool](Get-CpgConfigValue $updatedConfig 'SafeRepairExternalCodexLaunches' $true)
+                $config | Add-Member -MemberType NoteProperty -Name RequireManagedLaunchForStreaming -Value $updatedRequireManagedStreaming -Force
                 $guardianMode = $updatedMode
                 $manageExternalLaunches = $updatedManageExternal
                 $safeRepairExternalLaunches = $updatedSafeRepair
+                $requireManagedLaunchForStreaming = $updatedRequireManagedStreaming
                 $externalLaunchPolicy = $updatedPolicy
                 $pendingExternalPid = 0
                 $pendingExternalSince = [datetime]::MinValue
@@ -1432,7 +1445,8 @@ try {
             $compatibilityFingerprint = Get-CodexCompatibilityFingerprint -CodexApp $codexApp -UseProxyArgument:([bool](Get-CpgConfigValue $config 'UseChromiumProxyArgument' $true))
             $compatibilityDecision = Get-CpgCodexCompatibilityDecision -ObservationActive:$observationActive `
                 -ObservationPassed:$postUpdateObservationPassed -LaunchConfigured:($matchingRoots.Count -gt 0) `
-                -TrafficObserved:$trafficObservedRecently -RecoveryPending:$script:RecoveryLaunchRequired `
+                -TrafficObserved:$trafficObservedRecently -RequireManagedLaunchForStreaming:$requireManagedLaunchForStreaming `
+                -RecoveryPending:$script:RecoveryLaunchRequired `
                 -CodexRunning:($roots.Count -gt 0) -SecondsSinceManagedLaunch $secondsSinceManagedLaunch `
                 -ConfirmationSeconds $compatibilityConfirmationSeconds -CompatibilityBlocked:$script:CompatibilityHold
             if ([string]$compatibilityDecision.State -eq 'Compatible') {
@@ -1520,6 +1534,7 @@ try {
                 $externalDecision = Get-CpgExternalLaunchDecision -Mode $decisionMode `
                     -SafeRepairEnabled:$safeRepairExternalLaunches -ProxyValid:$proxyIsValid `
                     -ArgumentMatches:$false -TrafficObserved:$pendingExternalTrafficObserved `
+                    -RequireManagedLaunchForStreaming:$requireManagedLaunchForStreaming `
                     -StabilityReady:$stabilityReady -UpstreamSuspected:$script:UpstreamSuspected `
                     -CompatibilityBlocked:$script:CompatibilityHold `
                     -PendingSeconds ((Get-Date) - $pendingExternalSince).TotalSeconds `
@@ -1527,7 +1542,18 @@ try {
 
                 switch ([string]$externalDecision.Action) {
                     'Wait' {
-                        $externalLaunchState = if ([string]$externalDecision.Reason -eq 'post_update_stability_observation') { 'PostUpdateStabilityObservation' } elseif ($decisionMode -eq 'Enforce') { 'EnforceDebounce' } else { 'SafeEvidenceGrace' }
+                        $externalLaunchState = if ([string]$externalDecision.Reason -eq 'post_update_stability_observation') {
+                            'PostUpdateStabilityObservation'
+                        }
+                        elseif ([string]$externalDecision.Reason -eq 'safe_streaming_evidence_grace') {
+                            'StreamingGuaranteeGrace'
+                        }
+                        elseif ($decisionMode -eq 'Enforce') {
+                            'EnforceDebounce'
+                        }
+                        else {
+                            'SafeEvidenceGrace'
+                        }
                     }
                     'Hold' { $externalLaunchState = if ([string]$externalDecision.Reason -eq 'codex_compatibility_review_required') { 'CodexCompatibilityReviewRequired' } else { 'UpstreamSuspected' } }
                     'Keep' { $externalLaunchState = 'ProxyTrafficObserved' }
@@ -1535,7 +1561,7 @@ try {
                     'Repair' {
                         $externalLaunchState = 'WaitingForRestartBudget'
                         if (((Get-Date) - $lastRestart).TotalSeconds -ge $restartCooldownSeconds -and (Test-GuardianRestartBudget)) {
-                            if (Request-CodexRestartApproval -Reason 'external_launch_repair' -ProxyUri $activeProxy -Config $config) {
+                            if (Request-CodexRestartApproval -Reason ([string]$externalDecision.Reason) -ProxyUri $activeProxy -Config $config) {
                                 $lastRestart = Get-Date
                                 Register-GuardianRestart $lastRestart
                                 $script:RecoveryLaunchRequired = $true
@@ -1598,7 +1624,9 @@ try {
             $effectiveness = 'NoValidatedProxy'
             if ($proxyIsValid) { $effectiveness = 'ValidatedProxy' }
             if ($proxyIsValid -and $matchingRoots.Count -gt 0) { $effectiveness = 'LaunchConfigured' }
-            if ($proxyIsValid -and $roots.Count -gt 0 -and $trafficObservedRecently -and $stabilityReady) { $effectiveness = 'TrafficObserved' }
+            if ($proxyIsValid -and $matchingRoots.Count -gt 0 -and $trafficObservedRecently -and $stabilityReady) { $effectiveness = 'ManagedTrafficObserved' }
+            elseif ($proxyIsValid -and $roots.Count -gt 0 -and $trafficObservedRecently -and $stabilityReady -and $requireManagedLaunchForStreaming) { $effectiveness = 'SystemProxyHttpTrafficOnly' }
+            elseif ($proxyIsValid -and $roots.Count -gt 0 -and $trafficObservedRecently -and $stabilityReady) { $effectiveness = 'TrafficObserved' }
             if ($observationActive) { $effectiveness = 'PostUpdateObservation' }
             if ($script:UpstreamSuspected) { $effectiveness = 'EndpointReachableOnly' }
 
@@ -1637,7 +1665,7 @@ try {
             $guardianState = 'WaitingForProxy'
             if (-not $proxyIsValid -and -not [string]::IsNullOrWhiteSpace([string]$pendingProxy)) { $guardianState = 'Stabilizing' }
             if ($proxyIsValid) { $guardianState = 'Ready' }
-            if ($proxyIsValid -and $externalLaunchState -in @('SafeEvidenceGrace', 'EnforceDebounce', 'WaitingForRestartBudget')) { $guardianState = 'EvaluatingCodexLaunch' }
+            if ($proxyIsValid -and $externalLaunchState -in @('SafeEvidenceGrace', 'StreamingGuaranteeGrace', 'EnforceDebounce', 'WaitingForRestartBudget')) { $guardianState = 'EvaluatingCodexLaunch' }
             if ($observationActive) { $guardianState = 'ObservingAfterCodexUpdate' }
             if ($script:UpstreamSuspected) { $guardianState = 'UpstreamSuspected' }
             if ($proxyIsValid -and $externalLaunchState -eq 'ManagedShortcutRequired') { $guardianState = 'CodexNeedsManagedLaunch' }
@@ -1660,6 +1688,10 @@ try {
                 externalLaunchPolicy = $externalLaunchPolicy
                 externalLaunchState = $externalLaunchState
                 safeRepairExternalLaunches = $safeRepairExternalLaunches
+                streamingProxyGuaranteeRequired = $requireManagedLaunchForStreaming
+                streamingProxyGuaranteed = ($matchingRoots.Count -gt 0)
+                streamingProxyEvidence = if ($matchingRoots.Count -gt 0) { 'ManagedLaunchEnvironmentAndChromiumArgument' } elseif ($trafficObservedRecently) { 'SystemProxyHttpTrafficOnly' } else { 'NoManagedStreamingEvidence' }
+                streamingRepairRequired = ($requireManagedLaunchForStreaming -and $roots.Count -gt 0 -and $matchingRoots.Count -eq 0)
                 pendingExternalCodexPid = if ($pendingExternalPid -eq 0) { $null } else { $pendingExternalPid }
                 pendingExternalProxyTrafficObserved = $pendingExternalTrafficObserved
                 activeProxy = $activeProxy
@@ -1673,7 +1705,7 @@ try {
                 upstreamSuspected = $script:UpstreamSuspected
                 upstreamSuspectedSinceUtc = if ($script:UpstreamSuspectedSince -gt [datetime]::MinValue) { $script:UpstreamSuspectedSince.ToUniversalTime().ToString('o') } else { $null }
                 upstreamRecommendedAction = if ($script:UpstreamSuspected) { 'Keep Codex open and change the provider node in the proxy application if reconnects continue.' } else { $null }
-                safeTrafficEvidenceAccepted = ($trafficObservedRecently -and $stabilityReady)
+                safeTrafficEvidenceAccepted = ($trafficObservedRecently -and $stabilityReady -and (-not $requireManagedLaunchForStreaming -or $matchingRoots.Count -gt 0))
                 postUpdateObservationState = $postUpdateObservationState
                 postUpdateObservationActive = $observationActive
                 postUpdateVersion = if ($observationActive) { $script:PostUpdateObservationVersion } elseif (-not [string]::IsNullOrWhiteSpace($script:PendingCodexPackageVersion)) { $script:PendingCodexPackageVersion } else { $script:PostUpdateObservationPassedVersion }

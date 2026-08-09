@@ -59,8 +59,8 @@ while ((Get-Date) -lt $deadline) {
         if (-not [bool](Get-Value $status 'activeProxyValid' $false)) { $invalidProxySamples++ }
         if ([bool](Get-Value $status 'restartCircuitOpen' $false)) { $circuitOpenSamples++ }
         $evidence = [string](Get-Value $status 'effectivenessEvidence' '')
-        if ($evidence -eq 'TrafficObserved') { $trafficEvidenceSamples++ }
-        if ($evidence -in @('LaunchConfigured', 'TrafficObserved')) { $launchEvidenceSamples++ }
+        if ($evidence -in @('TrafficObserved', 'ManagedTrafficObserved')) { $trafficEvidenceSamples++ }
+        if ($evidence -in @('LaunchConfigured', 'TrafficObserved', 'ManagedTrafficObserved')) { $launchEvidenceSamples++ }
         $fingerprint = Get-EndpointFingerprint ([string](Get-Value $status 'activeProxy' ''))
         if (-not [string]::IsNullOrWhiteSpace($fingerprint)) { $endpointFingerprints += $fingerprint }
         $codexPids = @((Get-Value $status 'codexRootPids' @()) | ForEach-Object { [int]$_ } | Sort-Object) -join ','

@@ -94,6 +94,7 @@ Invoke-Test 'Default configuration is conservative' {
     Assert-True ([int]$config.PacExecutionTimeoutMilliseconds -le 1000)
     Assert-True ([int]$config.PacMaxBytes -le 1048576)
     Assert-True $config.UseChromiumProxyArgument
+    Assert-True $config.RequireManagedLaunchForStreaming
     Assert-True $config.NotifyBeforeCodexRestart
     Assert-True ([int]$config.RestartPromptTimeoutSeconds -ge 15)
     Assert-True ([int]$config.RestartPromptSnoozeMinutes -ge 1)
@@ -120,6 +121,14 @@ Invoke-Test 'Safe external launches are repaired only after an evidence grace pe
     $working = Get-CpgExternalLaunchDecision -Mode Safe -SafeRepairEnabled:$true -ProxyValid:$true -ArgumentMatches:$false -TrafficObserved:$true -PendingSeconds 30 -SafeGraceSeconds 20
     Assert-Equal 'Keep' ([string]$working.Action)
     Assert-Equal 'safe_proxy_traffic_observed' ([string]$working.Reason)
+
+    $streamingGrace = Get-CpgExternalLaunchDecision -Mode Safe -SafeRepairEnabled:$true -ProxyValid:$true -ArgumentMatches:$false -TrafficObserved:$true -RequireManagedLaunchForStreaming:$true -PendingSeconds 19 -SafeGraceSeconds 20
+    Assert-Equal 'Wait' ([string]$streamingGrace.Action)
+    Assert-Equal 'safe_streaming_evidence_grace' ([string]$streamingGrace.Reason)
+
+    $streamingRepair = Get-CpgExternalLaunchDecision -Mode Safe -SafeRepairEnabled:$true -ProxyValid:$true -ArgumentMatches:$false -TrafficObserved:$true -RequireManagedLaunchForStreaming:$true -PendingSeconds 20 -SafeGraceSeconds 20
+    Assert-Equal 'Repair' ([string]$streamingRepair.Action)
+    Assert-Equal 'safe_streaming_proxy_not_guaranteed' ([string]$streamingRepair.Reason)
 
     $repair = Get-CpgExternalLaunchDecision -Mode Safe -SafeRepairEnabled:$true -ProxyValid:$true -ArgumentMatches:$false -TrafficObserved:$false -PendingSeconds 20 -SafeGraceSeconds 20
     Assert-Equal 'Repair' ([string]$repair.Action)
@@ -175,6 +184,11 @@ Invoke-Test 'Codex compatibility audit fails safe after an unconfirmed managed l
     $traffic = Get-CpgCodexCompatibilityDecision -ObservationPassed:$true -TrafficObserved:$true
     Assert-Equal 'Compatible' ([string]$traffic.State)
     Assert-Equal 'ProxyTrafficObserved' ([string]$traffic.Evidence)
+
+    $httpOnlyTraffic = Get-CpgCodexCompatibilityDecision -ObservationPassed:$true -TrafficObserved:$true -RequireManagedLaunchForStreaming:$true
+    Assert-Equal 'NeedsManagedLaunch' ([string]$httpOnlyTraffic.State)
+    Assert-Equal 'SystemProxyHttpTrafficOnly' ([string]$httpOnlyTraffic.Evidence)
+    Assert-False $httpOnlyTraffic.ReviewRequired
 
     $waiting = Get-CpgCodexCompatibilityDecision -ObservationPassed:$true -RecoveryPending:$true -CodexRunning:$true -SecondsSinceManagedLaunch 44 -ConfirmationSeconds 45
     Assert-Equal 'AwaitingEvidence' ([string]$waiting.State)
@@ -284,6 +298,7 @@ Invoke-Test 'Public diagnostics explain how to attribute reconnects' {
     Assert-True ($issueTemplate.Contains('codex_restart'))
     Assert-True ($statusSource.Contains('PostUpdateObservationState'))
     Assert-True ($statusSource.Contains('UpstreamSuspected'))
+    Assert-True ($statusSource.Contains('StreamingProxyGuaranteed'))
     Assert-True ($issueTemplate.Contains('proxy_changed'))
 }
 
@@ -654,13 +669,24 @@ Invoke-Test 'Installer verifies the started guardian and retries one unexpected 
     }
 }
 
+Invoke-Test 'Installer and health sampling understand streaming-safe evidence' {
+    $installer = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'Install.ps1')
+    Assert-True $installer.Contains("'SafeStreamingRepair'") 'Installer does not report the streaming-safe launch policy.'
+    Assert-True $installer.Contains('HTTP traffic alone does not prove WebSocket proxy inheritance') 'Installer does not explain the guarded managed relaunch.'
+
+    $healthSampler = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'tools\Measure-GuardianHealth.ps1')
+    Assert-True $healthSampler.Contains("'ManagedTrafficObserved'") 'Health sampling ignores managed streaming traffic evidence.'
+}
+
 Invoke-Test 'Watcher publishes explicit lifecycle states' {
     $watcher = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'src\Watch-CodexProxy.ps1')
-    foreach ($state in @('WaitingForProxy', 'Stabilizing', 'Ready', 'EvaluatingCodexLaunch', 'CodexNeedsManagedLaunch', 'CodexResolutionUnavailable', 'RecoveringCodex', 'RecoveryBlockedByCodex', 'RestartApprovalRequired', 'RestartDeferred', 'RestartCircuitOpen')) {
+    foreach ($state in @('WaitingForProxy', 'Stabilizing', 'Ready', 'EvaluatingCodexLaunch', 'StreamingGuaranteeGrace', 'CodexNeedsManagedLaunch', 'CodexResolutionUnavailable', 'RecoveringCodex', 'RecoveryBlockedByCodex', 'RestartApprovalRequired', 'RestartDeferred', 'RestartCircuitOpen')) {
         Assert-True ($watcher.Contains("'$state'")) "Missing guardian lifecycle state: $state"
     }
     Assert-True $watcher.Contains('WScript.Shell') 'Watcher does not contain a foreground restart prompt.'
     Assert-True $watcher.Contains('Get-CpgRestartPromptDecision') 'Watcher does not require an explicit prompt decision.'
+    Assert-True $watcher.Contains('safe_streaming_proxy_not_guaranteed') 'Watcher does not distinguish HTTP fallback from guaranteed streaming proxy injection.'
+    Assert-True $watcher.Contains('[Math]::Max(60, $configuredSnoozeMinutes)') 'A declined streaming repair can prompt too frequently.'
     $restartCalls = @([regex]::Matches($watcher, '(?m)^\s*\$managedRootPid\s*=\s*Restart-CodexManaged\b[^\r\n]*'))
     Assert-True ($restartCalls.Count -ge 3) 'Expected all managed restart call paths to be present.'
     foreach ($restartCall in $restartCalls) {
@@ -709,7 +735,7 @@ Invoke-Test 'Doctor emits a redacted, share-safe JSON report' {
     $reportText = & (Join-Path $repoRoot 'Doctor.ps1') -InstallRoot $diagnosticRoot -Json
     $report = $reportText | ConvertFrom-Json
     Assert-True $report.safeForSharing
-    Assert-Equal 6 ([int]$report.reportSchema)
+    Assert-Equal 7 ([int]$report.reportSchema)
     Assert-Equal 'CodexStreamRetryNotProofOfGuardianRestartOrEndpointFailure' ([string]$report.reconnectAttribution.meaning)
     Assert-False ([bool]$report.reconnectAttribution.providerNodeManagedByGuardian)
     Assert-False (($reportText -join '') -match [regex]::Escape($env:USERPROFILE)) 'The diagnostic report exposed the user profile path.'

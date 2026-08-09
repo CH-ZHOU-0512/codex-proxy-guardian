@@ -78,9 +78,11 @@ The macOS/Linux daemon performs the same fixed-repository and channel selection 
 
 1. **ValidatedProxy**: the chosen endpoint has a listener and reaches the configured HTTPS quorum through an explicit HTTP/HTTPS/SOCKS5 transport. Windows uses .NET for HTTP(S) and inbox `curl.exe` for SOCKS5; the Go core uses an explicit standard-library transport.
 2. **LaunchConfigured**: a current Codex root command line contains the exact normalized `--proxy-server` token.
-3. **TrafficObserved**: an established TCP connection from the Codex process tree to the chosen endpoint was observed within the configured evidence window.
-4. **PostUpdateObservation**: a new Codex package root is running, but the required sequence of fresh critical-target validations has not completed.
-5. **EndpointReachableOnly**: the local listener is reachable while a critical external validation is failing; this is a diagnostic degradation, never a reason to restart Codex.
+3. **SystemProxyHttpTrafficOnly**: an unmanaged Codex process reached the endpoint through Windows system-proxy behavior. This proves useful HTTP traffic, but not that the Rust WebSocket/streaming child inherited explicit proxy variables.
+4. **ManagedTrafficObserved**: the Codex root carries the managed proxy argument and the process tree connected to the chosen endpoint. Guardian's launch path also injects HTTP/HTTPS/ALL/WS/WSS variables into that process tree.
+5. **TrafficObserved**: the macOS/Linux daemon observed the Codex process tree connecting to the chosen endpoint. Windows v1.5.1 uses the two more specific traffic states above.
+6. **PostUpdateObservation**: a new Codex package root is running, but the required sequence of fresh critical-target validations has not completed.
+7. **EndpointReachableOnly**: the local listener is reachable while a critical external validation is failing; this is a diagnostic degradation, never a reason to restart Codex.
 
 Connection evidence reads only Windows TCP metadata: process ID, remote address, and remote port. It does not inspect packets, URLs, request bodies, authentication, or response content. The evidence proves local use of the endpoint, not its exit geography or policy. Likewise, short unauthenticated HTTPS probes cannot prove the stability of an authenticated long-lived SSE/HTTP stream, so the public status reports this limitation as `StreamStability=IndirectEvidenceOnly`.
 

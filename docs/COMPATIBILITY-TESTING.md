@@ -21,7 +21,7 @@ On macOS/Linux use `codex-proxy-guardian doctor` and `status --json`. The Go cor
 
 ## Layer 3: Codex process proof
 
-After starting or using Codex, `Status.ps1` should progress from `ValidatedProxy` to `LaunchConfigured`, then ideally `TrafficObserved`. The last level requires a recently observed TCP connection from the Codex process tree to the same proxy endpoint. No packet content is captured.
+After a managed Windows launch, `Status.ps1` should progress from `ValidatedProxy` to `LaunchConfigured`, then ideally `ManagedTrafficObserved`. An ordinary Explorer/Start-menu launch that only produces system-proxy HTTP traffic must report `SystemProxyHttpTrafficOnly`, `StreamingProxyGuaranteed=false`, and request a guarded managed repair after the Safe grace period. Declining or timing out the prompt must leave the current PID unchanged. Approving it must relaunch with matching Chromium proxy arguments and process-scoped HTTP/HTTPS/ALL/WS/WSS variables. No packet content is captured.
 
 After a Store/MSIX Codex version change, the new root should first report `ObservingAfterCodexUpdate` and accumulate only fresh validations. The default acceptance point is three successful critical-target samples over at least 60 seconds. Force one critical-target failure while leaving the local listener open and verify that status becomes `UpstreamSuspected`, the current Codex PID remains unchanged, no `codex_restart` event is written, and the Windows system proxy remains unchanged. A later fresh success should clear the suspected state.
 
