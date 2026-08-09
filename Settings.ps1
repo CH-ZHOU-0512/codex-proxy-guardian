@@ -42,6 +42,8 @@ $proxyReachability = [string](Get-SettingsStatusValue $status 'proxyReachability
 $streamStability = [string](Get-SettingsStatusValue $status 'streamStability' 'Unknown')
 $compatibilityState = [string](Get-SettingsStatusValue $status 'codexCompatibilityState' 'Unknown')
 $compatibilityUpdateState = [string](Get-SettingsStatusValue $status 'compatibilityUpdateCheckState' 'NotNeeded')
+$streamingProxyGuaranteed = [bool](Get-SettingsStatusValue $status 'streamingProxyGuaranteed' $false)
+$streamingRepairRequired = [bool](Get-SettingsStatusValue $status 'streamingRepairRequired' $false)
 $postUpdateSamples = '{0}/{1}' -f [int](Get-SettingsStatusValue $status 'postUpdateSuccessfulSamples' 0), [int](Get-SettingsStatusValue $status 'postUpdateRequiredSamples' 0)
 $reachabilityText = switch ($proxyReachability) {
     'CriticalTargetsPassed' { '关键入口已通过' }
@@ -58,6 +60,7 @@ $stabilityText = switch ($streamStability) {
 $compatibilityText = switch ($compatibilityState) {
     'Auditing' { '新版能力自动审计中' }
     'Compatible' { '当前 Codex 已取得兼容证据' }
+    'NeedsManagedLaunch' { 'HTTP 已走代理，但流式代理尚未保障' }
     'AwaitingEvidence' { '新版入口已自动解析，等待真实使用证据' }
     'ReviewRequired' { '适配未确认：已暂停自动重启并请求受信更新' }
     default { '使用通用 MSIX 清单适配' }
@@ -69,6 +72,7 @@ $updateAuditText = switch ($compatibilityUpdateState) {
     'Disabled' { '兼容更新检查已关闭' }
     default { '兼容更新按需检查' }
 }
+$streamingGuaranteeText = if ($streamingProxyGuaranteed) { '流式代理已由受管启动保障' } elseif ($streamingRepairRequired) { '普通启动仅确认 HTTP；等待你批准受管修复' } else { '流式代理等待 Codex 启动后确认' }
 
 $form = New-Object System.Windows.Forms.Form
 $form.Text = 'Codex Proxy Guardian 设置'
@@ -101,7 +105,7 @@ $automaticRadio.Checked = $profile -ne 'Strict'
 $modeGroup.Controls.Add($automaticRadio)
 
 $automaticDescription = New-Object System.Windows.Forms.Label
-$automaticDescription.Text = '先观察 Codex 是否已经通过当前代理通信；能用就保持不动，确有必要时才受控修复。'
+$automaticDescription.Text = '自动验证 HTTP 与流式代理。普通启动只证明 HTTP 时会弹窗询问；只有点击“是”才受控修复。'
 $automaticDescription.Location = New-Object System.Drawing.Point(38, 55)
 $automaticDescription.Size = New-Object System.Drawing.Size(460, 38)
 $modeGroup.Controls.Add($automaticDescription)
@@ -161,16 +165,16 @@ $reconnectGroup.Size = New-Object System.Drawing.Size(520, 165)
 $form.Controls.Add($reconnectGroup)
 
 $reconnectDescription = New-Object System.Windows.Forms.Label
-$reconnectDescription.Text = '这表示 Codex 的流式连接正在重试，不等于 Guardian 重启了应用。本地端口可达也不等于登录态长连接稳定。若日志没有 codex_restart / proxy_changed，通常是代理上游 TLS、WebSocket 或超时问题；请保持 Codex 打开，并在代理软件中换稳定节点。'
+$reconnectDescription.Text = '这表示 Codex 的流式连接正在重试，不等于 Guardian 重启。普通启动时 HTTP 能走系统代理，也不代表 WebSocket 已继承显式代理；受管启动会同时注入 HTTP/HTTPS/WS/WSS。若日志没有 codex_restart / proxy_changed，再检查代理节点。'
 $reconnectDescription.Location = New-Object System.Drawing.Point(18, 25)
 $reconnectDescription.Size = New-Object System.Drawing.Size(480, 70)
 $reconnectGroup.Controls.Add($reconnectDescription)
 
 $connectionStatusLabel = New-Object System.Windows.Forms.Label
-$connectionStatusLabel.Text = "连接判定：$reachabilityText；$stabilityText`r`n兼容机制：$compatibilityText；$updateAuditText"
+$connectionStatusLabel.Text = "连接判定：$reachabilityText；$stabilityText`r`n流式保障：$streamingGuaranteeText`r`n兼容机制：$compatibilityText；$updateAuditText"
 $connectionStatusLabel.Font = New-Object System.Drawing.Font('Microsoft YaHei UI', 9, [System.Drawing.FontStyle]::Bold)
 $connectionStatusLabel.Location = New-Object System.Drawing.Point(18, 99)
-$connectionStatusLabel.Size = New-Object System.Drawing.Size(480, 55)
+$connectionStatusLabel.Size = New-Object System.Drawing.Size(480, 64)
 $reconnectGroup.Controls.Add($connectionStatusLabel)
 
 $statusLabel = New-Object System.Windows.Forms.Label
@@ -271,6 +275,7 @@ if ($SelfTest) {
         ReconnectGuidanceVisible = ($reconnectDescription.Text -like '*不等于 Guardian 重启*')
         StreamStabilityVisible = ($connectionStatusLabel.Text -like '*连接判定*')
         CompatibilityAutomationVisible = ($connectionStatusLabel.Text -like '*兼容机制*')
+        StreamingProxyGuaranteeVisible = ($connectionStatusLabel.Text -like '*流式保障*')
         ControlExists = (Test-Path -LiteralPath $controlPath)
         UpdaterExists = (Test-Path -LiteralPath $updatePath)
     }

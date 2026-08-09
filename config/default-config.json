@@ -8,6 +8,7 @@
   "DebounceSeconds": 10,
   "ExternalLaunchDebounceSeconds": 15,
   "SafeRepairExternalCodexLaunches": true,
+  "RequireManagedLaunchForStreaming": true,
   "SafeExternalLaunchGraceSeconds": 20,
   "NotifyBeforeCodexRestart": true,
   "RestartPromptTimeoutSeconds": 45,

@@ -176,6 +176,10 @@ elseif ($externalLaunchState -eq 'CodexResolutionUnavailable') {
     $issues += 'codex_replacement_resolution_unavailable'
     $recommendations += 'Codex was left running because a replacement MSIX executable could not be resolved. Finish any Store update, then restart the guardian.'
 }
+if ($guardianAlive -and [bool](Get-SafeProperty $status 'streamingRepairRequired' $false)) {
+    $issues += 'codex_streaming_proxy_not_guaranteed'
+    $recommendations += 'Current Codex HTTP traffic reaches the proxy, but its WebSocket/streaming transport was not launched with explicit proxy environment variables. Finish the active task, then approve the guarded managed relaunch; No or timeout always keeps Codex open.'
+}
 if ($Online -and $null -ne $onlineResult -and -not [bool](Get-SafeProperty ([pscustomobject]$onlineResult) 'proxyValid' $false)) {
     $issues += 'online_proxy_validation_failed'
     $recommendations += 'Set ExplicitProxy to a working HTTP/mixed endpoint, then run Doctor.ps1 -Online again.'
@@ -199,7 +203,7 @@ if (@($issues).Count -eq 0 -and $guardianLifecycle -eq 'ObservingAfterCodexUpdat
 if ($issues -contains 'unsupported_os' -or $issues -contains 'powershell_too_old' -or $issues -contains 'constrained_language_mode' -or $issues -contains 'codex_msix_not_found') { $health = 'Blocked' }
 
 $report = [ordered]@{
-    reportSchema = 6
+    reportSchema = 7
     generatedUtc = (Get-Date).ToUniversalTime().ToString('o')
     safeForSharing = $true
     health = $health
@@ -226,6 +230,9 @@ $report = [ordered]@{
         processRunning = [bool](Get-SafeProperty $status 'codexRunning' $false)
         launchProxyMatch = Get-SafeProperty $status 'codexProxyArgumentMatch' $null
         proxyTrafficObservedRecently = Get-SafeProperty $status 'codexProxyConnectionObservedRecently' $null
+        streamingProxyGuaranteed = [bool](Get-SafeProperty $status 'streamingProxyGuaranteed' $false)
+        streamingProxyEvidence = Get-SafeProperty $status 'streamingProxyEvidence' $null
+        streamingRepairRequired = [bool](Get-SafeProperty $status 'streamingRepairRequired' $false)
     }
     proxyDiscovery = [ordered]@{
         systemManualProxyEnabled = $proxyEnabled
@@ -253,6 +260,10 @@ $report = [ordered]@{
         proxyEndpointReachable = Get-SafeProperty $status 'proxyEndpointReachable' $null
         streamStability = Get-SafeProperty $status 'streamStability' $null
         streamStabilityLimitation = Get-SafeProperty $status 'streamStabilityLimitation' $null
+        streamingProxyGuaranteeRequired = [bool](Get-SafeProperty $status 'streamingProxyGuaranteeRequired' $true)
+        streamingProxyGuaranteed = [bool](Get-SafeProperty $status 'streamingProxyGuaranteed' $false)
+        streamingProxyEvidence = Get-SafeProperty $status 'streamingProxyEvidence' $null
+        streamingRepairRequired = [bool](Get-SafeProperty $status 'streamingRepairRequired' $false)
         upstreamSuspected = [bool](Get-SafeProperty $status 'upstreamSuspected' $false)
         upstreamSuspectedSinceUtc = Get-SafeProperty $status 'upstreamSuspectedSinceUtc' $null
         safeTrafficEvidenceAccepted = [bool](Get-SafeProperty $status 'safeTrafficEvidenceAccepted' $false)
@@ -313,6 +324,9 @@ if ($Json) { $reportJson; return }
     EffectivenessEvidence = Get-SafeProperty $status 'effectivenessEvidence' $null
     ProxyReachability = Get-SafeProperty $status 'proxyReachability' $null
     StreamStability = Get-SafeProperty $status 'streamStability' $null
+    StreamingProxyGuaranteed = [bool](Get-SafeProperty $status 'streamingProxyGuaranteed' $false)
+    StreamingProxyEvidence = Get-SafeProperty $status 'streamingProxyEvidence' $null
+    StreamingRepairRequired = [bool](Get-SafeProperty $status 'streamingRepairRequired' $false)
     UpstreamSuspected = [bool](Get-SafeProperty $status 'upstreamSuspected' $false)
     PostUpdateObservationState = Get-SafeProperty $status 'postUpdateObservationState' $null
     PostUpdateSamples = ('{0}/{1}' -f [int](Get-SafeProperty $status 'postUpdateSuccessfulSamples' 0), [int](Get-SafeProperty $status 'postUpdateRequiredSamples' 0))

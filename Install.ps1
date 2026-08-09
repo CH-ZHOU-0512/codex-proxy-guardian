@@ -471,13 +471,16 @@ $effectiveMode = [string](Get-CpgConfigValue $effectiveConfig 'Mode' 'Safe')
 $externalLaunchPolicy = if ($effectiveMode -eq 'Enforce' -or [bool](Get-CpgConfigValue $effectiveConfig 'ManageExternalCodexLaunches' $false)) {
     'Enforce'
 } elseif ([bool](Get-CpgConfigValue $effectiveConfig 'SafeRepairExternalCodexLaunches' $true)) {
-    'SafeEvidenceRepair'
+    if ([bool](Get-CpgConfigValue $effectiveConfig 'RequireManagedLaunchForStreaming' $true)) { 'SafeStreamingRepair' } else { 'SafeEvidenceRepair' }
 } else {
     'ManagedShortcutOnly'
 }
 $nextStep = $null
 if ($managedLaunchRecommended) {
-    if ($externalLaunchPolicy -eq 'SafeEvidenceRepair') {
+    if ($externalLaunchPolicy -eq 'SafeStreamingRepair') {
+        $nextStep = 'Safe mode found an ordinary Codex launch. HTTP traffic alone does not prove WebSocket proxy inheritance; finish the active task, then approve the guarded managed relaunch, or open "Codex (Managed Proxy)" when ready.'
+    }
+    elseif ($externalLaunchPolicy -eq 'SafeEvidenceRepair') {
         $nextStep = 'Safe mode is evaluating the current Codex launch. Leave the guardian running, or open "Codex (Managed Proxy)" to apply the validated proxy immediately.'
     }
     elseif ($externalLaunchPolicy -eq 'Enforce') {

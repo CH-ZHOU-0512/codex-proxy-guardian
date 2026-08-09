@@ -14,6 +14,7 @@
     "DebounceSeconds": { "type": "integer", "minimum": 0, "maximum": 600 },
     "ExternalLaunchDebounceSeconds": { "type": "integer", "minimum": 0, "maximum": 600 },
     "SafeRepairExternalCodexLaunches": { "type": "boolean" },
+    "RequireManagedLaunchForStreaming": { "type": "boolean" },
     "SafeExternalLaunchGraceSeconds": { "type": "integer", "minimum": 10, "maximum": 600 },
     "NotifyBeforeCodexRestart": { "type": "boolean" },
     "RestartPromptTimeoutSeconds": { "type": "integer", "minimum": 15, "maximum": 300 },

@@ -64,6 +64,13 @@ Starting with v1.4.4, Settings distinguishes “another updater is running; this
 
 Compare the timestamp with Guardian's `codex_restart` and `proxy_changed` events. If neither is present while Codex records TLS EOF, WebSocket reset, Windows `10054`, or a request timeout, the streaming connection was interrupted upstream of Guardian.
 
+Starting with v1.5.1, check `StreamingProxyGuaranteed` first:
+
+- `false`, or `EffectivenessEvidence=SystemProxyHttpTrafficOnly`: the ordinary launch proved only that HTTP used the Windows system proxy. It did not prove that the newer Codex WebSocket/streaming child inherited explicit proxy variables. Finish the current task, then approve Guardian's foreground repair prompt, or close Codex and open **Codex (Managed Proxy)**.
+- `true` with `EffectivenessEvidence=ManagedTrafficObserved`: managed launch configuration and endpoint traffic were both observed. If reconnects remain and no Guardian lifecycle event exists, inspect the upstream provider node.
+
+The repair prompt closes Codex only after an explicit Yes. No, timeout, or prompt failure keeps the current task open and snoozes the prompt. Guardian does not modify the system proxy or persistent environment variables.
+
 Version 1.4.4 requires the critical `chatgpt.com` probe to pass and exposes `ProxyCriticalTargetsPassed` and `ProxyCriticalFailures` in status and Doctor output. If the proxy application's own log reports upstream `i/o timeout`, select a healthier node there.
 
 Starting with v1.5.0, a newly started Store/MSIX Codex package enters `ObservingAfterCodexUpdate`: by default it must accumulate three fresh critical-target validations over at least 60 seconds. Guardian also starts its owned verified update task immediately. Cached results do not count, and one local proxy connection is not accepted prematurely as a stable Safe-mode conclusion.
@@ -103,9 +110,9 @@ The default requires at least two successful HTTPS targets. This makes a listene
 - System PAC results may use remote proxies while `AllowSystemNonLoopbackProxy` is enabled. A manually supplied `ExplicitPAC` still requires `AllowNonLoopbackProxy: true` for remote results.
 - Fetch, DNS, and JavaScript execution limits reject a stalled or hostile PAC. Do not raise them without first inspecting the script.
 
-## Status says ValidatedProxy but not TrafficObserved
+## Status says ValidatedProxy but not ManagedTrafficObserved
 
-`ValidatedProxy` proves the endpoint can carry the configured HTTPS checks. `LaunchConfigured` adds proof that the current Codex root carries the matching proxy argument. `TrafficObserved` appears only after a live Codex process-tree TCP connection to that endpoint is seen. Open or continue a Codex task, then check status again. Short-lived connections can be missed; absence of traffic evidence is not by itself proof of failure.
+`ValidatedProxy` proves the endpoint can carry the configured HTTPS checks. `LaunchConfigured` adds proof that the current Codex root carries the matching proxy argument. `ManagedTrafficObserved` appears only after a managed launch and a live Codex process-tree TCP connection to that endpoint are both observed. `SystemProxyHttpTrafficOnly` proves useful ordinary-launch HTTP traffic but is deliberately not treated as full streaming proxy inheritance. Open or continue a Codex task, then check status again. Short-lived connections can be missed; absence of traffic evidence is not by itself proof of failure.
 
 ## Codex is not found
 

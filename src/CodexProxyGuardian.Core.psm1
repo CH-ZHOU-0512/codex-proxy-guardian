@@ -172,6 +172,7 @@ function Get-CpgExternalLaunchDecision {
         [bool]$ProxyValid = $false,
         [bool]$ArgumentMatches = $false,
         [bool]$TrafficObserved = $false,
+        [bool]$RequireManagedLaunchForStreaming = $false,
         [bool]$StabilityReady = $true,
         [bool]$UpstreamSuspected = $false,
         [bool]$CompatibilityBlocked = $false,
@@ -206,11 +207,15 @@ function Get-CpgExternalLaunchDecision {
     if (-not $SafeRepairEnabled) {
         return [pscustomobject]@{ Action = 'ManagedShortcut'; Reason = 'safe_repair_disabled' }
     }
-    if ($TrafficObserved) {
+    if ($TrafficObserved -and -not $RequireManagedLaunchForStreaming) {
         return [pscustomobject]@{ Action = 'Keep'; Reason = 'safe_proxy_traffic_observed' }
     }
     if ($PendingSeconds -lt [Math]::Max(0, $SafeGraceSeconds)) {
-        return [pscustomobject]@{ Action = 'Wait'; Reason = 'safe_evidence_grace' }
+        $reason = if ($TrafficObserved -and $RequireManagedLaunchForStreaming) { 'safe_streaming_evidence_grace' } else { 'safe_evidence_grace' }
+        return [pscustomobject]@{ Action = 'Wait'; Reason = $reason }
+    }
+    if ($TrafficObserved -and $RequireManagedLaunchForStreaming) {
+        return [pscustomobject]@{ Action = 'Repair'; Reason = 'safe_streaming_proxy_not_guaranteed' }
     }
     return [pscustomobject]@{ Action = 'Repair'; Reason = 'safe_missing_argument_without_proxy_traffic' }
 }
@@ -281,6 +286,7 @@ function Get-CpgCodexCompatibilityDecision {
         [bool]$ObservationPassed = $false,
         [bool]$LaunchConfigured = $false,
         [bool]$TrafficObserved = $false,
+        [bool]$RequireManagedLaunchForStreaming = $false,
         [bool]$RecoveryPending = $false,
         [bool]$CodexRunning = $false,
         [double]$SecondsSinceManagedLaunch = 0,
@@ -291,17 +297,27 @@ function Get-CpgCodexCompatibilityDecision {
     if ($ObservationActive) {
         return [pscustomobject]@{ State = 'Auditing'; Evidence = 'PostUpdateObservation'; ReviewRequired = $false }
     }
-    if ($LaunchConfigured) {
-        return [pscustomobject]@{ State = 'Compatible'; Evidence = 'LaunchArgumentMatched'; ReviewRequired = $false }
+    if ($LaunchConfigured -and (-not $RequireManagedLaunchForStreaming -or $TrafficObserved)) {
+        $evidence = if ($RequireManagedLaunchForStreaming) { 'ManagedLaunchAndTrafficObserved' } else { 'LaunchArgumentMatched' }
+        return [pscustomobject]@{ State = 'Compatible'; Evidence = $evidence; ReviewRequired = $false }
     }
-    if ($TrafficObserved) {
+    if ($TrafficObserved -and -not $RequireManagedLaunchForStreaming) {
         return [pscustomobject]@{ State = 'Compatible'; Evidence = 'ProxyTrafficObserved'; ReviewRequired = $false }
+    }
+    if ($TrafficObserved -and $RequireManagedLaunchForStreaming) {
+        return [pscustomobject]@{ State = 'NeedsManagedLaunch'; Evidence = 'SystemProxyHttpTrafficOnly'; ReviewRequired = $false }
     }
     if ($CompatibilityBlocked) {
         return [pscustomobject]@{ State = 'ReviewRequired'; Evidence = 'PreviousManagedVerificationFailed'; ReviewRequired = $true }
     }
 
     $timeout = [Math]::Max(15, $ConfirmationSeconds)
+    if ($ObservationPassed -and $LaunchConfigured -and $RequireManagedLaunchForStreaming) {
+        if ($RecoveryPending -and $CodexRunning -and $SecondsSinceManagedLaunch -ge $timeout) {
+            return [pscustomobject]@{ State = 'ReviewRequired'; Evidence = 'ManagedStreamingTrafficNotConfirmed'; ReviewRequired = $true }
+        }
+        return [pscustomobject]@{ State = 'AwaitingEvidence'; Evidence = 'ManagedStreamingTrafficPending'; ReviewRequired = $false }
+    }
     if ($ObservationPassed -and $RecoveryPending -and $CodexRunning -and $SecondsSinceManagedLaunch -ge $timeout) {
         return [pscustomobject]@{ State = 'ReviewRequired'; Evidence = 'ManagedLaunchNotConfirmed'; ReviewRequired = $true }
     }

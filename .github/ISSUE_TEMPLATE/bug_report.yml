@@ -12,7 +12,7 @@ body:
     id: version
     attributes:
       label: Guardian 版本
-      placeholder: 1.5.0
+      placeholder: 1.5.1
     validations:
       required: true
   - type: input
@@ -85,7 +85,13 @@ body:
     attributes:
       label: Codex 兼容审计状态
       description: 从 Status/Doctor 复制 CodexCompatibilityState、CodexCompatibilityEvidence 与 CompatibilityUpdateCheckState；不要粘贴原始代理地址。
-      placeholder: Compatible / ProxyTrafficObserved / Requested
+      placeholder: NeedsManagedLaunch / SystemProxyHttpTrafficOnly / Requested
+  - type: input
+    id: streaming_proxy_state
+    attributes:
+      label: 流式代理状态
+      description: 从 Status/Doctor 复制 StreamingProxyGuaranteed、StreamingProxyEvidence、StreamingRepairRequired 与 EffectivenessEvidence；不要粘贴原始代理地址。
+      placeholder: false / SystemProxyHttpTrafficOnly / true / SystemProxyHttpTrafficOnly
   - type: textarea
     id: provider_log
     attributes:

@@ -10,7 +10,7 @@ An unofficial current-user watchdog that validates changing HTTP, HTTPS, or SOCK
 
 | Platform | Protected target | Normal use after setup |
 |---|---|---|
-| Windows 11 | Store/MSIX Codex desktop | Open Codex normally; Guardian performs a controlled repair only when needed |
+| Windows 11 | Store/MSIX Codex desktop | Prefer **Codex (Managed Proxy)**; ordinary launches receive a guarded repair prompt when streaming proxy inheritance is missing |
 | macOS (Intel / Apple Silicon) | ChatGPT/Codex desktop app | Open the app normally; Guardian performs a controlled repair only when needed |
 | Linux (x64 / ARM64) | Official Codex CLI | Start with `codex-guard`; interactive terminal sessions are never killed or restarted |
 
@@ -27,7 +27,7 @@ The manual workaround is to find the current port, close Codex, set proxy enviro
 > **A Codex “Reconnecting” banner does not prove that Guardian restarted Codex.** Guardian manages proxy discovery, validation, and Codex launch configuration; it cannot repair packet loss, TLS EOF, WebSocket resets, Windows `10054`, or request timeouts inside a proxy-provider node. Compare the same timestamp with Guardian logs: `codex_restart` or `proxy_changed` indicates a possibly related lifecycle action; if neither event exists, the streaming connection normally failed upstream.
 
 > [!TIP]
-> **v1.5.0 adds a post-update compatibility lifecycle.** After a newly updated Codex process starts, Guardian requires at least 60 seconds and three fresh critical-target validations. It also triggers the owned verified Guardian update task immediately. If launch adaptation cannot be confirmed, automatic relaunches are paused while Codex stays open and the updater waits for an adapter release.
+> **v1.5.1 fixes a Windows false positive where ordinary Codex HTTP traffic used the system proxy while the WebSocket/streaming child lacked explicit proxy variables.** Such traffic is no longer accepted as proof of streaming readiness. Safe mode asks before switching to a managed launch; only an explicit Yes closes Codex. No, timeout, or prompt failure preserves the current task and snoozes this repair prompt for at least 60 minutes.
 
 ## Attributing a reconnect
 
@@ -38,6 +38,7 @@ The manual workaround is to find the current port, close Codex, set proxy enviro
 | `ProxyCriticalTargetsPassed=false` | The critical `chatgpt.com` entry point did not validate | Inspect `ProxyCriticalFailures` and the provider node |
 | `GuardianState=ObservingAfterCodexUpdate` | A newly updated Codex is accumulating fresh validation samples | Keep Codex open and let the observation finish |
 | `GuardianState=UpstreamSuspected` | The local listener works, but critical external validation failed | Keep Codex open and select a healthier provider node |
+| `StreamingProxyGuaranteed=false` | HTTP may use the system proxy, but the streaming process has no managed-launch evidence | Finish the task, then approve the prompt or open **Codex (Managed Proxy)** |
 | `GuardianState=CodexCompatibilityReviewRequired` | Launch adaptation for the new version could not be confirmed and is safely held | Keep Codex open; Guardian checks verified adapter updates automatically |
 
 Guardian may try another discovered and validated endpoint or protocol. It never silently switches subscription nodes inside Clash/Mihomo/v2rayN, and it never changes system network settings.
@@ -141,7 +142,7 @@ If your local execution policy does not allow direct invocation:
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Install.ps1
 ```
 
-The default installation is `%LOCALAPPDATA%\CodexProxyGuardian`. Setup creates the guardian and update tasks, a **Codex (Managed Proxy)** shortcut, and a **Codex Proxy Guardian Settings** shortcut. The settings window switches mode, automatic updates, and update channel without editing JSON. If guardian Task Scheduler registration is unavailable, startup falls back to the current user's `Run` key.
+The default installation is `%LOCALAPPDATA%\CodexProxyGuardian`. Setup creates the guardian and update tasks, a **Codex (Managed Proxy)** shortcut, and a **Codex Proxy Guardian Settings** shortcut. The managed shortcut is the deterministic Windows entry point: it injects process-scoped HTTP/HTTPS/ALL/WS/WSS proxy variables plus the Chromium proxy argument. Ordinary Codex launches remain supported, but Guardian asks before replacing one when only system-proxy HTTP evidence is present. The settings window switches mode, automatic updates, and update channel without editing JSON. If guardian Task Scheduler registration is unavailable, startup falls back to the current user's `Run` key.
 
 Setup checks connectivity but treats a temporarily offline proxy as a warning. Use `-RequireConnectivity` to make that check mandatory:
 
@@ -159,7 +160,7 @@ To stage on a machine without Codex installed:
 
 | User profile | Internal mode | Behavior | Recommendation |
 |---|---|---|---|
-| Automatic | `Safe` | Waits for proxy-traffic evidence; after a Codex update, also requires consecutive fresh critical-target checks before leaving the process alone | Default for public installs |
+| Automatic | `Safe` | Distinguishes system-proxy HTTP traffic from a managed streaming launch, then prompts before repair; after a Codex update it also requires consecutive fresh critical-target checks | Default for public installs |
 | Strict | `Enforce` | Repairs a missing proxy argument after debounce, without the Safe traffic-evidence exemption | Opt in when exact launch arguments must be enforced |
 
 Use the Start Menu settings window, or switch with one command:
@@ -195,6 +196,7 @@ Common options:
   "AllowSystemNonLoopbackProxy": true,
   "ManageExternalCodexLaunches": false,
   "SafeRepairExternalCodexLaunches": true,
+  "RequireManagedLaunchForStreaming": true,
   "SafeExternalLaunchGraceSeconds": 20,
   "NotifyBeforeCodexRestart": true,
   "RestartPromptTimeoutSeconds": 45,
@@ -252,13 +254,21 @@ The status reports progressive effectiveness evidence:
 |---|---|
 | `ValidatedProxy` | The endpoint accepted a TCP connection and met the configured HTTPS-test quorum |
 | `LaunchConfigured` | A current Codex root also carries the same normalized proxy argument |
-| `TrafficObserved` | A Codex process-tree connection to that proxy endpoint was observed recently |
+| `SystemProxyHttpTrafficOnly` | An ordinary Codex process used the Windows system proxy; this does not prove explicit WebSocket proxy inheritance |
+| `ManagedTrafficObserved` | Managed launch configuration matched and a Codex process-tree connection to that endpoint was observed |
+| `TrafficObserved` | macOS/Linux observed a Codex process-tree connection; Windows v1.5.1 reports one of the two more precise states above |
 | `PostUpdateObservation` | A newly updated Codex is accumulating fresh critical-target validations; one local connection is not yet accepted as stable |
 | `EndpointReachableOnly` | The local listener works but a critical external validation failed; Codex is kept open |
 
-`TrafficObserved` is the strongest local evidence this project can provide without packet capture. Short HTTPS probes and local TCP metadata still cannot prove that an authenticated, long-lived Codex SSE/HTTP stream will remain stable, so the normal status deliberately says `StreamStability=IndirectEvidenceOnly`. It does not claim a particular exit IP, location, anonymity level, or proxy policy. Run `Doctor.ps1 -Online -Json` to create a deliberately redacted compatibility report; it omits raw proxy URLs, user paths, and logs.
+`ManagedTrafficObserved` is the strongest local evidence this project can provide without packet capture. Short HTTPS probes and local TCP metadata still cannot prove that an authenticated, long-lived Codex stream will remain stable, so the normal status deliberately says `StreamStability=IndirectEvidenceOnly`. It does not claim a particular exit IP, location, anonymity level, or proxy policy. Run `Doctor.ps1 -Online -Json` to create a deliberately redacted compatibility report; it omits raw proxy URLs, user paths, and logs.
 
 For every detected Codex package version, Guardian re-resolves the MSIX manifest and real root executable, records a capability fingerprint, runs the post-update audit, and starts the repository's verified Release updater immediately. A still-compatible generic adapter continues automatically. If Codex changes an undocumented launch mechanism, Guardian cannot invent unknown upstream behavior; instead it fails safe, leaves Codex open, prevents repeated relaunch attempts, and adopts an adapter release automatically when one becomes available.
+
+### Compatibility contract for every future Codex version
+
+This is behavior-based rather than a whitelist of known version numbers. Every Codex package version change invalidates previous evidence, re-resolves the manifest entry point, and requires fresh critical-target validation. On Windows, compatibility additionally requires both matching managed-launch configuration and fresh proxy traffic from the new process. A failure enters a no-restart safety hold and triggers the verified Guardian updater immediately, with the daily updater as fallback.
+
+Automation can detect change, apply a generic adapter, revalidate behavior, fail precisely, and install an adapter that has been published. No local tool can invent support before code exists if a future Codex release removes the current launch mechanism or introduces an unknown protocol. Guardian therefore protects the active task and reports machine-readable evidence until a verified adapter Release is available.
 
 `GuardianState` distinguishes `Stabilizing`, `Ready`, `WaitingForProxy`, `ObservingAfterCodexUpdate`, `UpstreamSuspected`, `CodexCompatibilityReviewRequired`, `RecoveringCodex`, `RecoveryBlockedByCodex`, and `RestartCircuitOpen`. `Control.ps1 -Action Start` waits through the normal debounce phase and reports the resulting state.
 
