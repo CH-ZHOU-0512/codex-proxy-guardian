@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Codex 反复重连后才开始思考？Codex Proxy Guardian</title>
-    <meta name="description" content="Codex Proxy Guardian 自动发现并验证当前代理，让 Codex 跟上有效端口，减少启动后反复重连；代理或 Codex 更新后自动重新审计，异常时安全保持。">
+    <meta name="description" content="Codex Proxy Guardian 自动发现并验证当前代理，区分系统代理 HTTP 与 WebSocket 流式代理证据；代理或 Codex 更新后重新审计，异常时安全保持。">
     <meta name="keywords" content="Codex 重连 5 次,Codex Reconnecting,Codex 连接不上,Codex 代理,Windows 11,macOS,Linux,Codex CLI,Clash,Mihomo,v2rayN,sing-box,Codex Proxy Guardian">
     <meta name="author" content="CH-ZHOU-0512">
     <meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1,max-video-preview:-1">
@@ -19,7 +19,7 @@
     <meta property="og:locale" content="zh_CN">
     <meta property="og:site_name" content="Codex Proxy Guardian">
     <meta property="og:title" content="解决 Codex 反复重连后才开始思考">
-    <meta property="og:description" content="安装一次，让 Codex 自动跟上当前有效代理。端口变化或 Codex 更新后自动重新审计，不修改系统网络配置。">
+    <meta property="og:description" content="安装一次，让 Codex 跟上当前有效代理，并验证流式连接需要的受管启动证据。端口或 Codex 变化后自动重新审计。">
     <meta property="og:url" content="https://ch-zhou-0512.github.io/codex-proxy-guardian/">
     <meta property="og:image" content="https://raw.githubusercontent.com/CH-ZHOU-0512/codex-proxy-guardian/main/assets/social-preview.png">
     <meta property="og:image:alt" content="Codex Proxy Guardian：让 Codex 不再因为代理没有跟上而反复重连">
@@ -45,7 +45,7 @@
           "@id": "https://ch-zhou-0512.github.io/codex-proxy-guardian/#software",
           "name": "Codex Proxy Guardian",
           "alternateName": "Codex 代理守护程序",
-          "softwareVersion": "1.5.0",
+          "softwareVersion": "1.5.1",
           "operatingSystem": "Windows 11, macOS, Linux",
           "applicationCategory": "UtilitiesApplication",
           "isAccessibleForFree": true,
@@ -73,7 +73,7 @@
               "name": "安装后直接使用 Codex，Guardian 会自动运行吗？",
               "acceptedAnswer": {
                 "@type": "Answer",
-                "text": "Windows 和 macOS 安装后会自动运行，继续从原图标打开 Codex。Linux 后台服务也会自启，但官方 Codex CLI 应通过 codex-guard 启动。"
+                "text": "安装后 Guardian 会自动运行。Windows 为获得流式代理的确定性保证，推荐从 Codex (Managed Proxy) 打开；原图标仍可使用，证据不足时会先询问。macOS 照常打开，Linux CLI 使用 codex-guard。"
               }
             },
             {
@@ -89,7 +89,7 @@
               "name": "Codex 显示正在重新连接，是否说明 Guardian 重启了应用？",
               "acceptedAnswer": {
                 "@type": "Answer",
-                "text": "不一定。只有同一时间日志出现 codex_restart 或 proxy_changed，Guardian 生命周期操作才可能相关；否则更可能是代理服务商节点或上游链路断流。"
+                "text": "不一定。StreamingProxyGuaranteed=false 表示普通 HTTP 可能已走系统代理，但流式进程还缺少受管证据；若该值为 true 且日志没有 codex_restart 或 proxy_changed，更可能是代理节点上游断流。"
               }
             },
             {
@@ -97,7 +97,7 @@
               "name": "Codex 更新后，Guardian 会自动适应吗？",
               "acceptedAnswer": {
                 "@type": "Answer",
-                "text": "会自动重新解析新版入口、审计代理证据并检查 Guardian 适配更新。无法确认兼容时会保持 Codex 打开并暂停自动修复。"
+                "text": "每个新 Codex 包版本都会让旧证据失效，Guardian 会重新解析入口、验证关键目标、受管启动和新进程流量，并检查已发布的适配更新。无法确认时保持 Codex 打开并暂停自动修复。"
               }
             }
           ]
@@ -128,7 +128,7 @@
           <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" aria-label="打开导航" data-nav-toggle>
             <span></span><span></span>
           </button>
-          <a class="header-cta" href="https://github.com/CH-ZHOU-0512/codex-proxy-guardian/releases/latest">下载 v1.5.0</a>
+          <a class="header-cta" href="https://github.com/CH-ZHOU-0512/codex-proxy-guardian/releases/latest">下载 v1.5.1</a>
         </div>
       </div>
     </header>
@@ -139,7 +139,7 @@
           <div class="hero-copy" data-reveal>
             <p class="eyebrow">Open source · Windows / macOS / Linux</p>
             <h1>解决 Codex<br><span>反复重连后</span><br>才开始思考。</h1>
-            <p class="lead">自动找到并验证当前代理，让 Codex 启动时用对端口。代理变化或 Codex 更新后，也会重新检查。</p>
+            <p class="lead">自动找到并验证当前代理，让 Codex 的 HTTP 与流式连接都用对端口。代理变化或 Codex 更新后，也会重新检查。</p>
             <div class="actions">
               <a class="button button-primary" href="https://github.com/CH-ZHOU-0512/codex-proxy-guardian/releases/latest">下载最新版 <span aria-hidden="true">→</span></a>
               <a class="text-link" href="https://github.com/CH-ZHOU-0512/codex-proxy-guardian">查看源代码 <span aria-hidden="true">↗</span></a>
@@ -164,7 +164,7 @@
             <ol>
               <li><span>01</span><div><strong>发现</strong><small>读取当前监听端点</small></div><b>完成</b></li>
               <li><span>02</span><div><strong>验证</strong><small>实际请求关键入口</small></div><b>完成</b></li>
-              <li><span>03</span><div><strong>跟随</strong><small>确认 Codex 正在使用</small></div><b>生效</b></li>
+              <li><span>03</span><div><strong>跟随</strong><small>受管启动 + 真实流量</small></div><b>生效</b></li>
             </ol>
             <p>没有必要时，不重启 Codex。</p>
           </aside>
@@ -174,7 +174,7 @@
       <section class="quick-strip" aria-label="使用方式概览">
         <div class="shell quick-grid">
           <div><span>01</span><strong>装一次</strong><p>当前用户安装，无需管理员权限</p></div>
-          <div><span>02</span><strong>照常打开</strong><p>Windows / macOS 继续点原图标</p></div>
+          <div><span>02</span><strong>可靠启动</strong><p>Windows 推荐 Managed Proxy；macOS 照常打开</p></div>
           <div><span>03</span><strong>后台守护</strong><p>端口变化与版本更新自动重新检查</p></div>
         </div>
       </section>
@@ -198,9 +198,9 @@
               <p>只检查“有没有监听”不够，必须通过真实外部请求验证。</p>
             </article>
             <article data-reveal>
-              <span>版本变化</span>
-              <h3>Codex 更新了启动方式</h3>
-              <p>新版路径或进程入口变化后，需要重新发现并确认兼容证据。</p>
+              <span>证据不完整</span>
+              <h3>HTTP 能用，流式连接仍重连</h3>
+              <p>系统代理承载了普通请求，不代表 WebSocket 子进程已继承显式代理。</p>
             </article>
           </div>
         </div>
@@ -223,13 +223,13 @@
             <article data-reveal>
               <span>02</span>
               <h3>让 Codex 跟上</h3>
-              <p>观察到正确流量就不动；确实需要修复时，Windows 会先询问再重启。</p>
+              <p>Windows 同时确认受管启动参数和新进程真实流量；需要修复时先询问再重启。</p>
               <strong>Evidence first</strong>
             </article>
             <article data-reveal>
               <span>03</span>
               <h3>跟上 Codex 更新</h3>
-              <p>版本变化后重新解析入口、审计兼容性，并立即检查经过校验的适配更新。</p>
+              <p>每个新版本都让旧证据失效；重新解析入口、验证流量并检查经过校验的适配更新。</p>
               <strong>Auto audit</strong>
             </article>
           </div>
@@ -273,7 +273,7 @@
       <section class="install" id="install" aria-labelledby="install-title">
         <div class="shell install-grid">
           <div data-reveal>
-            <p class="eyebrow">Install · v1.5.0 stable</p>
+            <p class="eyebrow">Install · v1.5.1 stable</p>
             <h2 id="install-title">三分钟装好，<br>以后不用管。</h2>
             <p>Windows 推荐直接下载 Setup EXE。安装到当前用户，显示 0–100% 进度，并在完成前确认 Guardian 已经运行。</p>
             <a class="button button-accent" href="https://github.com/CH-ZHOU-0512/codex-proxy-guardian/releases/latest">打开下载页 <span aria-hidden="true">↓</span></a>
@@ -281,7 +281,7 @@
           </div>
           <div class="download-list" data-reveal>
             <a href="https://github.com/CH-ZHOU-0512/codex-proxy-guardian/releases/latest">
-              <span>Windows</span><strong>Setup-1.5.0.exe</strong><em>推荐 →</em>
+              <span>Windows</span><strong>Setup-1.5.1.exe</strong><em>推荐 →</em>
             </a>
             <a href="https://github.com/CH-ZHOU-0512/codex-proxy-guardian/releases/latest">
               <span>macOS</span><strong>darwin-arm64 / amd64</strong><em>下载 →</em>
@@ -303,7 +303,7 @@
           <div class="faq-list" data-reveal>
             <details open>
               <summary>安装后直接用 Codex，它会自动运行吗？</summary>
-              <p>Windows/macOS 会。安装一次后随登录静默启动，继续照常打开桌面应用。Linux 请用 <code>codex-guard</code> 启动 CLI。</p>
+              <p>会自动运行。Windows 推荐用 <strong>Codex (Managed Proxy)</strong> 打开；原图标仍可用，证据不足时会先询问。macOS 照常打开，Linux CLI 用 <code>codex-guard</code>。</p>
             </details>
             <details>
               <summary>会修改网络配置或突然关闭 Codex 吗？</summary>
@@ -311,11 +311,11 @@
             </details>
             <details>
               <summary>看到“正在重新连接”，就是 Guardian 的问题吗？</summary>
-              <p>不一定。日志没有 <code>codex_restart</code> 或 <code>proxy_changed</code> 时，更可能是代理节点或上游链路断流。</p>
+              <p>先看 <code>StreamingProxyGuaranteed</code>。为 false 时，可能只有 HTTP 走了系统代理；为 true 且日志没有 <code>codex_restart</code> / <code>proxy_changed</code> 时，更可能是代理节点上游断流。</p>
             </details>
             <details>
               <summary>Codex 更新后还要手动重新适配吗？</summary>
-              <p>通常不用。Guardian 会重新发现新版入口并检查适配更新；无法确认时会保留 Codex，暂停自动修复。</p>
+              <p>通常不用。每个新 Codex 版本都会重新解析入口并验证新鲜证据；无法确认时保留 Codex、暂停自动修复，并继续检查已发布的适配更新。</p>
             </details>
           </div>
         </div>
@@ -340,7 +340,7 @@
           <a href="https://github.com/CH-ZHOU-0512/codex-proxy-guardian/wiki">Wiki</a>
           <a href="https://github.com/CH-ZHOU-0512/codex-proxy-guardian/discussions">Discussions</a>
         </nav>
-        <p>MIT License · v1.5.0 · <a href="https://github.com/CH-ZHOU-0512">CH-ZHOU-0512</a></p>
+        <p>MIT License · v1.5.1 · <a href="https://github.com/CH-ZHOU-0512">CH-ZHOU-0512</a></p>
       </div>
     </footer>
   </body>

@@ -4,19 +4,19 @@
 
 Codex Proxy Guardian 持续发现并验证当前可用的 HTTP/HTTPS、SOCKS5/SOCKS5H 代理，也能按实际 Codex 目标解析系统 PAC/WPAD 或手动指定的 PAC。当 Clash、Mihomo、v2rayN、sing-box 等代理程序的监听地址或端口稳定变化后，它让 Codex 使用当前代理，并通过防抖、冷却、重启频率限制和熔断避免重启循环。
 
-Windows 推荐下载 `CodexProxyGuardian-Setup-版本号.exe` 双击安装，v1.4.0 起安装器会显示当前阶段和 0–100% 进度；v1.4.1 起完成前还会核对 Guardian PID 与安装路径，意外退出时安全重试一次。macOS/Linux 下载与架构匹配的 tar.gz，解压后以普通用户运行 `./install.sh`，不要使用 sudo。Guardian 安装后立即启动并在登录后静默自启；Windows/macOS 继续正常打开桌面应用，Linux 使用 `codex-guard` 启动官方 Codex CLI。
+Windows 推荐下载 `CodexProxyGuardian-Setup-版本号.exe` 双击安装，v1.4.0 起安装器会显示当前阶段和 0–100% 进度；v1.4.1 起完成前还会核对 Guardian PID 与安装路径，意外退出时安全重试一次。安装后 Guardian 会随登录静默自启。Windows v1.5.1 推荐从开始菜单使用 `Codex (Managed Proxy)`，它会给 Codex 进程树注入 HTTP/HTTPS/ALL/WS/WSS 代理环境与 Chromium 参数；普通 Codex 图标仍可使用，证据不足时 Guardian 会先询问是否切换。macOS 照常打开桌面应用，Linux 使用 `codex-guard` 启动官方 Codex CLI。
 
 项目没有商业代码签名证书，Windows SmartScreen 可能提示新 EXE 无法识别。用户应只从 `CH-ZHOU-0512/codex-proxy-guardian` 正式 Release 下载并核对 `.sha256`；受策略限制时可改用可直接审阅的 ZIP 与 `Install.ps1`。项目不要求用户关闭系统安全功能。
 
-默认自动（Safe）模式会先等待 20 秒观察 Codex 的真实代理流量；已经能通过当前代理通信就保持不动，否则只进行一次受控修复。严格（Enforce）模式用于需要启动参数绝对一致的环境。
+默认自动（Safe）模式会先等待并观察 Codex 的真实代理流量。Windows v1.5.1 不再把普通启动产生的系统代理 HTTP 流量当成 WebSocket/流式代理已经生效；只有“受管启动参数匹配 + 新进程真实代理流量”同时成立，才报告 `StreamingProxyGuaranteed=true` 与 `ManagedTrafficObserved`。否则只在用户明确同意后进行一次受控修复；拒绝、超时或提示失败都会保留当前任务。严格（Enforce）模式用于需要启动参数绝对一致的环境，但同样不能静默关闭 Codex。
 
 本项目不是代理软件，不提供代理服务、订阅或节点。它不会修改系统代理、WinHTTP、DNS、路由、防火墙或永久环境变量。Linux 当前没有官方 Codex 桌面端，因此 Linux 版只包装官方 Codex CLI，并且不会强杀或自动重启交互式终端会话。
 
 Codex 显示“正在重新连接”不等于 Guardian 重启了应用。只有同一时间的 Guardian 日志出现 `codex_restart` 或 `proxy_changed`，Guardian 生命周期操作才可能相关；没有这两个事件，而 Codex 或代理软件出现 TLS EOF、WebSocket reset、Windows `10054`、请求超时或上游 `i/o timeout` 时，更可能是当前服务商节点或其上游链路断流。Guardian 不会擅自切换代理软件里的订阅节点。
 
-Windows v1.5.0 起，每次检测到 Store/MSIX Codex 包版本变化，Guardian 都会从新包重新解析应用 ID、可执行文件和根进程，生成兼容能力指纹，重新审计关键入口、启动参数与真实代理流量，并立即触发一次经过安装路径和任务动作校验的 Stable Release 更新检查。若新版本暂时无法确认兼容，Guardian 会进入 `CodexCompatibilityReviewRequired`，保持 Codex 打开并暂停自动修复；正式适配发布后继续通过版本、标签、包内容与 SHA-256 校验链自动更新。完全未知且未公开的上游机制仍可能需要维护者发布适配，但普通用户无需反复重装或手动改配置。
+Windows v1.5.1 使用面向每个未来 Codex 版本的行为兼容契约，而不是版本号白名单。每次检测到 Store/MSIX 包版本变化，旧证据都会失效；Guardian 会从新包重新解析应用 ID、可执行文件和根进程，执行至少 60 秒、3 次新鲜关键入口验证，并重新要求受管启动与新进程流量证据。同时立即触发一次经过安装路径和任务动作校验的 Stable Release 更新检查，每日检查继续兜底。若暂时无法确认兼容，Guardian 会进入 `CodexCompatibilityReviewRequired`，保持 Codex 打开并暂停自动生命周期操作；正式适配发布后继续通过版本、标签、资产名、包内 VERSION 与 SHA-256 校验链自动更新。完全未知且未公开的上游机制仍可能需要维护者先发布适配，任何本地工具都不能在代码存在前凭空发明实现。
 
-本地代理端口可达但关键外部验证失败时，Windows v1.5.0 会报告 `UpstreamSuspected` 并保留当前 Codex，不切换代理服务商节点、不修改系统网络配置。短 HTTPS 探测与本地 TCP 元数据不能证明登录态长时间 SSE/HTTP 流绝对稳定，因此 `StreamStability=IndirectEvidenceOnly` 是有意保留的诚实边界。
+本地代理端口可达但关键外部验证失败时，Windows 会报告 `UpstreamSuspected` 并保留当前 Codex，不切换代理服务商节点、不修改系统网络配置。短 HTTPS 探测与本地 TCP 元数据不能证明登录态长时间 SSE/HTTP 流绝对稳定，因此 `StreamStability=IndirectEvidenceOnly` 是有意保留的诚实边界。
 
 ## Official links
 
@@ -33,4 +33,4 @@ Windows v1.5.0 起，每次检测到 Store/MSIX Codex 包版本变化，Guardian
 
 ## Current stable version
 
-Version 1.5.0. Windows 11 Store/MSIX desktop (x64/ARM64), macOS ChatGPT/Codex desktop (Intel/Apple Silicon), and Linux Codex CLI (x64/ARM64). Supports HTTP/HTTPS, SOCKS5/SOCKS5H, and PAC/WPAD discovery with real target validation. Windows automatically re-discovers and audits compatibility after a Codex package update, immediately checks for a verified Guardian adapter update, and fails safe without restarting Codex when compatibility cannot be confirmed. `chatgpt.com` is a required Windows validation target. Status and Doctor distinguish endpoint reachability, indirect stream-stability evidence, Guardian lifecycle actions, and common upstream failures. Stable Release includes Windows EXE/ZIP and four native macOS/Linux archives, each with SHA-256.
+Version 1.5.1. Windows 11 Store/MSIX desktop (x64/ARM64), macOS ChatGPT/Codex desktop (Intel/Apple Silicon), and Linux Codex CLI (x64/ARM64). Supports HTTP/HTTPS, SOCKS5/SOCKS5H, and PAC/WPAD discovery with real target validation. Windows distinguishes system-proxy HTTP traffic from managed streaming evidence, requires managed launch plus fresh process traffic, automatically re-discovers and audits compatibility after every Codex package update, immediately checks for a verified Guardian adapter update, and fails safe without restarting Codex when compatibility cannot be confirmed. `chatgpt.com` is a required Windows validation target. Status and Doctor distinguish endpoint reachability, streaming proxy guarantees, indirect stream-stability evidence, Guardian lifecycle actions, and common upstream failures. Stable Release includes Windows EXE/ZIP and four native macOS/Linux archives, each with SHA-256.
