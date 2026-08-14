@@ -76,10 +76,10 @@ v1.5.2 起，Windows 更新器优先复用 Guardian 已验证的代理：HTTP/HT
 
 v1.5.1 起还要先看 `StreamingProxyGuaranteed`：
 
-- `false` 或 `EffectivenessEvidence=SystemProxyHttpTrafficOnly`：普通启动只证明 HTTP 通过了 Windows 系统代理，不能证明新版 Codex 的 WebSocket/流式子进程继承了显式代理。先完成当前任务，再批准 Guardian 的前台修复提示；也可以在设置页点击“修复流式代理”，或关闭 Codex 后打开 **Codex (Managed Proxy)**。
+- `false` 或 `EffectivenessEvidence=SystemProxyHttpTrafficOnly`：普通启动只证明 HTTP 通过了 Windows 系统代理，不能证明新版 Codex 的 WebSocket/流式子进程继承了显式代理。先完成当前任务，再在 Guardian 确认窗口选择“重启Codex”；暂时不方便时选择“60分钟后再提醒我”。也可以在设置页点击“优化流式连接”，或关闭 Codex 后打开 **Codex (Managed Proxy)**。
 - `true` 且 `EffectivenessEvidence=ManagedTrafficObserved`：受管启动与实际端点流量都已观察到。若仍重连且没有 Guardian 生命周期事件，再检查代理节点上游。
 
-修复提示只有明确点击“是”才会关闭并重启 Codex；点击“否”、超时或提示失败都会保留当前任务并按配置延后询问。Guardian 不会为此修改系统代理或永久环境变量。
+品牌确认窗口只有明确选择“重启Codex”才会关闭并重新打开 Codex；选择“60分钟后再提醒我”、关闭窗口、超时或界面失败都会保持当前 Codex 并延后询问。Guardian 不会为此修改系统代理或永久环境变量。
 
 v1.4.4 默认要求 `chatgpt.com` 关键目标通过；`Status.ps1` 和 `Doctor.ps1` 会显示 `ProxyCriticalTargetsPassed` 与 `ProxyCriticalFailures`。若代理软件日志同时出现上游 `i/o timeout`，请手动换一个稳定节点。
 

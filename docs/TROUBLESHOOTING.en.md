@@ -68,10 +68,10 @@ Compare the timestamp with Guardian's `codex_restart` and `proxy_changed` events
 
 Starting with v1.5.1, check `StreamingProxyGuaranteed` first:
 
-- `false`, or `EffectivenessEvidence=SystemProxyHttpTrafficOnly`: the ordinary launch proved only that HTTP used the Windows system proxy. It did not prove that the newer Codex WebSocket/streaming child inherited explicit proxy variables. Finish the current task, then approve Guardian's foreground repair prompt, click the managed streaming repair button in Settings, or close Codex and open **Codex (Managed Proxy)**.
+- `false`, or `EffectivenessEvidence=SystemProxyHttpTrafficOnly`: the ordinary launch proved only that HTTP used the Windows system proxy. It did not prove that the newer Codex WebSocket/streaming child inherited explicit proxy variables. Finish the current task, then choose **Restart Codex** in Guardian's branded prompt; choose **Remind me in 60 minutes** when it is not convenient. You can also use the connection-optimization button in Settings or close Codex and open **Codex (Managed Proxy)**.
 - `true` with `EffectivenessEvidence=ManagedTrafficObserved`: managed launch configuration and endpoint traffic were both observed. If reconnects remain and no Guardian lifecycle event exists, inspect the upstream provider node.
 
-The repair prompt closes Codex only after an explicit Yes. No, timeout, or prompt failure keeps the current task open and snoozes the prompt. Guardian does not modify the system proxy or persistent environment variables.
+The branded prompt closes Codex only after an explicit **Restart Codex** choice. **Remind me in 60 minutes**, closing the window, timeout, or prompt failure leaves Codex running and snoozes the prompt. Guardian does not modify the system proxy or persistent environment variables.
 
 Version 1.4.4 requires the critical `chatgpt.com` probe to pass and exposes `ProxyCriticalTargetsPassed` and `ProxyCriticalFailures` in status and Doctor output. If the proxy application's own log reports upstream `i/o timeout`, select a healthier node there.
 

@@ -755,7 +755,19 @@ Invoke-Test 'Watcher publishes explicit lifecycle states' {
     foreach ($state in @('WaitingForProxy', 'Stabilizing', 'Ready', 'EvaluatingCodexLaunch', 'StreamingGuaranteeGrace', 'CodexNeedsManagedLaunch', 'CodexResolutionUnavailable', 'RecoveringCodex', 'RecoveryBlockedByCodex', 'RestartApprovalRequired', 'RestartDeferred', 'RestartCircuitOpen')) {
         Assert-True ($watcher.Contains("'$state'")) "Missing guardian lifecycle state: $state"
     }
-    Assert-True $watcher.Contains('WScript.Shell') 'Watcher does not contain a foreground restart prompt.'
+    Assert-True $watcher.Contains('Show-CpgRestartApprovalDialog') 'Watcher does not contain the branded restart prompt.'
+    Assert-True $watcher.Contains("'#F4F2EA'") 'Restart prompt does not use the Guardian paper background.'
+    Assert-True $watcher.Contains("'#2F6B50'") 'Restart prompt does not use the Guardian green accent.'
+    Assert-True $watcher.Contains("'#D7F06B'") 'Restart prompt does not use the Guardian highlight color.'
+    $restartActionLabel = ('{0}{1}Codex' -f [char]0x91CD, [char]0x542F)
+    $reminderActionLabel = ('{0}{1}{2}{3}{4}{5}{6}' -f [char]0x5206, [char]0x949F, [char]0x540E, [char]0x518D, [char]0x63D0, [char]0x9192, [char]0x6211)
+    Assert-True ($watcher.Contains(("'" + $restartActionLabel + "'"))) 'Restart prompt does not use the direct restart action label.'
+    Assert-True ($watcher.Contains($reminderActionLabel)) 'Restart prompt does not offer the explicit reminder action.'
+    Assert-True $watcher.Contains('$form.CancelButton = $secondaryButton') 'Closing or cancelling the restart prompt is not fail-safe.'
+    Assert-True $watcher.Contains('$form.MinimizeBox = $true') 'Restart prompt cannot be minimized.'
+    Assert-True $watcher.Contains('SetThreadDpiAwarenessContext') 'Restart prompt does not opt into crisp per-monitor DPI rendering.'
+    Assert-True $watcher.Contains('65860') 'System fallback is not an informational, default-No prompt.'
+    Assert-False $watcher.Contains('69940') 'Legacy warning/system-modal prompt flags are still present.'
     Assert-True $watcher.Contains('Get-CpgRestartPromptDecision') 'Watcher does not require an explicit prompt decision.'
     Assert-True $watcher.Contains('safe_streaming_proxy_not_guaranteed') 'Watcher does not distinguish HTTP fallback from guaranteed streaming proxy injection.'
     Assert-True $watcher.Contains('[Math]::Max(60, $configuredSnoozeMinutes)') 'A declined streaming repair can prompt too frequently.'
