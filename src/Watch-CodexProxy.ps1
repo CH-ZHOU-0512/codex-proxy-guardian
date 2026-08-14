@@ -3,6 +3,8 @@ param(
     [switch]$SelfTest,
     [switch]$RunOnce,
     [switch]$ObserveOnly,
+    [switch]$PreviewRestartPrompt,
+    [string]$PreviewScreenshotPath = '',
     [string]$ProxyOverride = ''
 )
 
@@ -695,6 +697,346 @@ function Test-CodexProxyTraffic {
     return $false
 }
 
+function Set-CpgRoundedRegion {
+    param(
+        $Control,
+        [ValidateRange(2, 40)][int]$Radius
+    )
+
+    $diameter = $Radius * 2
+    $path = New-Object System.Drawing.Drawing2D.GraphicsPath
+    try {
+        $path.AddArc(0, 0, $diameter, $diameter, 180, 90)
+        $path.AddArc($Control.Width - $diameter, 0, $diameter, $diameter, 270, 90)
+        $path.AddArc($Control.Width - $diameter, $Control.Height - $diameter, $diameter, $diameter, 0, 90)
+        $path.AddArc(0, $Control.Height - $diameter, $diameter, $diameter, 90, 90)
+        $path.CloseFigure()
+        $Control.Region = New-Object System.Drawing.Region($path)
+    }
+    finally { $path.Dispose() }
+}
+
+function Show-CpgRestartApprovalFallback {
+    param(
+        [string]$ReasonText,
+        [string]$Endpoint,
+        [int]$TimeoutSeconds,
+        [int]$SnoozeMinutes
+    )
+
+    $message = @(
+        '检测到更合适的连接。',
+        '重启Codex后，连接通常会更稳定。',
+        $ReasonText,
+        ('代理：{0}' -f $Endpoint),
+        '',
+        '要重启Codex吗？',
+        '选择“是”：重启Codex，正在进行的任务会中断。',
+        ('选择“否”或关闭窗口：不做任何改动，{0}分钟后再提醒我。' -f $SnoozeMinutes)
+    ) -join [Environment]::NewLine
+
+    $shell = $null
+    try {
+        $shell = New-Object -ComObject WScript.Shell
+        # Yes/No, information icon, default No, foreground. Deliberately not system-modal.
+        return [int]$shell.Popup($message, $TimeoutSeconds, '连接优化建议 · Codex Proxy Guardian', 65860)
+    }
+    catch { return 0 }
+    finally {
+        if ($null -ne $shell) {
+            try { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($shell) } catch { }
+        }
+    }
+}
+
+function Enable-CpgPromptDpiAwareness {
+    if (-not ('CpgPromptDpi' -as [type])) {
+        Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+
+public static class CpgPromptDpi
+{
+    [DllImport("user32.dll")]
+    private static extern IntPtr SetThreadDpiAwarenessContext(IntPtr dpiContext);
+
+    [DllImport("user32.dll")]
+    private static extern bool SetProcessDPIAware();
+
+    public static void Enable()
+    {
+        try { SetThreadDpiAwarenessContext(new IntPtr(-4)); }
+        catch
+        {
+            try { SetProcessDPIAware(); }
+            catch { }
+        }
+    }
+}
+'@
+    }
+    [CpgPromptDpi]::Enable()
+}
+
+function Show-CpgRestartApprovalDialog {
+    param(
+        [ValidateNotNullOrEmpty()][string]$ReasonText,
+        [ValidateNotNullOrEmpty()][string]$Endpoint,
+        [ValidateRange(15, 300)][int]$TimeoutSeconds,
+        [ValidateRange(1, 1440)][int]$SnoozeMinutes,
+        [switch]$StreamingRepair,
+        [string]$ScreenshotPath = ''
+    )
+
+    try {
+        Add-Type -AssemblyName System.Windows.Forms
+        Add-Type -AssemblyName System.Drawing
+        Enable-CpgPromptDpiAwareness
+        [System.Windows.Forms.Application]::EnableVisualStyles()
+
+        $paper = [System.Drawing.ColorTranslator]::FromHtml('#F4F2EA')
+        $paperDeep = [System.Drawing.ColorTranslator]::FromHtml('#E9E7DD')
+        $ink = [System.Drawing.ColorTranslator]::FromHtml('#111510')
+        $muted = [System.Drawing.ColorTranslator]::FromHtml('#62685F')
+        $green = [System.Drawing.ColorTranslator]::FromHtml('#2F6B50')
+        $greenDark = [System.Drawing.ColorTranslator]::FromHtml('#214B39')
+        $greenSoft = [System.Drawing.ColorTranslator]::FromHtml('#DCE8DF')
+        $line = [System.Drawing.ColorTranslator]::FromHtml('#CDD0C6')
+        $dark = [System.Drawing.ColorTranslator]::FromHtml('#142219')
+        $acid = [System.Drawing.ColorTranslator]::FromHtml('#D7F06B')
+        $white = [System.Drawing.Color]::White
+
+        $form = New-Object System.Windows.Forms.Form
+        $form.Text = 'Codex Proxy Guardian'
+        $form.ClientSize = New-Object System.Drawing.Size(640, 470)
+        $form.StartPosition = [System.Windows.Forms.FormStartPosition]::CenterScreen
+        $form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::FixedDialog
+        $form.MaximizeBox = $false
+        $form.MinimizeBox = $true
+        $form.ShowInTaskbar = $true
+        $form.TopMost = $true
+        $form.AutoScaleMode = [System.Windows.Forms.AutoScaleMode]::Dpi
+        $form.BackColor = $paper
+        $form.Font = New-Object System.Drawing.Font('Microsoft YaHei UI', 9)
+
+        $header = New-Object System.Windows.Forms.Panel
+        $header.Location = New-Object System.Drawing.Point(0, 0)
+        $header.Size = New-Object System.Drawing.Size(640, 92)
+        $header.BackColor = $dark
+        $form.Controls.Add($header)
+
+        $brandMark = New-Object System.Windows.Forms.Label
+        $brandMark.Text = 'C'
+        $brandMark.Location = New-Object System.Drawing.Point(26, 24)
+        $brandMark.Size = New-Object System.Drawing.Size(44, 44)
+        $brandMark.BackColor = $acid
+        $brandMark.ForeColor = $dark
+        $brandMark.TextAlign = [System.Drawing.ContentAlignment]::MiddleCenter
+        $brandMark.Font = New-Object System.Drawing.Font('Segoe UI', 15, [System.Drawing.FontStyle]::Bold)
+        $header.Controls.Add($brandMark)
+        Set-CpgRoundedRegion -Control $brandMark -Radius 12
+
+        $brandTitle = New-Object System.Windows.Forms.Label
+        $brandTitle.Text = '连接优化建议'
+        $brandTitle.Location = New-Object System.Drawing.Point(84, 22)
+        $brandTitle.Size = New-Object System.Drawing.Size(300, 28)
+        $brandTitle.AutoSize = $true
+        $brandTitle.ForeColor = $white
+        $brandTitle.Font = New-Object System.Drawing.Font('Microsoft YaHei UI', 13, [System.Drawing.FontStyle]::Bold)
+        $header.Controls.Add($brandTitle)
+
+        $brandSubtitle = New-Object System.Windows.Forms.Label
+        $brandSubtitle.Text = 'CODEX PROXY GUARDIAN'
+        $brandSubtitle.Location = New-Object System.Drawing.Point(86, 52)
+        $brandSubtitle.Size = New-Object System.Drawing.Size(300, 18)
+        $brandSubtitle.AutoSize = $true
+        $brandSubtitle.ForeColor = $greenSoft
+        $brandSubtitle.Font = New-Object System.Drawing.Font('Segoe UI', 8, [System.Drawing.FontStyle]::Bold)
+        $header.Controls.Add($brandSubtitle)
+
+        $accentLine = New-Object System.Windows.Forms.Panel
+        $accentLine.Location = New-Object System.Drawing.Point(0, 88)
+        $accentLine.Size = New-Object System.Drawing.Size(640, 4)
+        $accentLine.BackColor = $acid
+        $header.Controls.Add($accentLine)
+
+        $heading = New-Object System.Windows.Forms.Label
+        $heading.Text = '检测到更合适的连接'
+        $heading.Location = New-Object System.Drawing.Point(28, 118)
+        $heading.Size = New-Object System.Drawing.Size(588, 34)
+        $heading.AutoSize = $true
+        $heading.ForeColor = $ink
+        $heading.Font = New-Object System.Drawing.Font('Microsoft YaHei UI', 16, [System.Drawing.FontStyle]::Bold)
+        $form.Controls.Add($heading)
+
+        $reassurance = New-Object System.Windows.Forms.Label
+        $reassurance.Text = '重启Codex后，连接通常会更稳定。'
+        $reassurance.Location = New-Object System.Drawing.Point(30, 160)
+        $reassurance.Size = New-Object System.Drawing.Size(580, 25)
+        $reassurance.AutoSize = $true
+        $reassurance.ForeColor = $muted
+        $reassurance.Font = New-Object System.Drawing.Font('Microsoft YaHei UI', 10)
+        $form.Controls.Add($reassurance)
+
+        $card = New-Object System.Windows.Forms.Panel
+        $card.Location = New-Object System.Drawing.Point(28, 204)
+        $card.Size = New-Object System.Drawing.Size(576, 108)
+        $card.BackColor = $white
+        $form.Controls.Add($card)
+        Set-CpgRoundedRegion -Control $card -Radius 16
+
+        $cardAccent = New-Object System.Windows.Forms.Panel
+        $cardAccent.Location = New-Object System.Drawing.Point(0, 0)
+        $cardAccent.Size = New-Object System.Drawing.Size(7, 108)
+        $cardAccent.BackColor = $green
+        $card.Controls.Add($cardAccent)
+
+        $cardEyebrow = New-Object System.Windows.Forms.Label
+        $cardEyebrow.Text = '已找到可用代理'
+        $cardEyebrow.Location = New-Object System.Drawing.Point(26, 17)
+        $cardEyebrow.Size = New-Object System.Drawing.Size(520, 20)
+        $cardEyebrow.AutoSize = $true
+        $cardEyebrow.ForeColor = $greenDark
+        $cardEyebrow.Font = New-Object System.Drawing.Font('Microsoft YaHei UI', 9, [System.Drawing.FontStyle]::Bold)
+        $card.Controls.Add($cardEyebrow)
+
+        $reasonLabel = New-Object System.Windows.Forms.Label
+        $reasonLabel.Text = $ReasonText
+        $reasonLabel.Location = New-Object System.Drawing.Point(26, 75)
+        $reasonLabel.AutoSize = $true
+        $reasonLabel.MaximumSize = New-Object System.Drawing.Size(530, 0)
+        $reasonLabel.ForeColor = $muted
+        $reasonLabel.Font = New-Object System.Drawing.Font('Microsoft YaHei UI', 9)
+        $card.Controls.Add($reasonLabel)
+
+        $endpointLabel = New-Object System.Windows.Forms.Label
+        $endpointLabel.Text = $Endpoint
+        $endpointLabel.Location = New-Object System.Drawing.Point(26, 43)
+        $endpointLabel.Size = New-Object System.Drawing.Size(530, 22)
+        $endpointLabel.AutoSize = $true
+        $endpointLabel.ForeColor = $ink
+        $endpointLabel.Font = New-Object System.Drawing.Font('Consolas', 10, [System.Drawing.FontStyle]::Bold)
+        $card.Controls.Add($endpointLabel)
+
+        $guidance = New-Object System.Windows.Forms.Label
+        $guidance.Text = '重启会中断正在进行的任务，请在方便时操作。'
+        $guidance.Location = New-Object System.Drawing.Point(30, 340)
+        $guidance.Size = New-Object System.Drawing.Size(580, 25)
+        $guidance.AutoSize = $true
+        $guidance.ForeColor = $ink
+        $guidance.Font = New-Object System.Drawing.Font('Microsoft YaHei UI', 9, [System.Drawing.FontStyle]::Bold)
+        $form.Controls.Add($guidance)
+
+        $countdownLabel = New-Object System.Windows.Forms.Label
+        $countdownLabel.Location = New-Object System.Drawing.Point(30, 378)
+        $countdownLabel.Size = New-Object System.Drawing.Size(230, 22)
+        $countdownLabel.AutoSize = $true
+        $countdownLabel.ForeColor = $muted
+        $form.Controls.Add($countdownLabel)
+
+        $secondaryButton = New-Object System.Windows.Forms.Button
+        $secondaryButton.Text = ('{0}分钟后再提醒我' -f $SnoozeMinutes)
+        $secondaryButton.Location = New-Object System.Drawing.Point(246, 407)
+        $secondaryButton.Size = New-Object System.Drawing.Size(190, 40)
+        $secondaryButton.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+        $secondaryButton.FlatAppearance.BorderColor = $line
+        $secondaryButton.FlatAppearance.BorderSize = 1
+        $secondaryButton.BackColor = $white
+        $secondaryButton.ForeColor = $ink
+        $secondaryButton.Font = New-Object System.Drawing.Font('Microsoft YaHei UI', 9, [System.Drawing.FontStyle]::Bold)
+        $form.Controls.Add($secondaryButton)
+        Set-CpgRoundedRegion -Control $secondaryButton -Radius 10
+
+        $primaryButton = New-Object System.Windows.Forms.Button
+        $primaryButton.Text = '重启Codex'
+        $primaryButton.Location = New-Object System.Drawing.Point(448, 407)
+        $primaryButton.Size = New-Object System.Drawing.Size(160, 40)
+        $primaryButton.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+        $primaryButton.FlatAppearance.BorderSize = 0
+        $primaryButton.BackColor = $green
+        $primaryButton.ForeColor = $white
+        $primaryButton.Font = New-Object System.Drawing.Font('Microsoft YaHei UI', 9, [System.Drawing.FontStyle]::Bold)
+        $form.Controls.Add($primaryButton)
+        Set-CpgRoundedRegion -Control $primaryButton -Radius 10
+
+        $promptState = [pscustomobject]@{ Outcome = 'pending'; RemainingSeconds = $TimeoutSeconds }
+        $countdownLabel.Text = ('倒计时 {0} 秒 · 自动稍后提醒' -f $promptState.RemainingSeconds)
+
+        $timer = New-Object System.Windows.Forms.Timer
+        $timer.Interval = 1000
+        $timer.Add_Tick({
+            $promptState.RemainingSeconds--
+            if ($promptState.RemainingSeconds -le 0) {
+                $promptState.Outcome = 'timeout'
+                $form.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+                $form.Close()
+                return
+            }
+            $countdownLabel.Text = ('倒计时 {0} 秒 · 自动稍后提醒' -f $promptState.RemainingSeconds)
+        })
+        $secondaryButton.Add_Click({
+            $promptState.Outcome = 'declined'
+            $form.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+            $form.Close()
+        })
+        $primaryButton.Add_Click({
+            $promptState.Outcome = 'approved'
+            $form.DialogResult = [System.Windows.Forms.DialogResult]::OK
+            $form.Close()
+        })
+        $form.Add_FormClosing({
+            if ($promptState.Outcome -eq 'pending') { $promptState.Outcome = 'declined' }
+            $timer.Stop()
+        })
+        $form.Add_Shown({
+            [void]$secondaryButton.Focus()
+            $timer.Start()
+        })
+        $form.CancelButton = $secondaryButton
+
+        if (-not [string]::IsNullOrWhiteSpace($ScreenshotPath)) {
+            $resolvedScreenshotPath = [System.IO.Path]::GetFullPath($ScreenshotPath)
+            $screenshotDirectory = Split-Path -Parent $resolvedScreenshotPath
+            if (-not (Test-Path -LiteralPath $screenshotDirectory)) {
+                New-Item -ItemType Directory -Path $screenshotDirectory -Force | Out-Null
+            }
+            $form.Show()
+            [System.Windows.Forms.Application]::DoEvents()
+            $bitmap = New-Object System.Drawing.Bitmap($form.Width, $form.Height)
+            try {
+                $form.DrawToBitmap($bitmap, (New-Object System.Drawing.Rectangle(0, 0, $form.Width, $form.Height)))
+                $bitmap.Save($resolvedScreenshotPath, [System.Drawing.Imaging.ImageFormat]::Png)
+            }
+            finally { $bitmap.Dispose() }
+            $form.Close()
+            $timer.Dispose()
+            $form.Dispose()
+            return 7
+        }
+
+        try { [void]$form.ShowDialog() }
+        finally {
+            $timer.Dispose()
+            $form.Dispose()
+        }
+
+        switch ($promptState.Outcome) {
+            'approved' { return 6 }
+            'timeout' { return -1 }
+            default { return 7 }
+        }
+    }
+    catch {
+        if (Test-Path variable:script:LogPath) {
+            Write-GuardianLog 'WARN' 'restart_prompt_fallback' 'The branded restart prompt could not be displayed; the calm system fallback will be used.' @{
+                error = $_.Exception.Message
+            }
+        }
+        return Show-CpgRestartApprovalFallback -ReasonText $ReasonText -Endpoint $Endpoint `
+            -TimeoutSeconds $TimeoutSeconds -SnoozeMinutes $SnoozeMinutes
+    }
+}
+
 function Request-CodexRestartApproval {
     param([string]$Reason, [string]$ProxyUri, $Config)
 
@@ -713,44 +1055,15 @@ function Request-CodexRestartApproval {
     $endpoint = Protect-CpgProxyUri $ProxyUri
     $streamingRepair = $Reason -eq 'safe_streaming_proxy_not_guaranteed'
     $snoozeMinutes = if ($streamingRepair) { [Math]::Max(60, $configuredSnoozeMinutes) } else { $configuredSnoozeMinutes }
-    $reasonText = if ($streamingRepair) {
-        '当前 Codex 是普通启动：HTTP 流量已走代理，但新版 Codex 的 WebSocket/流式连接未继承显式代理环境，仍可能反复“正在重新连接”。'
+    $reasonText = switch ($Reason) {
+        'safe_streaming_proxy_not_guaranteed' { '当前 Codex 还没有完整使用这条代理。' }
+        'proxy_endpoint_changed' { '代理地址已经变化，当前 Codex 仍在使用旧地址。' }
+        'managed_shortcut_takeover' { '你刚刚选择了受管启动。' }
+        default { '当前 Codex 的连接设置需要更新。' }
     }
-    else {
-        ('代理地址或启动参数需要调整（{0}）。' -f $Reason)
-    }
-    $message = @(
-        'Codex Proxy Guardian 检测到一次需要确认的修复。',
-        '',
-        $reasonText,
-        ('将使用的代理：{0}' -f $endpoint),
-        $(if ($streamingRepair) { '修复会同时注入 HTTP/HTTPS/WS/WSS 代理环境，并保留 Chromium 启动参数。' } else { $null }),
-        '',
-        '点击“是”才会关闭并重启 Codex。',
-        ('点击“否”或等待窗口自动关闭，将延后 {0} 分钟。' -f $snoozeMinutes),
-        '',
-        '请先保存、停止或等待当前 Codex 任务完成。'
-    ) -join [Environment]::NewLine
 
-    $popupResult = 0
-    $shell = $null
-    try {
-        $shell = New-Object -ComObject WScript.Shell
-        # Yes/No, warning icon, default No, system modal, foreground.
-        $popupResult = [int]$shell.Popup($message, $timeoutSeconds, 'Codex 即将重启 / Restart confirmation', 69940)
-    }
-    catch {
-        $popupResult = 0
-        Write-GuardianLog 'ERROR' 'restart_prompt_failed' 'The restart prompt could not be displayed; Codex was left running.' @{
-            reason = $Reason
-            error = $_.Exception.Message
-        }
-    }
-    finally {
-        if ($null -ne $shell) {
-            try { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($shell) } catch { }
-        }
-    }
+    $popupResult = Show-CpgRestartApprovalDialog -ReasonText $reasonText -Endpoint $endpoint `
+        -TimeoutSeconds $timeoutSeconds -SnoozeMinutes $snoozeMinutes -StreamingRepair:$streamingRepair
 
     $decision = Get-CpgRestartPromptDecision -PopupResult $popupResult
     if ($decision.Approved) {
@@ -861,6 +1174,20 @@ function Get-MutexName {
     try { $hash = ([BitConverter]::ToString($sha.ComputeHash($bytes))).Replace('-', '').Substring(0, 16) }
     finally { $sha.Dispose() }
     return "Local\CodexProxyGuardian_$hash"
+}
+
+if ($PreviewRestartPrompt) {
+    $previewEndpoint = if ([string]::IsNullOrWhiteSpace($ProxyOverride)) { 'http://127.0.0.1:7897' } else { Protect-CpgProxyUri $ProxyOverride }
+    $previewResult = Show-CpgRestartApprovalDialog `
+        -ReasonText '当前 Codex 还没有完整使用这条代理。' `
+        -Endpoint $previewEndpoint -TimeoutSeconds 300 -SnoozeMinutes 60 -StreamingRepair `
+        -ScreenshotPath $PreviewScreenshotPath
+    [pscustomobject]@{
+        Preview = $true
+        Approved = ($previewResult -eq 6)
+        Result = $previewResult
+    }
+    exit 0
 }
 
 $config = Read-GuardianConfig

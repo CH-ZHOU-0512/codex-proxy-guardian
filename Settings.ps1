@@ -181,7 +181,7 @@ $connectionStatusLabel.Size = New-Object System.Drawing.Size(480, 64)
 $reconnectGroup.Controls.Add($connectionStatusLabel)
 
 $repairButton = New-Object System.Windows.Forms.Button
-$repairButton.Text = '修复流式代理（重启前会再次确认）'
+$repairButton.Text = '优化流式连接（会先征求你的同意）'
 $repairButton.Location = New-Object System.Drawing.Point(230, 166)
 $repairButton.Size = New-Object System.Drawing.Size(268, 30)
 $reconnectGroup.Controls.Add($repairButton)
@@ -213,7 +213,7 @@ $managedLaunchPath = Join-Path $resolvedRoot 'Launch-CodexManaged.ps1'
 $repairButton.Add_Click({
     try {
         & $managedLaunchPath -InstallRoot $resolvedRoot
-        [void][System.Windows.Forms.MessageBox]::Show("已提交受管修复请求。`r`n`r`n如果 Codex 正在运行，Guardian 会再次弹窗确认；只有你明确点击【是】才会关闭并受管重启 Codex。未确认不会打断当前任务。", '等待重启确认', 'OK', 'Information')
+        [void][System.Windows.Forms.MessageBox]::Show("连接优化已经准备好。`r`n`r`n如果 Codex 正在运行，Guardian 会显示确认窗口；只有你明确选择【重启Codex】才会操作。选择【60分钟后再提醒我】或关闭窗口，都不会打断当前任务。", '等待你的确认', 'OK', 'Information')
     }
     catch {
         [void][System.Windows.Forms.MessageBox]::Show($_.Exception.Message, '提交修复失败', 'OK', 'Error')
@@ -296,7 +296,7 @@ if ($SelfTest) {
         StreamStabilityVisible = ($connectionStatusLabel.Text -like '*连接判定*')
         CompatibilityAutomationVisible = ($connectionStatusLabel.Text -like '*兼容机制*')
         StreamingProxyGuaranteeVisible = ($connectionStatusLabel.Text -like '*流式保障*')
-        ManagedRepairButtonVisible = ($repairButton.Text -like '*重启前会再次确认*')
+        ManagedRepairButtonVisible = ($repairButton.Text -like '*会先征求你的同意*')
         ControlExists = (Test-Path -LiteralPath $controlPath)
         UpdaterExists = (Test-Path -LiteralPath $updatePath)
     }

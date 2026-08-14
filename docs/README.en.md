@@ -27,6 +27,8 @@ The manual workaround is to find the current port, close Codex, set proxy enviro
 > **A Codex “Reconnecting” banner does not prove that Guardian restarted Codex.** Guardian manages proxy discovery, validation, and Codex launch configuration; it cannot repair packet loss, TLS EOF, WebSocket resets, Windows `10054`, or request timeouts inside a proxy-provider node. Compare the same timestamp with Guardian logs: `codex_restart` or `proxy_changed` indicates a possibly related lifecycle action; if neither event exists, the streaming connection normally failed upstream.
 
 > [!TIP]
+> **v1.5.3 redesigns the Codex restart confirmation as a calm, branded Guardian window.** The safe action is “Remind me in 60 minutes”; closing the window or letting the timer expire also leaves Codex running. Only the explicit “Restart Codex” button can continue the controlled restart. Per-monitor DPI awareness keeps the UI crisp on scaled displays.
+>
 > **v1.5.2 fixes an update chain that could start the scheduled task but never confirm that the check actually completed.** The updater reuses Guardian's validated HTTP/HTTPS/SOCKS route, records the terminal result, and retries failures for the same Codex version. “Current” now means GitHub was reached successfully.
 
 ## Attributing a reconnect
