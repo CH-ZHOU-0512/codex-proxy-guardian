@@ -954,6 +954,8 @@ $script:UpstreamSuspected = $false
 $script:UpstreamSuspectedSince = [datetime]::MinValue
 $script:CompatibilityUpdateRequestedVersion = ''
 $script:CompatibilityUpdateLastAttempt = [datetime]::MinValue
+$script:CompatibilityUpdateResultEvent = ''
+$script:CompatibilityUpdateRetryAfterUtc = ''
 $script:CompatibilityHold = $false
 $script:CompatibilityHoldCodexVersion = ''
 $script:CompatibilityHoldGuardianVersion = ''
@@ -1022,16 +1024,8 @@ function Request-CompatibilityUpdateCheck {
         -not [bool](Get-CpgConfigValue $Config 'CheckForGuardianUpdateOnCodexChange' $true)) {
         return 'Disabled'
     }
-    if ([string]::Equals($script:CompatibilityUpdateRequestedVersion, $CodexVersion, [System.StringComparison]::OrdinalIgnoreCase)) {
-        return 'Requested'
-    }
-
     $now = Get-Date
-    $retryMinutes = [Math]::Max(5, [int](Get-CpgConfigValue $Config 'CompatibilityUpdateRetryMinutes' 60))
-    if ($script:CompatibilityUpdateLastAttempt -gt [datetime]::MinValue -and ($now - $script:CompatibilityUpdateLastAttempt).TotalMinutes -lt $retryMinutes) {
-        return 'RetryDeferred'
-    }
-    $script:CompatibilityUpdateLastAttempt = $now
+    $retryMinutes = [Math]::Max(5, [int](Get-CpgConfigValue $Config 'CompatibilityUpdateRetryMinutes' 15))
 
     try {
         $markerPath = Join-Path $script:Root '.cpg-install.json'
@@ -1047,22 +1041,55 @@ function Request-CompatibilityUpdateCheck {
             ([string]$_.Arguments).IndexOf($expectedFileArgument, [System.StringComparison]::OrdinalIgnoreCase) -ge 0
         }).Count -gt 0
         if (-not $ownedAction) { throw 'The update task action is not owned by this installation.' }
-        if ([string]$task.State -ne 'Running') { Start-ScheduledTask -TaskName $updateTaskName }
+        $updateStatusPath = Join-Path $script:Root 'update-status.json'
+        $updateStatus = try {
+            if (Test-Path -LiteralPath $updateStatusPath) { Get-Content -Raw -LiteralPath $updateStatusPath | ConvertFrom-Json } else { $null }
+        }
+        catch { $null }
+        $decision = Get-CpgCompatibilityUpdateDecision -CodexVersion $CodexVersion `
+            -RequestedVersion $script:CompatibilityUpdateRequestedVersion `
+            -LastAttempt $script:CompatibilityUpdateLastAttempt -UpdateStatus $updateStatus `
+            -TaskRunning:([string]$task.State -eq 'Running') -Now $now -RetryMinutes $retryMinutes
+        $script:CompatibilityUpdateResultEvent = [string]$decision.ResultEvent
+        $script:CompatibilityUpdateRetryAfterUtc = [string]$decision.RetryAfterUtc
+
+        if ([string]$decision.State -eq 'Running' -and
+            -not [string]::Equals($script:CompatibilityUpdateRequestedVersion, $CodexVersion, [System.StringComparison]::OrdinalIgnoreCase)) {
+            $script:CompatibilityUpdateRequestedVersion = $CodexVersion
+            $script:CompatibilityUpdateLastAttempt = $now
+            Write-GuardianLog 'INFO' 'codex_compatibility_update_joined' 'A running verified Guardian update task was associated with the new Codex package version.' @{
+                codex_version = $CodexVersion
+                guardian_version = $guardianVersion
+                update_task = $updateTaskName
+            }
+        }
+        if ([string]$decision.Action -ne 'Start') { return [string]$decision.State }
+
         $script:CompatibilityUpdateRequestedVersion = $CodexVersion
-        Write-GuardianLog 'INFO' 'codex_compatibility_update_requested' 'A Codex package change triggered the verified Guardian update task immediately; the daily update schedule remains as fallback.' @{
+        $script:CompatibilityUpdateLastAttempt = $now
+        Start-ScheduledTask -TaskName $updateTaskName
+        $script:CompatibilityUpdateResultEvent = 'update_check_started'
+        $script:CompatibilityUpdateRetryAfterUtc = $now.AddMinutes($retryMinutes).ToUniversalTime().ToString('o')
+        $requestEvent = if ([string]$decision.State -eq 'Retrying') { 'codex_compatibility_update_retried' } else { 'codex_compatibility_update_requested' }
+        Write-GuardianLog 'INFO' $requestEvent 'A Codex package change started the verified Guardian update task; completion is tracked and failures are retried automatically.' @{
             codex_version = $CodexVersion
             guardian_version = $guardianVersion
             update_task = $updateTaskName
+            retry_minutes = $retryMinutes
         }
-        return 'Requested'
+        return 'Running'
     }
     catch {
-        Write-GuardianLog 'WARN' 'codex_compatibility_update_request_failed' 'The immediate compatibility update check could not be started. The normal daily updater remains available.' @{
+        $script:CompatibilityUpdateRequestedVersion = $CodexVersion
+        $script:CompatibilityUpdateLastAttempt = $now
+        $script:CompatibilityUpdateResultEvent = 'update_request_failed'
+        $script:CompatibilityUpdateRetryAfterUtc = $now.AddMinutes($retryMinutes).ToUniversalTime().ToString('o')
+        Write-GuardianLog 'WARN' 'codex_compatibility_update_request_failed' 'The compatibility update check could not be completed or started. Guardian will retry for this same Codex version; the daily updater also remains available.' @{
             codex_version = $CodexVersion
             error = $_.Exception.Message
             retry_minutes = $retryMinutes
         }
-        return 'Failed'
+        return 'FailedRetryScheduled'
     }
 }
 
@@ -1106,8 +1133,9 @@ elseif (-not [string]::Equals($script:CompatibilityUpdateRequestedVersion, [stri
     'Pending'
 }
 else {
-    'Requested'
+    'Pending'
 }
+$lastCompatibilityUpdateEvaluation = [datetime]::MinValue
 $restartRequired = $false
 $consecutiveErrors = 0
 $lastUnavailableLog = [datetime]::MinValue
@@ -1225,10 +1253,13 @@ try {
                 elseif ($null -ne $codexApp -and -not (Test-Path -LiteralPath ([string]$codexApp.ExecutablePath))) { $codexApp = $null }
             }
 
-            if ($null -ne $codexApp -and
-                -not [string]::Equals($script:CompatibilityUpdateRequestedVersion, [string]$codexApp.Version, [System.StringComparison]::OrdinalIgnoreCase)) {
+            if ($null -ne $codexApp -and ((Get-Date) - $lastCompatibilityUpdateEvaluation).TotalSeconds -ge 30) {
+                $lastCompatibilityUpdateEvaluation = Get-Date
+                $previousCompatibilityRequestedVersion = $script:CompatibilityUpdateRequestedVersion
+                $previousCompatibilityAttempt = $script:CompatibilityUpdateLastAttempt
                 $compatibilityUpdateCheckState = Request-CompatibilityUpdateCheck -CodexVersion ([string]$codexApp.Version) -Config $config
-                if ($compatibilityUpdateCheckState -in @('Requested', 'Failed')) {
+                if ($previousCompatibilityRequestedVersion -ne $script:CompatibilityUpdateRequestedVersion -or
+                    $previousCompatibilityAttempt -ne $script:CompatibilityUpdateLastAttempt) {
                     $proxyToPersist = if ([string]::IsNullOrWhiteSpace($activeProxy)) { $previousActiveProxy } else { $activeProxy }
                     Save-PersistentState $proxyToPersist $activeSource $lastRestart
                 }
@@ -1727,6 +1758,8 @@ try {
                 compatibilityUpdateCheckState = $compatibilityUpdateCheckState
                 compatibilityUpdateRequestedVersion = $script:CompatibilityUpdateRequestedVersion
                 compatibilityUpdateLastAttemptUtc = if ($script:CompatibilityUpdateLastAttempt -gt [datetime]::MinValue) { $script:CompatibilityUpdateLastAttempt.ToUniversalTime().ToString('o') } else { $null }
+                compatibilityUpdateResultEvent = if ([string]::IsNullOrWhiteSpace($script:CompatibilityUpdateResultEvent)) { $null } else { $script:CompatibilityUpdateResultEvent }
+                compatibilityUpdateRetryAfterUtc = if ([string]::IsNullOrWhiteSpace($script:CompatibilityUpdateRetryAfterUtc)) { $null } else { $script:CompatibilityUpdateRetryAfterUtc }
                 compatibilityAutomation = @{
                     contractVersion = 2
                     behaviorBasedEvidence = $true

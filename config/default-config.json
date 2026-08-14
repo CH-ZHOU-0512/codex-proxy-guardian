@@ -26,7 +26,7 @@
   "PostUpdateStabilitySamples": 3,
   "PostUpdateStabilitySeconds": 60,
   "CheckForGuardianUpdateOnCodexChange": true,
-  "CompatibilityUpdateRetryMinutes": 60,
+  "CompatibilityUpdateRetryMinutes": 15,
   "CodexCompatibilityConfirmationSeconds": 45,
   "UnavailableLogIntervalSeconds": 300,
   "ProxyTestUrls": [

@@ -27,7 +27,7 @@ The manual workaround is to find the current port, close Codex, set proxy enviro
 > **A Codex “Reconnecting” banner does not prove that Guardian restarted Codex.** Guardian manages proxy discovery, validation, and Codex launch configuration; it cannot repair packet loss, TLS EOF, WebSocket resets, Windows `10054`, or request timeouts inside a proxy-provider node. Compare the same timestamp with Guardian logs: `codex_restart` or `proxy_changed` indicates a possibly related lifecycle action; if neither event exists, the streaming connection normally failed upstream.
 
 > [!TIP]
-> **v1.5.1 fixes a Windows false positive where ordinary Codex HTTP traffic used the system proxy while the WebSocket/streaming child lacked explicit proxy variables.** Such traffic is no longer accepted as proof of streaming readiness. Safe mode asks before switching to a managed launch; only an explicit Yes closes Codex. No, timeout, or prompt failure preserves the current task and snoozes this repair prompt for at least 60 minutes.
+> **v1.5.2 fixes an update chain that could start the scheduled task but never confirm that the check actually completed.** The updater reuses Guardian's validated HTTP/HTTPS/SOCKS route, records the terminal result, and retries failures for the same Codex version. “Current” now means GitHub was reached successfully.
 
 ## Attributing a reconnect
 
@@ -211,6 +211,8 @@ Common options:
 ## Automatic updates
 
 The daily updater is bound to `CH-ZHOU-0512/codex-proxy-guardian`. It requires the Release tag, archive name, staged `VERSION`, attached `.sha256`, and the GitHub asset digest when available to agree before invoking the installer. It rejects unsafe archive paths and extraction limits, snapshots the current files, and attempts to restore the previous version and guardian after an interrupted install. Results are written to `logs\update-*.jsonl`.
+
+Starting with v1.5.2, Windows prefers Guardian's currently validated proxy for GitHub requests. PowerShell handles HTTP/HTTPS and Windows 11 `curl.exe` handles SOCKS5/SOCKS5H; bounded retries fall back to the Windows default route without changing system networking or persistent environment variables. A Codex-triggered check reports `Running`, `Current`, `Installed`, or `FailedRetryScheduled`, and a failed check is retried for that same Codex version instead of being permanently marked requested. New installs default to a 15-minute compatibility retry interval.
 
 Starting with v1.4.4, **Check now** distinguishes a busy/skipped check from a completed current result and displays the installed version, remote version, selected channel, check time, and GitHub Releases source. It checks the channel currently selected in the UI even before the setting is applied.
 

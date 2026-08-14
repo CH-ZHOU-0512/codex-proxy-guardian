@@ -73,6 +73,144 @@ function Write-UpdateResult {
     elseif (-not $Silent) { $Result }
 }
 
+$guardianStatusPath = Join-Path $resolvedRoot 'status.json'
+$guardianStatus = try {
+    if (Test-Path -LiteralPath $guardianStatusPath) { Get-Content -Raw -LiteralPath $guardianStatusPath | ConvertFrom-Json } else { $null }
+}
+catch { $null }
+$preferredUpdateRoute = Get-CpgUpdateProxyDecision -Status $guardianStatus -Config $config
+$script:LastUpdateNetworkRoute = [string]$preferredUpdateRoute.Source
+
+function Get-UpdateRequestAttempts {
+    $attempts = @()
+    if ([bool]$preferredUpdateRoute.UseProxy) {
+        $attempts += $preferredUpdateRoute
+        $attempts += $preferredUpdateRoute
+        $attempts += [pscustomobject]@{ UseProxy = $false; ProxyUri = $null; Source = 'WindowsDefaultRoute'; Transport = 'PowerShell' }
+    }
+    else {
+        1..3 | ForEach-Object {
+            $attempts += [pscustomobject]@{ UseProxy = $false; ProxyUri = $null; Source = 'WindowsDefaultRoute'; Transport = 'PowerShell' }
+        }
+    }
+    return @($attempts)
+}
+
+function Protect-UpdateRequestError {
+    param([string]$Message)
+    $safeMessage = $Message
+    if ([bool]$preferredUpdateRoute.UseProxy -and -not [string]::IsNullOrWhiteSpace([string]$preferredUpdateRoute.ProxyUri)) {
+        $safeMessage = $safeMessage.Replace([string]$preferredUpdateRoute.ProxyUri, (Protect-CpgProxyUri ([string]$preferredUpdateRoute.ProxyUri)))
+    }
+    if ($safeMessage.Length -gt 1000) { return $safeMessage.Substring(0, 1000) + '...' }
+    return $safeMessage
+}
+
+function Invoke-UpdateCurlDownload {
+    param(
+        [string]$Uri,
+        [hashtable]$Headers,
+        [string]$OutFile,
+        [int]$TimeoutSeconds,
+        [string]$ProxyUri
+    )
+
+    $curl = Get-Command curl.exe -ErrorAction SilentlyContinue
+    if ($null -eq $curl) { throw 'curl.exe is required to update through a SOCKS proxy on Windows 11, but it was not found.' }
+    $arguments = @('--fail', '--silent', '--show-error', '--location', '--connect-timeout', '15', '--max-time', [string]$TimeoutSeconds)
+    foreach ($headerName in $Headers.Keys) {
+        $arguments += @('--header', ('{0}: {1}' -f $headerName, [string]$Headers[$headerName]))
+    }
+    if (-not [string]::IsNullOrWhiteSpace($ProxyUri)) { $arguments += @('--proxy', $ProxyUri) }
+    $arguments += @('--output', $OutFile, $Uri)
+    & ([string]$curl.Source) @arguments
+    if ($LASTEXITCODE -ne 0) { throw "curl.exe failed with exit code $LASTEXITCODE." }
+}
+
+function Invoke-UpdateJsonRequest {
+    param([string]$Uri, [hashtable]$Headers, [int]$TimeoutSeconds = 30)
+
+    $attemptNumber = 0
+    $attempts = @(Get-UpdateRequestAttempts)
+    foreach ($route in $attempts) {
+        $attemptNumber++
+        $temporaryJson = $null
+        try {
+            if ([bool]$route.UseProxy -and [string]$route.Transport -eq 'Curl') {
+                $temporaryJson = Join-Path ([System.IO.Path]::GetTempPath()) ("CodexProxyGuardian-update-json-{0}.tmp" -f [Guid]::NewGuid().ToString('N'))
+                Invoke-UpdateCurlDownload -Uri $Uri -Headers $Headers -OutFile $temporaryJson -TimeoutSeconds $TimeoutSeconds -ProxyUri ([string]$route.ProxyUri)
+                $jsonText = [System.IO.File]::ReadAllText($temporaryJson, (New-Object System.Text.UTF8Encoding($false, $true)))
+                $result = $jsonText | ConvertFrom-Json
+            }
+            else {
+                $parameters = @{
+                    Uri = $Uri
+                    Headers = $Headers
+                    Method = 'Get'
+                    TimeoutSec = $TimeoutSeconds
+                }
+                if ([bool]$route.UseProxy) { $parameters.Proxy = [string]$route.ProxyUri }
+                $result = Invoke-RestMethod @parameters
+            }
+            $script:LastUpdateNetworkRoute = [string]$route.Source
+            return $result
+        }
+        catch {
+            $safeError = Protect-UpdateRequestError $_.Exception.Message
+            if ($attemptNumber -ge $attempts.Count) { throw $safeError }
+            Write-UpdateLog 'WARN' 'update_request_retry' 'A GitHub update request failed and will be retried through a safe fallback route.' @{
+                attempt = $attemptNumber
+                route = [string]$route.Source
+                error = $safeError
+            }
+            Start-Sleep -Seconds ([Math]::Min(4, $attemptNumber))
+        }
+        finally {
+            if ($null -ne $temporaryJson) { Remove-Item -LiteralPath $temporaryJson -Force -ErrorAction SilentlyContinue }
+        }
+    }
+}
+
+function Invoke-UpdateAssetDownload {
+    param([string]$Uri, [hashtable]$Headers, [string]$OutFile, [int]$TimeoutSeconds)
+
+    $attemptNumber = 0
+    $attempts = @(Get-UpdateRequestAttempts)
+    foreach ($route in $attempts) {
+        $attemptNumber++
+        try {
+            Remove-Item -LiteralPath $OutFile -Force -ErrorAction SilentlyContinue
+            if ([bool]$route.UseProxy -and [string]$route.Transport -eq 'Curl') {
+                Invoke-UpdateCurlDownload -Uri $Uri -Headers $Headers -OutFile $OutFile -TimeoutSeconds $TimeoutSeconds -ProxyUri ([string]$route.ProxyUri)
+            }
+            else {
+                $parameters = @{
+                    Uri = $Uri
+                    Headers = $Headers
+                    UseBasicParsing = $true
+                    OutFile = $OutFile
+                    TimeoutSec = $TimeoutSeconds
+                }
+                if ([bool]$route.UseProxy) { $parameters.Proxy = [string]$route.ProxyUri }
+                [void](Invoke-WebRequest @parameters)
+            }
+            if (-not (Test-Path -LiteralPath $OutFile)) { throw 'The update request completed without creating the expected file.' }
+            $script:LastUpdateNetworkRoute = [string]$route.Source
+            return
+        }
+        catch {
+            $safeError = Protect-UpdateRequestError $_.Exception.Message
+            if ($attemptNumber -ge $attempts.Count) { throw $safeError }
+            Write-UpdateLog 'WARN' 'update_request_retry' 'A GitHub asset download failed and will be retried through a safe fallback route.' @{
+                attempt = $attemptNumber
+                route = [string]$route.Source
+                error = $safeError
+            }
+            Start-Sleep -Seconds ([Math]::Min(4, $attemptNumber))
+        }
+    }
+}
+
 $mutex = New-Object System.Threading.Mutex($false, 'Local\CodexProxyGuardianUpdater')
 $mutexAcquired = $false
 $temporaryRoot = $null
@@ -148,10 +286,10 @@ try {
         'Cache-Control' = 'no-cache'
         Pragma = 'no-cache'
     }
-    Write-UpdateLog 'INFO' 'update_check_started' 'Checking the configured GitHub Release channel.' @{ current_version = $currentVersion; channel = $channel }
+    Write-UpdateLog 'INFO' 'update_check_started' 'Checking the configured GitHub Release channel.' @{ current_version = $currentVersion; channel = $channel; preferred_route = [string]$preferredUpdateRoute.Source }
     # Assign first, then enumerate. Windows PowerShell 5.1 otherwise preserves
     # the top-level JSON array as one pipeline object inside @(...).
-    $releaseResponse = Invoke-RestMethod -Uri "https://api.github.com/repos/$repository/releases?per_page=20" -Headers $headers -Method Get -TimeoutSec 30
+    $releaseResponse = Invoke-UpdateJsonRequest -Uri "https://api.github.com/repos/$repository/releases?per_page=20" -Headers $headers -TimeoutSeconds 30
     $releases = @($releaseResponse)
     $checkedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
     $latestRelease = Select-CpgLatestRelease -Releases $releases -Channel $channel
@@ -159,7 +297,7 @@ try {
     $release = Select-CpgUpdateRelease -Releases $releases -CurrentVersion $currentVersion -Channel $channel
     if ($null -eq $release) {
         $checkStatus = if ($null -eq $latestRelease) { 'NoEligibleRelease' } else { 'Current' }
-        Write-UpdateLog 'INFO' 'update_not_available' 'No newer release is available for the requested channel.' @{ current_version = $currentVersion; latest_version = $latestVersion; channel = $channel; check_status = $checkStatus }
+        Write-UpdateLog 'INFO' 'update_not_available' 'No newer release is available for the requested channel.' @{ current_version = $currentVersion; latest_version = $latestVersion; channel = $channel; check_status = $checkStatus; network_route = $script:LastUpdateNetworkRoute }
         Write-UpdateResult ([pscustomobject]@{
             UpdateChecked = $true
             UpdateAvailable = $false
@@ -169,6 +307,7 @@ try {
             LatestVersion = $latestVersion
             Channel = $channel
             CheckedAtUtc = $checkedAtUtc
+            NetworkRoute = $script:LastUpdateNetworkRoute
             ReleaseUrl = if ($null -eq $latestRelease) { $null } else { [string]$latestRelease.html_url }
         })
         return
@@ -198,9 +337,10 @@ try {
         LatestVersion = $latestVersion
         Channel = $channel
         CheckedAtUtc = $checkedAtUtc
+        NetworkRoute = $script:LastUpdateNetworkRoute
         ReleaseUrl = [string]$release.html_url
     }
-    Write-UpdateLog 'INFO' 'update_available' 'A newer verified-channel release is available.' @{ current_version = $currentVersion; target_version = $targetVersion }
+    Write-UpdateLog 'INFO' 'update_available' 'A newer verified-channel release is available.' @{ current_version = $currentVersion; target_version = $targetVersion; network_route = $script:LastUpdateNetworkRoute }
     if ($CheckOnly) {
         Write-UpdateResult $availableResult
         return
@@ -214,8 +354,8 @@ try {
     New-Item -ItemType Directory -Path $temporaryRoot | Out-Null
     $archivePath = Join-Path $temporaryRoot $archiveName
     $checksumPath = Join-Path $temporaryRoot $checksumName
-    Invoke-WebRequest -Uri ([string]$archiveAsset.browser_download_url) -Headers $headers -UseBasicParsing -OutFile $archivePath -TimeoutSec 120
-    Invoke-WebRequest -Uri ([string]$checksumAsset.browser_download_url) -Headers $headers -UseBasicParsing -OutFile $checksumPath -TimeoutSec 30
+    Invoke-UpdateAssetDownload -Uri ([string]$archiveAsset.browser_download_url) -Headers $headers -OutFile $archivePath -TimeoutSeconds 120
+    Invoke-UpdateAssetDownload -Uri ([string]$checksumAsset.browser_download_url) -Headers $headers -OutFile $checksumPath -TimeoutSeconds 30
     $archiveInfo = Get-Item -LiteralPath $archivePath
     if ($archiveInfo.Length -le 0 -or $archiveInfo.Length -gt 100MB) { throw "Downloaded archive size is invalid: $($archiveInfo.Length) bytes." }
     $checksumInfo = Get-Item -LiteralPath $checksumPath
@@ -307,7 +447,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "The verified update installer failed with exit code $LASTEXITCODE. Output: $($installOutput -join ' ')" }
     $installedVersion = (Get-Content -Raw -LiteralPath (Join-Path $resolvedRoot 'VERSION')).Trim()
     if ($installedVersion -ne $targetVersion) { throw "The updater completed but installed VERSION is '$installedVersion' instead of '$targetVersion'." }
-    Write-UpdateLog 'INFO' 'update_installed' 'The verified release was installed successfully.' @{ previous_version = $currentVersion; installed_version = $installedVersion; sha256 = $actualHash }
+    Write-UpdateLog 'INFO' 'update_installed' 'The verified release was installed successfully.' @{ previous_version = $currentVersion; installed_version = $installedVersion; sha256 = $actualHash; network_route = $script:LastUpdateNetworkRoute }
     Write-UpdateResult ([pscustomobject]@{
         UpdateChecked = $true
         UpdateAvailable = $true
@@ -315,6 +455,7 @@ try {
         PreviousVersion = $currentVersion
         InstalledVersion = $installedVersion
         Channel = $channel
+        NetworkRoute = $script:LastUpdateNetworkRoute
         Sha256 = $actualHash
     })
 }
@@ -330,7 +471,7 @@ catch {
             $rollbackError = $_.Exception.Message
         }
     }
-    Write-UpdateLog 'ERROR' 'update_failed' 'The update check or installation failed.' @{ error = $originalError; rollback_error = $rollbackError; rollback_attempted = $installationStarted }
+    Write-UpdateLog 'ERROR' 'update_failed' 'The update check or installation failed.' @{ error = $originalError; rollback_error = $rollbackError; rollback_attempted = $installationStarted; network_route = $script:LastUpdateNetworkRoute }
     if ($null -ne $rollbackError) { throw "Update failed: $originalError Rollback also failed: $rollbackError" }
     throw $originalError
 }

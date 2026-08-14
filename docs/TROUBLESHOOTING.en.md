@@ -60,13 +60,15 @@ Run `Control.ps1 -Action CheckUpdate` to inspect the configured channel. Update 
 
 Starting with v1.4.4, Settings distinguishes “another updater is running; this check was skipped” from a completed “no higher version” result. It displays the installed version, remote version, selected channel, and check time. A skipped check is never labeled current.
 
+Starting with v1.5.2, the Windows updater prefers Guardian's validated route: PowerShell handles HTTP/HTTPS and Windows 11 `curl.exe` handles SOCKS5/SOCKS5H. `CompatibilityUpdateCheckState=FailedRetryScheduled` means the request actually failed and a retry is scheduled; `CompatibilityUpdateRetryAfterUtc` gives the next time. `Current` is emitted only after GitHub was reached successfully. If a v1.5.1 installation repeatedly logs network failures, install the latest stable version in place once—the defect being repaired is inside that old updater.
+
 ## Codex was not restarted but still shows Reconnecting
 
 Compare the timestamp with Guardian's `codex_restart` and `proxy_changed` events. If neither is present while Codex records TLS EOF, WebSocket reset, Windows `10054`, or a request timeout, the streaming connection was interrupted upstream of Guardian.
 
 Starting with v1.5.1, check `StreamingProxyGuaranteed` first:
 
-- `false`, or `EffectivenessEvidence=SystemProxyHttpTrafficOnly`: the ordinary launch proved only that HTTP used the Windows system proxy. It did not prove that the newer Codex WebSocket/streaming child inherited explicit proxy variables. Finish the current task, then approve Guardian's foreground repair prompt, or close Codex and open **Codex (Managed Proxy)**.
+- `false`, or `EffectivenessEvidence=SystemProxyHttpTrafficOnly`: the ordinary launch proved only that HTTP used the Windows system proxy. It did not prove that the newer Codex WebSocket/streaming child inherited explicit proxy variables. Finish the current task, then approve Guardian's foreground repair prompt, click the managed streaming repair button in Settings, or close Codex and open **Codex (Managed Proxy)**.
 - `true` with `EffectivenessEvidence=ManagedTrafficObserved`: managed launch configuration and endpoint traffic were both observed. If reconnects remain and no Guardian lifecycle event exists, inspect the upstream provider node.
 
 The repair prompt closes Codex only after an explicit Yes. No, timeout, or prompt failure keeps the current task open and snoozes the prompt. Guardian does not modify the system proxy or persistent environment variables.

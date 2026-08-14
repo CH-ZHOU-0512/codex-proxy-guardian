@@ -4,6 +4,14 @@ All notable changes are documented here. This project follows semantic versionin
 
 ## [未发布 / Unreleased]
 
+## [1.5.2] - 2026-08-14
+
+- 修复 Codex 版本变化触发更新后，只记录“计划任务启动成功”却不核对最终结果的问题。现在会读取 `update-status.json`，区分运行中、已是最新版、安装成功和失败；失败后会针对同一 Codex 版本继续重试，不再永久卡在 `Requested`。
+- Windows 更新器优先复用 Guardian 已真实验证的代理。HTTP/HTTPS 代理由 Windows PowerShell 使用，纯 SOCKS5/SOCKS5H 由 Windows 11 自带的 `curl.exe` 使用；请求会限次重试并安全回退到 Windows 默认网络路径，不修改系统代理或永久环境变量。
+- 新安装的兼容更新重试间隔由 60 分钟缩短到 15 分钟；Settings、Status 与 Doctor 会显示真实更新结果、下一次重试时间和实际联网路径，避免把“没有新 Release”和“根本没有检查成功”混为一谈。
+- Settings 增加“修复流式代理”按钮。它只提交受管启动请求；Codex 已在运行时仍会再次要求用户明确确认，未确认不会关闭或打断当前任务。
+- 增加更新路由、SOCKS 传输、终态识别、失败延迟与同版本重试的回归测试；诊断报告结构升级到 v8。
+
 ## [1.5.1] - 2026-08-09
 
 - 修复 Windows 新版 Codex 的关键误判：普通启动时，HTTP 请求可能通过系统代理成功，但 WebSocket/流式子进程并未继承显式代理环境。此类流量不再被当成完整代理生效证据。

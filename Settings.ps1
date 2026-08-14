@@ -66,9 +66,12 @@ $compatibilityText = switch ($compatibilityState) {
     default { '使用通用 MSIX 清单适配' }
 }
 $updateAuditText = switch ($compatibilityUpdateState) {
-    'Requested' { '已触发 Guardian 兼容更新检查' }
+    'Running' { 'Guardian 兼容更新检查正在运行' }
+    'Current' { '已联网确认 Guardian 当前为最新版' }
+    'Installed' { '兼容更新已安装' }
+    'FailedRetryScheduled' { '更新检查失败，已安排自动重试' }
+    'Retrying' { '正在重试兼容更新检查' }
     'RetryDeferred' { '更新检查稍后自动重试' }
-    'Failed' { '即时检查失败，保留每日自动检查' }
     'Disabled' { '兼容更新检查已关闭' }
     default { '兼容更新按需检查' }
 }
@@ -80,7 +83,7 @@ $form.StartPosition = 'CenterScreen'
 $form.FormBorderStyle = 'FixedDialog'
 $form.MaximizeBox = $false
 $form.MinimizeBox = $false
-$form.ClientSize = New-Object System.Drawing.Size(560, 630)
+$form.ClientSize = New-Object System.Drawing.Size(560, 670)
 $form.Font = New-Object System.Drawing.Font('Microsoft YaHei UI', 9)
 
 $title = New-Object System.Windows.Forms.Label
@@ -161,7 +164,7 @@ $updateGroup.Controls.Add($checkButton)
 $reconnectGroup = New-Object System.Windows.Forms.GroupBox
 $reconnectGroup.Text = '关于“正在重新连接”'
 $reconnectGroup.Location = New-Object System.Drawing.Point(20, 372)
-$reconnectGroup.Size = New-Object System.Drawing.Size(520, 165)
+$reconnectGroup.Size = New-Object System.Drawing.Size(520, 205)
 $form.Controls.Add($reconnectGroup)
 
 $reconnectDescription = New-Object System.Windows.Forms.Label
@@ -177,28 +180,45 @@ $connectionStatusLabel.Location = New-Object System.Drawing.Point(18, 99)
 $connectionStatusLabel.Size = New-Object System.Drawing.Size(480, 64)
 $reconnectGroup.Controls.Add($connectionStatusLabel)
 
+$repairButton = New-Object System.Windows.Forms.Button
+$repairButton.Text = '修复流式代理（重启前会再次确认）'
+$repairButton.Location = New-Object System.Drawing.Point(230, 166)
+$repairButton.Size = New-Object System.Drawing.Size(268, 30)
+$reconnectGroup.Controls.Add($repairButton)
+
 $statusLabel = New-Object System.Windows.Forms.Label
 $statusLabel.Text = "当前：$profile；自动更新：$(if ($automaticUpdates) { '开启' } else { '关闭' })"
-$statusLabel.Location = New-Object System.Drawing.Point(22, 550)
+$statusLabel.Location = New-Object System.Drawing.Point(22, 590)
 $statusLabel.Size = New-Object System.Drawing.Size(340, 25)
 $form.Controls.Add($statusLabel)
 
 $applyButton = New-Object System.Windows.Forms.Button
 $applyButton.Text = '应用'
-$applyButton.Location = New-Object System.Drawing.Point(365, 583)
+$applyButton.Location = New-Object System.Drawing.Point(365, 623)
 $applyButton.Size = New-Object System.Drawing.Size(82, 32)
 $applyButton.DialogResult = [System.Windows.Forms.DialogResult]::None
 $form.Controls.Add($applyButton)
 
 $closeButton = New-Object System.Windows.Forms.Button
 $closeButton.Text = '关闭'
-$closeButton.Location = New-Object System.Drawing.Point(458, 583)
+$closeButton.Location = New-Object System.Drawing.Point(458, 623)
 $closeButton.Size = New-Object System.Drawing.Size(82, 32)
 $closeButton.Add_Click({ $form.Close() })
 $form.Controls.Add($closeButton)
 
 $controlPath = Join-Path $resolvedRoot 'Control.ps1'
 $updatePath = Join-Path $resolvedRoot 'Update.ps1'
+$managedLaunchPath = Join-Path $resolvedRoot 'Launch-CodexManaged.ps1'
+
+$repairButton.Add_Click({
+    try {
+        & $managedLaunchPath -InstallRoot $resolvedRoot
+        [void][System.Windows.Forms.MessageBox]::Show("已提交受管修复请求。`r`n`r`n如果 Codex 正在运行，Guardian 会再次弹窗确认；只有你明确点击【是】才会关闭并受管重启 Codex。未确认不会打断当前任务。", '等待重启确认', 'OK', 'Information')
+    }
+    catch {
+        [void][System.Windows.Forms.MessageBox]::Show($_.Exception.Message, '提交修复失败', 'OK', 'Error')
+    }
+})
 
 $checkButton.Add_Click({
     try {
@@ -217,7 +237,7 @@ $checkButton.Add_Click({
 
         $checkedAt = try { ([datetime]::Parse([string]$result.CheckedAtUtc)).ToLocalTime().ToString('yyyy-MM-dd HH:mm:ss') } catch { '刚刚' }
         if ([bool]$result.UpdateAvailable) {
-            $choice = [System.Windows.Forms.MessageBox]::Show("发现新版本。`r`n`r`n本机版本：$($result.CurrentVersion)`r`n远端版本：$($result.TargetVersion)`r`n检查通道：$channelText`r`n检查时间：$checkedAt`r`n来源：GitHub Releases`r`n`r`n是否立即校验并安装？", '发现更新', 'YesNo', 'Question')
+            $choice = [System.Windows.Forms.MessageBox]::Show("发现新版本。`r`n`r`n本机版本：$($result.CurrentVersion)`r`n远端版本：$($result.TargetVersion)`r`n检查通道：$channelText`r`n检查时间：$checkedAt`r`n网络路径：$($result.NetworkRoute)`r`n来源：GitHub Releases`r`n`r`n是否立即校验并安装？", '发现更新', 'YesNo', 'Question')
             if ($choice -eq [System.Windows.Forms.DialogResult]::Yes) {
                 $installed = & $updatePath -InstallRoot $resolvedRoot -Install -ChannelOverride $requestedChannel
                 [void][System.Windows.Forms.MessageBox]::Show("已升级到 $($installed.InstalledVersion)。设置窗口将关闭。", '更新完成', 'OK', 'Information')
@@ -228,7 +248,7 @@ $checkButton.Add_Click({
             [void][System.Windows.Forms.MessageBox]::Show("检查已完成，但 GitHub 没有返回此通道可验证的 Release。`r`n`r`n本机版本：$($result.CurrentVersion)`r`n检查通道：$channelText`r`n检查时间：$checkedAt`r`n`r`n这不能证明当前已经是最新版，请检查网络或稍后重试。", '未找到可验证版本', 'OK', 'Warning')
         }
         else {
-            [void][System.Windows.Forms.MessageBox]::Show("检查已完成。`r`n`r`n本机版本：$($result.CurrentVersion)`r`n远端版本：$($result.LatestVersion)`r`n检查通道：$channelText`r`n检查时间：$checkedAt`r`n来源：GitHub Releases`r`n`r`n没有发现更高版本。", '检查完成', 'OK', 'Information')
+            [void][System.Windows.Forms.MessageBox]::Show("检查已完成。`r`n`r`n本机版本：$($result.CurrentVersion)`r`n远端版本：$($result.LatestVersion)`r`n检查通道：$channelText`r`n检查时间：$checkedAt`r`n网络路径：$($result.NetworkRoute)`r`n来源：GitHub Releases`r`n`r`n没有发现更高版本。", '检查完成', 'OK', 'Information')
         }
     }
     catch {
@@ -276,6 +296,7 @@ if ($SelfTest) {
         StreamStabilityVisible = ($connectionStatusLabel.Text -like '*连接判定*')
         CompatibilityAutomationVisible = ($connectionStatusLabel.Text -like '*兼容机制*')
         StreamingProxyGuaranteeVisible = ($connectionStatusLabel.Text -like '*流式保障*')
+        ManagedRepairButtonVisible = ($repairButton.Text -like '*重启前会再次确认*')
         ControlExists = (Test-Path -LiteralPath $controlPath)
         UpdaterExists = (Test-Path -LiteralPath $updatePath)
     }

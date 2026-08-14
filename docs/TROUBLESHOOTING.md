@@ -68,13 +68,15 @@ v1.4.3 起，真正不同的代理地址或端口需要修复现有 Codex 时，
 
 v1.4.4 起，Settings 会区分“更新器正忙，本次没有检查”和“检查完成，没有更高版本”，并显示本机/远端版本、通道与时间。如果界面显示“检查尚未完成”，稍后重试即可，不应把它解释为最新版。
 
+v1.5.2 起，Windows 更新器优先复用 Guardian 已验证的代理：HTTP/HTTPS 使用 PowerShell，SOCKS5/SOCKS5H 使用 Windows 11 自带的 `curl.exe`。`CompatibilityUpdateCheckState=FailedRetryScheduled` 表示本次真实失败但已安排重试，`CompatibilityUpdateRetryAfterUtc` 是下一次时间；`Current` 才表示已经成功访问 GitHub 并确认没有更高版本。若仍停留在 v1.5.1 且更新日志反复出现网络错误，请手动原位安装一次最新正式版，因为需要修复的缺陷就在旧更新器自身。
+
 ## Codex 没有被重启，但仍显示正在重新连接
 
 先查看 Guardian 日志是否在同一时间出现 `codex_restart` 或 `proxy_changed`。如果没有，而 Codex 日志出现 TLS EOF、WebSocket reset、`10054` 或请求超时，说明流式连接在代理上游被中断。
 
 v1.5.1 起还要先看 `StreamingProxyGuaranteed`：
 
-- `false` 或 `EffectivenessEvidence=SystemProxyHttpTrafficOnly`：普通启动只证明 HTTP 通过了 Windows 系统代理，不能证明新版 Codex 的 WebSocket/流式子进程继承了显式代理。先完成当前任务，再批准 Guardian 的前台修复提示；也可以关闭 Codex 后打开 **Codex (Managed Proxy)**。
+- `false` 或 `EffectivenessEvidence=SystemProxyHttpTrafficOnly`：普通启动只证明 HTTP 通过了 Windows 系统代理，不能证明新版 Codex 的 WebSocket/流式子进程继承了显式代理。先完成当前任务，再批准 Guardian 的前台修复提示；也可以在设置页点击“修复流式代理”，或关闭 Codex 后打开 **Codex (Managed Proxy)**。
 - `true` 且 `EffectivenessEvidence=ManagedTrafficObserved`：受管启动与实际端点流量都已观察到。若仍重连且没有 Guardian 生命周期事件，再检查代理节点上游。
 
 修复提示只有明确点击“是”才会关闭并重启 Codex；点击“否”、超时或提示失败都会保留当前任务并按配置延后询问。Guardian 不会为此修改系统代理或永久环境变量。

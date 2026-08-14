@@ -274,15 +274,69 @@ Invoke-Test 'Semantic update selection respects version order and release channe
     Assert-Equal 'v0.4.0-alpha' ([string](Select-CpgUpdateRelease $wrappedReleases '0.3.1-alpha' Prerelease).tag_name)
 }
 
-Invoke-Test 'Windows PowerShell updater expands REST release arrays' {
+Invoke-Test 'Windows updater expands REST release arrays and reuses the validated proxy' {
     $updateSource = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'Update.ps1')
-    Assert-True ($updateSource.Contains('$releaseResponse = Invoke-RestMethod'))
+    Assert-True ($updateSource.Contains('$releaseResponse = Invoke-UpdateJsonRequest'))
     Assert-True ($updateSource.Contains('$releases = @($releaseResponse)'))
     Assert-False ($updateSource.Contains('$releases = @(Invoke-RestMethod'))
     Assert-True ($updateSource.Contains("'Cache-Control' = 'no-cache'"))
     Assert-True ($updateSource.Contains('LatestVersion = $latestVersion'))
     Assert-True ($updateSource.Contains("CheckStatus = 'Busy'"))
     Assert-True ($updateSource.Contains('ChannelOverride'))
+    Assert-True ($updateSource.Contains('Get-CpgUpdateProxyDecision'))
+    Assert-True ($updateSource.Contains("'update_request_retry'"))
+    Assert-True ($updateSource.Contains('Invoke-UpdateCurlDownload'))
+    Assert-True ($updateSource.Contains('New-Object System.Text.UTF8Encoding($false, $true)'))
+    Assert-True ($updateSource.Contains('NetworkRoute = $script:LastUpdateNetworkRoute'))
+}
+
+Invoke-Test 'Update routing prefers validated HTTP and supports validated SOCKS' {
+    $config = [pscustomobject]@{ ExplicitProxy = ''; AllowNonLoopbackProxy = $false }
+    $validated = [pscustomobject]@{ activeProxyValid = $true; activeProxy = 'http://127.0.0.1:7897' }
+    $httpDecision = Get-CpgUpdateProxyDecision -Status $validated -Config $config
+    Assert-True $httpDecision.UseProxy
+    Assert-Equal 'http://127.0.0.1:7897' ([string]$httpDecision.ProxyUri)
+    Assert-Equal 'PowerShell' ([string]$httpDecision.Transport)
+    Assert-Equal 'GuardianValidatedProxy' ([string]$httpDecision.Source)
+
+    $socks = [pscustomobject]@{ activeProxyValid = $true; activeProxy = 'socks5h://127.0.0.1:1080' }
+    $socksDecision = Get-CpgUpdateProxyDecision -Status $socks -Config $config
+    Assert-True $socksDecision.UseProxy
+    Assert-Equal 'Curl' ([string]$socksDecision.Transport)
+
+    $unvalidated = [pscustomobject]@{ activeProxyValid = $false; activeProxy = 'http://127.0.0.1:7897' }
+    $directDecision = Get-CpgUpdateProxyDecision -Status $unvalidated -Config $config
+    Assert-False $directDecision.UseProxy
+    Assert-Equal 'WindowsDefaultRoute' ([string]$directDecision.Source)
+}
+
+Invoke-Test 'Compatibility updates track terminal results and retry the same Codex version' {
+    $now = [datetime]'2026-08-14T10:00:00Z'
+    $first = Get-CpgCompatibilityUpdateDecision -CodexVersion '26.900.1.0' -Now $now
+    Assert-Equal 'Start' ([string]$first.Action)
+    Assert-Equal 'Pending' ([string]$first.State)
+
+    $running = Get-CpgCompatibilityUpdateDecision -CodexVersion '26.900.1.0' -RequestedVersion '26.900.1.0' -LastAttempt $now -TaskRunning:$true -Now $now
+    Assert-Equal 'Running' ([string]$running.State)
+
+    $currentStatus = [pscustomobject]@{ event = 'update_not_available'; time = $now.AddMinutes(1).ToString('o') }
+    $current = Get-CpgCompatibilityUpdateDecision -CodexVersion '26.900.1.0' -RequestedVersion '26.900.1.0' -LastAttempt $now -UpdateStatus $currentStatus -Now $now.AddMinutes(2)
+    Assert-Equal 'None' ([string]$current.Action)
+    Assert-Equal 'Current' ([string]$current.State)
+
+    $failedStatus = [pscustomobject]@{ event = 'update_failed'; time = $now.AddMinutes(1).ToString('o') }
+    $deferred = Get-CpgCompatibilityUpdateDecision -CodexVersion '26.900.1.0' -RequestedVersion '26.900.1.0' -LastAttempt $now -UpdateStatus $failedStatus -Now $now.AddMinutes(5) -RetryMinutes 15
+    Assert-Equal 'FailedRetryScheduled' ([string]$deferred.State)
+    Assert-Equal 'None' ([string]$deferred.Action)
+    Assert-True (-not [string]::IsNullOrWhiteSpace([string]$deferred.RetryAfterUtc))
+
+    $retry = Get-CpgCompatibilityUpdateDecision -CodexVersion '26.900.1.0' -RequestedVersion '26.900.1.0' -LastAttempt $now -UpdateStatus $failedStatus -Now $now.AddMinutes(15) -RetryMinutes 15
+    Assert-Equal 'Retrying' ([string]$retry.State)
+    Assert-Equal 'Start' ([string]$retry.Action)
+
+    $staleSuccess = [pscustomobject]@{ event = 'update_not_available'; time = $now.AddMinutes(-5).ToString('o') }
+    $notFooled = Get-CpgCompatibilityUpdateDecision -CodexVersion '26.900.1.0' -RequestedVersion '26.900.1.0' -LastAttempt $now -UpdateStatus $staleSuccess -Now $now.AddMinutes(15) -RetryMinutes 15
+    Assert-Equal 'Start' ([string]$notFooled.Action)
 }
 
 Invoke-Test 'Settings never reports a skipped update check as current' {
@@ -754,7 +808,7 @@ Invoke-Test 'Doctor emits a redacted, share-safe JSON report' {
     $reportText = & (Join-Path $repoRoot 'Doctor.ps1') -InstallRoot $diagnosticRoot -Json
     $report = $reportText | ConvertFrom-Json
     Assert-True $report.safeForSharing
-    Assert-Equal 7 ([int]$report.reportSchema)
+    Assert-Equal 8 ([int]$report.reportSchema)
     Assert-Equal 'CodexStreamRetryNotProofOfGuardianRestartOrEndpointFailure' ([string]$report.reconnectAttribution.meaning)
     Assert-False ([bool]$report.reconnectAttribution.providerNodeManagedByGuardian)
     Assert-False (($reportText -join '') -match [regex]::Escape($env:USERPROFILE)) 'The diagnostic report exposed the user profile path.'

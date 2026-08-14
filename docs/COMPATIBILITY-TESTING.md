@@ -25,7 +25,7 @@ After a managed Windows launch, `Status.ps1` should progress from `ValidatedProx
 
 After a Store/MSIX Codex version change, the new root should first report `ObservingAfterCodexUpdate` and accumulate only fresh validations. The default acceptance point is three successful critical-target samples over at least 60 seconds. Force one critical-target failure while leaving the local listener open and verify that status becomes `UpstreamSuspected`, the current Codex PID remains unchanged, no `codex_restart` event is written, and the Windows system proxy remains unchanged. A later fresh success should clear the suspected state.
 
-Verify that the version transition starts only the update task owned by the canonical install marker and exact installed `Update.ps1` action. Simulate an unconfirmed managed launch past `CodexCompatibilityConfirmationSeconds`; status must become `CodexCompatibilityReviewRequired`, recovery intent must be cleared, and subsequent automatic lifecycle decisions must remain held. Changing either the Codex version or Guardian version must clear that pair-specific hold and restart the audit.
+Verify that the version transition starts only the update task owned by the canonical install marker and exact installed `Update.ps1` action. Force that task to publish `update_failed`; the same Codex version must become `FailedRetryScheduled`, remain deferred until `CompatibilityUpdateRetryMinutes`, and then start another owned check. A later `update_not_available` must become `Current` only when its timestamp is newer than the attempt. Repeat with validated HTTP and SOCKS5 endpoints and confirm the update log reports the selected route without changing the Windows proxy. Simulate an unconfirmed managed launch past `CodexCompatibilityConfirmationSeconds`; status must become `CodexCompatibilityReviewRequired`, recovery intent must be cleared, and subsequent automatic lifecycle decisions must remain held. Changing either the Codex version or Guardian version must clear that pair-specific hold and restart the audit.
 
 `StreamStability=IndirectEvidenceOnly` is the expected steady-state limitation. The test suite must not reinterpret a short unauthenticated HTTPS probe or local TCP metadata as proof of an authenticated long-lived SSE/HTTP stream.
 
@@ -53,6 +53,7 @@ Maintainers should exercise at least these scenarios before promoting any releas
 - Safe and Enforce modes;
 - scheduled-task registration and HKCU Run fallback;
 - update preserving custom configuration;
+- Windows update checks through validated HTTP and pure SOCKS5 routes, including same-version failure retry;
 - uninstall from a custom path with no Windows proxy change;
 - forced repeated change simulation proving that the circuit breaker opens.
 - macOS LaunchAgent install/upgrade/uninstall on Intel and Apple Silicon, including an app opened outside Guardian;
