@@ -70,6 +70,8 @@ v1.4.4 起，Settings 会区分“更新器正忙，本次没有检查”和“�
 
 v1.5.2 起，Windows 更新器优先复用 Guardian 已验证的代理：HTTP/HTTPS 使用 PowerShell，SOCKS5/SOCKS5H 使用 Windows 11 自带的 `curl.exe`。`CompatibilityUpdateCheckState=FailedRetryScheduled` 表示本次真实失败但已安排重试，`CompatibilityUpdateRetryAfterUtc` 是下一次时间；`Current` 才表示已经成功访问 GitHub 并确认没有更高版本。若仍停留在 v1.5.1 且更新日志反复出现网络错误，请手动原位安装一次最新正式版，因为需要修复的缺陷就在旧更新器自身。
 
+v1.5.4 起，后台自动更新安装成功后会发送一次系统通知，显示旧版本和新版本，并明确 Codex 无需重启。通知发送结果写入更新日志的 `automatic_update_notification_shown` 或 `automatic_update_notification_failed`；同一版本不会在每次登录时重复提醒。可在 `config.json` 中将 `NotifyAfterAutomaticUpdate` 设为 `false` 关闭此通知。
+
 ## Codex 没有被重启，但仍显示正在重新连接
 
 先查看 Guardian 日志是否在同一时间出现 `codex_restart` 或 `proxy_changed`。如果没有，而 Codex 日志出现 TLS EOF、WebSocket reset、`10054` 或请求超时，说明流式连接在代理上游被中断。

@@ -13,6 +13,7 @@ param(
     [switch]$NoShortcut,
     [switch]$NoStart,
     [switch]$PreserveUpdateTask,
+    [switch]$AutomaticUpdate,
     [switch]$PreflightOnly,
     [switch]$ProgressProtocol
 )
@@ -64,6 +65,19 @@ function Write-CpgInstallProgress {
     [Console]::Out.WriteLine(('CPG_PROGRESS|{0}|{1}' -f $Percent, $safeMessage))
 }
 
+function Test-CpgAutomaticUpdateParent {
+    try {
+        $currentProcess = Get-CimInstance Win32_Process -Filter ("ProcessId={0}" -f $PID) -ErrorAction Stop
+        if ($null -eq $currentProcess -or [int]$currentProcess.ParentProcessId -le 0) { return $false }
+        $parentProcess = Get-CimInstance Win32_Process -Filter ("ProcessId={0}" -f [int]$currentProcess.ParentProcessId) -ErrorAction Stop
+        if ($null -eq $parentProcess) { return $false }
+        $parentCommandLine = [string]$parentProcess.CommandLine
+        return $parentCommandLine.IndexOf('Update.ps1', [System.StringComparison]::OrdinalIgnoreCase) -ge 0 -and `
+            $parentCommandLine -match '(?i)(?:^|\s)-Silent(?:\s|$)'
+    }
+    catch { return $false }
+}
+
 function Test-CpgInstalledGuardianAlive {
     param($Status, [ValidateNotNullOrEmpty()][string]$WatcherPath)
     if ($null -eq $Status) { return $false }
@@ -111,6 +125,20 @@ if (Test-Path -LiteralPath $resolvedRoot) {
         throw "Refusing to install over a non-empty directory that is not marked as Codex Proxy Guardian: $resolvedRoot"
     }
 }
+
+$previousInstalledVersion = ''
+if (Test-MarkerMatchesRoot $existingMarker $resolvedRoot) {
+    $existingVersionProperty = $existingMarker.PSObject.Properties['version']
+    if ($null -ne $existingVersionProperty) { $previousInstalledVersion = ([string]$existingVersionProperty.Value).Trim() }
+    if ([string]::IsNullOrWhiteSpace($previousInstalledVersion)) {
+        $existingVersionPath = Join-Path $resolvedRoot 'VERSION'
+        if (Test-Path -LiteralPath $existingVersionPath) {
+            try { $previousInstalledVersion = (Get-Content -Raw -LiteralPath $existingVersionPath).Trim() } catch { $previousInstalledVersion = '' }
+        }
+    }
+}
+$versionChanged = -not [string]::IsNullOrWhiteSpace($previousInstalledVersion) -and $previousInstalledVersion -ne $version
+$automaticUpdateInvocation = [bool]$AutomaticUpdate -or (Test-CpgAutomaticUpdateParent)
 
 Import-Module $coreModule -Force
 $defaultConfig = Get-Content -Raw -LiteralPath $defaultConfigPath | ConvertFrom-Json
@@ -293,6 +321,7 @@ $payload = [ordered]@{
     (Join-Path $sourceRoot 'Doctor.ps1') = 'Doctor.ps1'
     (Join-Path $sourceRoot 'Control.ps1') = 'Control.ps1'
     (Join-Path $sourceRoot 'Settings.ps1') = 'Settings.ps1'
+    (Join-Path $sourceRoot 'Notify-Update.ps1') = 'Notify-Update.ps1'
     (Join-Path $sourceRoot 'Update.ps1') = 'Update.ps1'
     (Join-Path $sourceRoot 'LICENSE') = 'LICENSE'
     (Join-Path $sourceRoot 'VERSION') = 'VERSION'
@@ -465,6 +494,23 @@ if (-not $NoStart) {
 }
 Write-CpgInstallProgress 99 'Finalizing'
 
+$updateNotificationRequested = $false
+if ($automaticUpdateInvocation -and $versionChanged -and [bool](Get-CpgConfigValue $prospectiveConfig 'NotifyAfterAutomaticUpdate' $true)) {
+    $notifierPath = Join-Path $resolvedRoot 'Notify-Update.ps1'
+    if (Test-Path -LiteralPath $notifierPath) {
+        try {
+            $safePreviousVersion = if ($previousInstalledVersion -match '^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$') { $previousInstalledVersion } else { '' }
+            $notifierArguments = '-NoLogo -NoProfile -STA -ExecutionPolicy Bypass -WindowStyle Hidden -File "{0}" -InstallRoot "{1}" -PreviousVersion "{2}" -InstalledVersion "{3}"' -f `
+                $notifierPath, $resolvedRoot, $safePreviousVersion, $version
+            Start-Process -FilePath $powershellPath -ArgumentList $notifierArguments -WindowStyle Hidden
+            $updateNotificationRequested = $true
+        }
+        catch {
+            Write-Warning "Guardian was updated, but the completion notification could not be started: $($_.Exception.Message)"
+        }
+    }
+}
+
 $effectiveConfig = Get-Content -Raw -LiteralPath $installedConfigPath | ConvertFrom-Json
 $managedLaunchRecommended = $null -ne $runtimeStatus -and [bool]$runtimeStatus.codexRunning -and [bool]$runtimeStatus.activeProxyValid -and -not [bool]$runtimeStatus.codexProxyArgumentMatch
 $effectiveMode = [string](Get-CpgConfigValue $effectiveConfig 'Mode' 'Safe')
@@ -511,4 +557,5 @@ if ($managedLaunchRecommended) {
     ManagedLaunchRecommended = $managedLaunchRecommended
     NextStep = $nextStep
     SystemProxyModified = $false
+    UpdateNotificationRequested = $updateNotificationRequested
 }

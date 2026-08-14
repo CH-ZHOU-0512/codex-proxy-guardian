@@ -62,6 +62,8 @@ Starting with v1.4.4, Settings distinguishes “another updater is running; this
 
 Starting with v1.5.2, the Windows updater prefers Guardian's validated route: PowerShell handles HTTP/HTTPS and Windows 11 `curl.exe` handles SOCKS5/SOCKS5H. `CompatibilityUpdateCheckState=FailedRetryScheduled` means the request actually failed and a retry is scheduled; `CompatibilityUpdateRetryAfterUtc` gives the next time. `Current` is emitted only after GitHub was reached successfully. If a v1.5.1 installation repeatedly logs network failures, install the latest stable version in place once—the defect being repaired is inside that old updater.
 
+Starting with v1.5.4, a successful background update sends one desktop notification with the previous and installed versions and explicitly says that Codex does not need to restart. Delivery is logged as `automatic_update_notification_shown` or `automatic_update_notification_failed`, and the same version is not announced again at each login. Set `NotifyAfterAutomaticUpdate` to `false` in `config.json` to disable it.
+
 ## Codex was not restarted but still shows Reconnecting
 
 Compare the timestamp with Guardian's `codex_restart` and `proxy_changed` events. If neither is present while Codex records TLS EOF, WebSocket reset, Windows `10054`, or a request timeout, the streaming connection was interrupted upstream of Guardian.

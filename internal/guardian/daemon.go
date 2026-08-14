@@ -20,6 +20,7 @@ type persistentState struct {
 	ActiveSource        string      `json:"activeSource,omitempty"`
 	RestartHistory      []time.Time `json:"restartHistory,omitempty"`
 	CircuitBreakerUntil *time.Time  `json:"circuitBreakerUntil,omitempty"`
+	LastNotifiedVersion string      `json:"lastNotifiedVersion,omitempty"`
 }
 
 type daemonRuntime struct {
@@ -62,6 +63,7 @@ func RunDaemon() error {
 	runtimeState := &daemonRuntime{cfg: cfg, logger: logger, manager: newPlatformManager(cfg), validationCache: map[string]validationCacheEntry{}}
 	runtimeState.loadPersistent()
 	logger.Log("INFO", "guardian_start", "Cross-platform guardian started.", map[string]any{"version": Version, "platform": runtime.GOOS, "target": runtimeState.manager.TargetName()})
+	runtimeState.notifyUpdateDetectedAtStartup()
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
@@ -161,10 +163,37 @@ func (daemon *daemonRuntime) tick(ctx context.Context) error {
 		daemon.lastUpdateCheck = time.Now()
 		if result, err := CheckForUpdate(true); err == nil && strings.HasPrefix(result, "updated ") {
 			daemon.logger.Log("INFO", "automatic_update", result, nil)
+			installedVersion := strings.TrimPrefix(strings.TrimSpace(strings.TrimPrefix(result, "updated to ")), "v")
+			if daemon.cfg.NotifyAfterAutomaticUpdate {
+				if notifyErr := notifyAutomaticUpdate(Version, installedVersion); notifyErr != nil {
+					daemon.logger.Log("WARN", "automatic_update_notification_failed", "The update completed, but the desktop notification could not be shown.", map[string]any{"installed_version": installedVersion, "error_class": classifyError(notifyErr)})
+				} else {
+					daemon.persistent.LastNotifiedVersion = installedVersion
+					daemon.savePersistent()
+					daemon.logger.Log("INFO", "automatic_update_notification_shown", "The automatic update completion notification was shown.", map[string]any{"installed_version": installedVersion})
+				}
+			}
 			return errUpdateInstalled
 		}
 	}
 	return nil
+}
+
+func (daemon *daemonRuntime) notifyUpdateDetectedAtStartup() {
+	if !daemon.cfg.NotifyAfterAutomaticUpdate {
+		return
+	}
+	previousStatus, err := ReadStatus()
+	if err != nil || !shouldNotifyAutomaticUpdate(previousStatus.Version, Version, daemon.persistent.LastNotifiedVersion) {
+		return
+	}
+	if err := notifyAutomaticUpdate(previousStatus.Version, Version); err != nil {
+		daemon.logger.Log("WARN", "automatic_update_notification_failed", "An installed update was detected, but the desktop notification could not be shown.", map[string]any{"previous_version": previousStatus.Version, "installed_version": Version, "error_class": classifyError(err)})
+		return
+	}
+	daemon.persistent.LastNotifiedVersion = strings.TrimPrefix(Version, "v")
+	daemon.savePersistent()
+	daemon.logger.Log("INFO", "automatic_update_notification_shown", "The installed update was announced after Guardian restarted.", map[string]any{"previous_version": previousStatus.Version, "installed_version": Version})
 }
 
 func (daemon *daemonRuntime) selectProxy(ctx context.Context) (Candidate, Validation) {
