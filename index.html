@@ -45,7 +45,7 @@
           "@id": "https://ch-zhou-0512.github.io/codex-proxy-guardian/#software",
           "name": "Codex Proxy Guardian",
           "alternateName": "Codex 代理守护程序",
-          "softwareVersion": "1.5.2",
+          "softwareVersion": "1.5.3",
           "operatingSystem": "Windows 11, macOS, Linux",
           "applicationCategory": "UtilitiesApplication",
           "isAccessibleForFree": true,
@@ -81,7 +81,7 @@
               "name": "Guardian 会修改系统网络配置或突然关闭 Codex 吗？",
               "acceptedAnswer": {
                 "@type": "Answer",
-                "text": "不会修改系统代理、DNS、路由或永久环境变量。Windows 上任何可能关闭现有 Codex 的修复都必须先取得用户确认。"
+                "text": "不会修改系统代理、DNS、路由或永久环境变量。Windows 上只有明确点击“重启Codex”才会执行受控重启；稍后提醒、关闭、超时或界面失败都保持 Codex 运行。"
               }
             },
             {
@@ -128,7 +128,7 @@
           <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" aria-label="打开导航" data-nav-toggle>
             <span></span><span></span>
           </button>
-          <a class="header-cta" href="https://github.com/CH-ZHOU-0512/codex-proxy-guardian/releases/latest">下载 v1.5.2</a>
+          <a class="header-cta" href="https://github.com/CH-ZHOU-0512/codex-proxy-guardian/releases/latest">下载 v1.5.3</a>
         </div>
       </div>
     </header>
@@ -223,7 +223,7 @@
             <article data-reveal>
               <span>02</span>
               <h3>让 Codex 跟上</h3>
-              <p>Windows 同时确认受管启动参数和新进程真实流量；需要修复时先询问再重启。</p>
+              <p>Windows 同时确认受管启动参数和新进程真实流量；需要修复时先用简洁、可最小化的窗口询问。</p>
               <strong>Evidence first</strong>
             </article>
             <article data-reveal>
@@ -273,7 +273,7 @@
       <section class="install" id="install" aria-labelledby="install-title">
         <div class="shell install-grid">
           <div data-reveal>
-            <p class="eyebrow">Install · v1.5.2 stable</p>
+            <p class="eyebrow">Install · v1.5.3 stable</p>
             <h2 id="install-title">三分钟装好，<br>以后不用管。</h2>
             <p>Windows 推荐直接下载 Setup EXE。安装到当前用户，显示 0–100% 进度，并在完成前确认 Guardian 已经运行。</p>
             <a class="button button-accent" href="https://github.com/CH-ZHOU-0512/codex-proxy-guardian/releases/latest">打开下载页 <span aria-hidden="true">↓</span></a>
@@ -281,7 +281,7 @@
           </div>
           <div class="download-list" data-reveal>
             <a href="https://github.com/CH-ZHOU-0512/codex-proxy-guardian/releases/latest">
-              <span>Windows</span><strong>Setup-1.5.2.exe</strong><em>推荐 →</em>
+              <span>Windows</span><strong>Setup-1.5.3.exe</strong><em>推荐 →</em>
             </a>
             <a href="https://github.com/CH-ZHOU-0512/codex-proxy-guardian/releases/latest">
               <span>macOS</span><strong>darwin-arm64 / amd64</strong><em>下载 →</em>
@@ -307,7 +307,7 @@
             </details>
             <details>
               <summary>会修改网络配置或突然关闭 Codex 吗？</summary>
-              <p>不会修改系统网络配置。Windows 上任何可能关闭当前 Codex 的修复，都必须先显示确认提醒。</p>
+              <p>不会修改系统网络配置。Windows 只有点击“重启Codex”才会执行；也可以最小化窗口或选择“60分钟后再提醒我”。</p>
             </details>
             <details>
               <summary>看到“正在重新连接”，就是 Guardian 的问题吗？</summary>
@@ -340,7 +340,7 @@
           <a href="https://github.com/CH-ZHOU-0512/codex-proxy-guardian/wiki">Wiki</a>
           <a href="https://github.com/CH-ZHOU-0512/codex-proxy-guardian/discussions">Discussions</a>
         </nav>
-        <p>MIT License · v1.5.2 · <a href="https://github.com/CH-ZHOU-0512">CH-ZHOU-0512</a></p>
+        <p>MIT License · v1.5.3 · <a href="https://github.com/CH-ZHOU-0512">CH-ZHOU-0512</a></p>
       </div>
     </footer>
   </body>
