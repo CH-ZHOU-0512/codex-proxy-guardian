@@ -45,7 +45,7 @@
           "@id": "https://ch-zhou-0512.github.io/codex-proxy-guardian/#software",
           "name": "Codex Proxy Guardian",
           "alternateName": "Codex 代理守护程序",
-          "softwareVersion": "1.5.1",
+          "softwareVersion": "1.5.2",
           "operatingSystem": "Windows 11, macOS, Linux",
           "applicationCategory": "UtilitiesApplication",
           "isAccessibleForFree": true,
@@ -97,7 +97,7 @@
               "name": "Codex 更新后，Guardian 会自动适应吗？",
               "acceptedAnswer": {
                 "@type": "Answer",
-                "text": "每个新 Codex 包版本都会让旧证据失效，Guardian 会重新解析入口、验证关键目标、受管启动和新进程流量，并检查已发布的适配更新。无法确认时保持 Codex 打开并暂停自动修复。"
+                "text": "每个新 Codex 包版本都会让旧证据失效，Guardian 会重新解析入口、验证关键目标、受管启动和新进程流量，并检查已发布的适配更新。v1.5.2 会复用已验证代理，失败后对同一版本自动重试；无法确认时保持 Codex 打开。"
               }
             }
           ]
@@ -128,7 +128,7 @@
           <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" aria-label="打开导航" data-nav-toggle>
             <span></span><span></span>
           </button>
-          <a class="header-cta" href="https://github.com/CH-ZHOU-0512/codex-proxy-guardian/releases/latest">下载 v1.5.1</a>
+          <a class="header-cta" href="https://github.com/CH-ZHOU-0512/codex-proxy-guardian/releases/latest">下载 v1.5.2</a>
         </div>
       </div>
     </header>
@@ -229,7 +229,7 @@
             <article data-reveal>
               <span>03</span>
               <h3>跟上 Codex 更新</h3>
-              <p>每个新版本都让旧证据失效；重新解析入口、验证流量并检查经过校验的适配更新。</p>
+              <p>新版本让旧证据失效；重新解析入口、验证流量，并通过已验证代理检查和重试适配更新。</p>
               <strong>Auto audit</strong>
             </article>
           </div>
@@ -273,7 +273,7 @@
       <section class="install" id="install" aria-labelledby="install-title">
         <div class="shell install-grid">
           <div data-reveal>
-            <p class="eyebrow">Install · v1.5.1 stable</p>
+            <p class="eyebrow">Install · v1.5.2 stable</p>
             <h2 id="install-title">三分钟装好，<br>以后不用管。</h2>
             <p>Windows 推荐直接下载 Setup EXE。安装到当前用户，显示 0–100% 进度，并在完成前确认 Guardian 已经运行。</p>
             <a class="button button-accent" href="https://github.com/CH-ZHOU-0512/codex-proxy-guardian/releases/latest">打开下载页 <span aria-hidden="true">↓</span></a>
@@ -281,7 +281,7 @@
           </div>
           <div class="download-list" data-reveal>
             <a href="https://github.com/CH-ZHOU-0512/codex-proxy-guardian/releases/latest">
-              <span>Windows</span><strong>Setup-1.5.1.exe</strong><em>推荐 →</em>
+              <span>Windows</span><strong>Setup-1.5.2.exe</strong><em>推荐 →</em>
             </a>
             <a href="https://github.com/CH-ZHOU-0512/codex-proxy-guardian/releases/latest">
               <span>macOS</span><strong>darwin-arm64 / amd64</strong><em>下载 →</em>
@@ -315,7 +315,7 @@
             </details>
             <details>
               <summary>Codex 更新后还要手动重新适配吗？</summary>
-              <p>通常不用。每个新 Codex 版本都会重新解析入口并验证新鲜证据；无法确认时保留 Codex、暂停自动修复，并继续检查已发布的适配更新。</p>
+              <p>通常不用。v1.5.2 会重新解析入口、验证新鲜证据，并通过已验证代理检查适配；失败后对同一 Codex 版本自动重试。无法确认时保留 Codex。</p>
             </details>
           </div>
         </div>
@@ -340,7 +340,7 @@
           <a href="https://github.com/CH-ZHOU-0512/codex-proxy-guardian/wiki">Wiki</a>
           <a href="https://github.com/CH-ZHOU-0512/codex-proxy-guardian/discussions">Discussions</a>
         </nav>
-        <p>MIT License · v1.5.1 · <a href="https://github.com/CH-ZHOU-0512">CH-ZHOU-0512</a></p>
+        <p>MIT License · v1.5.2 · <a href="https://github.com/CH-ZHOU-0512">CH-ZHOU-0512</a></p>
       </div>
     </footer>
   </body>
