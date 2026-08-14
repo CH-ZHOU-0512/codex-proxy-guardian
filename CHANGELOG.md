@@ -4,6 +4,13 @@ All notable changes are documented here. This project follows semantic versionin
 
 ## [未发布 / Unreleased]
 
+## [1.5.4] - 2026-08-14
+
+- 自动更新成功后向当前登录用户发送一次简洁通知，说明已经从旧版本升级到哪个新版本，并明确“Codex 无需重启，可以继续使用”；通知不要求确认，也不会中断 Codex。
+- Windows 通过一次性通知区域消息提示，并在不可用时回退为自动关闭的信息框。新版安装器能识别由 v1.5.3 等旧静默更新器发起的父进程，因此首次升级即可收到通知；后续更新使用显式自动更新标记。
+- macOS 使用系统通知中心，Linux 依次使用 `notify-send`、Zenity 或 KDialog。跨平台守护进程记录已通知版本，避免更新后进程替换造成重复提醒；新安装不会被误报为自动更新。
+- 新增 `NotifyAfterAutomaticUpdate` 配置项（默认开启）、通知脚本自检、UTF-8 兼容检查、首次升级识别与单次通知回归测试。
+
 ## [1.5.3] - 2026-08-14
 
 - 将 Windows 的系统警告式重启确认框改为 Guardian 品牌窗口，沿用项目米白、深墨绿、青绿与荧光黄主题色，并使用清晰的信息层级解释连接优化原因。

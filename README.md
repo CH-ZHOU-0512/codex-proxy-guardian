@@ -17,6 +17,8 @@ Codex Proxy Guardian 是一个非官方、跨平台的 **Codex 代理守护工�
 > **Codex 显示“正在重新连接”，不等于 Guardian 重启了 Codex。** Guardian 负责代理发现、验证和 Codex 启动参数；它不能修复代理服务商节点自身的丢包、TLS EOF、WebSocket reset、Windows `10054` 或请求超时。请对照同一时间的 Guardian 日志：存在 `codex_restart` / `proxy_changed` 才说明 Guardian 生命周期操作可能相关；两者都没有时，通常是上游流式连接断开。详见[重连归因](#如何判断是谁造成的重连)。
 
 > [!TIP]
+> **v1.5.4 会在自动更新完成后告诉你结果。** 通知会显示旧版本和新版本，并明确 Codex 无需重启；它不要求确认、不会中断任务，也不会在每次开机重复出现。Windows、macOS 与常见 Linux 桌面环境均已覆盖。
+>
 > **v1.5.3 重新设计了 Codex 重启确认窗口。** 新窗口使用 Guardian 主题色，默认选择“60分钟后再提醒我”，关闭窗口或倒计时结束也不会重启；只有明确点击“重启Codex”才会执行。高 DPI 显示器会使用原生清晰渲染。
 >
 > **v1.5.2 修复了“Codex 更新后触发过检查，但 Guardian 实际没有更新”的链路缺陷。** 更新器会复用已验证的 HTTP/HTTPS/SOCKS 代理，核对任务最终结果，并在失败后针对同一 Codex 版本继续重试；“已经是最新版”只会在真实访问 GitHub 成功后显示。
@@ -256,6 +258,7 @@ Guardian 无法在不改变用户网络选择的前提下修复代理服务商�
   "ExplicitProxy": "socks5h://127.0.0.1:1080",
   "ExplicitPAC": "",
   "AutomaticUpdates": true,
+  "NotifyAfterAutomaticUpdate": true,
   "UpdateChannel": "Stable",
   "RequireManagedLaunchForStreaming": true,
   "NotifyBeforeCodexRestart": true,

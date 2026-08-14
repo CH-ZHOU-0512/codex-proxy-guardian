@@ -430,6 +430,7 @@ try {
     if ($null -ne $updateTaskProperty -and -not [string]::IsNullOrWhiteSpace([string]$updateTaskProperty.Value)) {
         $installArguments += @('-UpdateTaskName', [string]$updateTaskProperty.Value)
     }
+    if ($Silent) { $installArguments += '-AutomaticUpdate' }
     $managedShortcutProperty = $marker.PSObject.Properties['shortcutPath']
     $managedShortcutPath = if ($null -eq $managedShortcutProperty) { '' } else { [string]$managedShortcutProperty.Value }
     if ([string]::IsNullOrWhiteSpace($managedShortcutPath)) {

@@ -62,6 +62,18 @@ Invoke-Test 'Localized settings UI has a Windows PowerShell compatible UTF-8 BOM
     Assert-True ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF)
 }
 
+Invoke-Test 'Localized automatic update notification has a Windows PowerShell compatible UTF-8 BOM' {
+    $path = Join-Path $repoRoot 'Notify-Update.ps1'
+    $bytes = [System.IO.File]::ReadAllBytes($path)
+    Assert-True ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF)
+    $output = & (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe') -NoLogo -NoProfile -ExecutionPolicy Bypass -File $path -PreviousVersion 1.5.3 -InstalledVersion 1.5.4 -SelfTest 2>&1
+    Assert-Equal 0 $LASTEXITCODE ($output -join ' ')
+    $selfTestText = $output -join ' '
+    Assert-True $selfTestText.Contains('Ready')
+    Assert-True $selfTestText.Contains('CodexRestartRequired')
+    Assert-True $selfTestText.Contains('1.5.4')
+}
+
 Invoke-Test 'Silent VBS launchers parse and use the inbox PowerShell path' {
     $cscript = Join-Path $env:SystemRoot 'System32\cscript.exe'
     foreach ($name in @('Run-Guardian.vbs', 'Run-ManagedCodex.vbs')) {
@@ -82,6 +94,7 @@ Invoke-Test 'Default configuration is conservative' {
     $config = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'config\default-config.json') | ConvertFrom-Json
     Assert-Equal 'Safe' ([string]$config.Mode)
     Assert-True $config.AutomaticUpdates
+    Assert-True $config.NotifyAfterAutomaticUpdate
     Assert-Equal 'Stable' ([string]$config.UpdateChannel)
     Assert-False $config.ManageExternalCodexLaunches
     Assert-True $config.SafeRepairExternalCodexLaunches
@@ -350,6 +363,21 @@ Invoke-Test 'Settings never reports a skipped update check as current' {
     Assert-True ($settingsSource.Contains('ReconnectGuidanceVisible'))
     Assert-True ($settingsSource.Contains('StreamStabilityVisible'))
     Assert-True ($settingsSource.Contains('codex_restart / proxy_changed'))
+}
+
+Invoke-Test 'Automatic update completion is announced exactly once' {
+    $installerSource = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'Install.ps1')
+    $updaterSource = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'Update.ps1')
+    $notifierSource = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'Notify-Update.ps1')
+    $packagerSource = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'tools\Package-Release.ps1')
+    Assert-True $installerSource.Contains('Test-CpgAutomaticUpdateParent') 'The first upgrade from an older updater cannot be recognized.'
+    Assert-True $installerSource.Contains('UpdateNotificationRequested') 'The installer does not report notification dispatch.'
+    Assert-True $installerSource.Contains("(Join-Path `$sourceRoot 'Notify-Update.ps1')") 'The installed payload omits the notification helper.'
+    Assert-True $packagerSource.Contains("'Notify-Update.ps1'") 'The release archive omits the notification helper.'
+    Assert-True $updaterSource.Contains("if (`$Silent) { `$installArguments += '-AutomaticUpdate' }") 'Future silent updaters do not identify automatic installation.'
+    Assert-True $notifierSource.Contains('automatic_update_notification_shown') 'Successful notification delivery is not logged.'
+    $noRestartText = 'Codex ' + [char]0x65E0 + [char]0x9700 + [char]0x91CD + [char]0x542F
+    Assert-True $notifierSource.Contains($noRestartText) 'The notification does not reassure users that Codex remains open.'
 }
 
 Invoke-Test 'Public diagnostics explain how to attribute reconnects' {

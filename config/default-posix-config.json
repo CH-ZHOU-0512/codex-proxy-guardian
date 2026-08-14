@@ -2,6 +2,7 @@
   "SchemaVersion": 1,
   "Mode": "Safe",
   "AutomaticUpdates": true,
+  "NotifyAfterAutomaticUpdate": true,
   "UpdateChannel": "Stable",
   "PollSeconds": 5,
   "StableSamples": 3,
