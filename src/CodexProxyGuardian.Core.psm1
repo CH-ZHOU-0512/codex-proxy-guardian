@@ -865,6 +865,122 @@ function Test-CpgInstallMarker {
     return [string]::Equals($expected, $actual, [System.StringComparison]::OrdinalIgnoreCase)
 }
 
+function Get-CpgUpdateProxyDecision {
+    [CmdletBinding()]
+    param(
+        $Status,
+        $Config
+    )
+
+    $candidates = @()
+    if ($null -ne $Status -and [bool](Get-CpgConfigValue -Config $Status -Name 'activeProxyValid' -Default $false)) {
+        $activeProxy = [string](Get-CpgConfigValue -Config $Status -Name 'activeProxy' -Default '')
+        if (-not [string]::IsNullOrWhiteSpace($activeProxy)) {
+            $candidates += [pscustomobject]@{
+                Address = $activeProxy
+                Source = 'GuardianValidatedProxy'
+                AllowNonLoopback = $true
+            }
+        }
+    }
+
+    if ($null -ne $Config) {
+        $explicitProxy = [string](Get-CpgConfigValue -Config $Config -Name 'ExplicitProxy' -Default '')
+        if (-not [string]::IsNullOrWhiteSpace($explicitProxy)) {
+            $candidates += [pscustomobject]@{
+                Address = $explicitProxy
+                Source = 'ExplicitProxy'
+                AllowNonLoopback = [bool](Get-CpgConfigValue -Config $Config -Name 'AllowNonLoopbackProxy' -Default $false)
+            }
+        }
+    }
+
+    foreach ($candidate in $candidates) {
+        $proxyUri = ConvertTo-CpgProxyUri -Address ([string]$candidate.Address) -AllowNonLoopback:([bool]$candidate.AllowNonLoopback)
+        if ([string]::IsNullOrWhiteSpace($proxyUri)) { continue }
+        $uri = [Uri]$proxyUri
+        return [pscustomobject]@{
+            UseProxy = $true
+            ProxyUri = $proxyUri
+            Source = [string]$candidate.Source
+            Transport = if ($uri.Scheme -eq 'socks5h') { 'Curl' } else { 'PowerShell' }
+        }
+    }
+
+    return [pscustomobject]@{
+        UseProxy = $false
+        ProxyUri = $null
+        Source = 'WindowsDefaultRoute'
+        Transport = 'PowerShell'
+    }
+}
+
+function Get-CpgCompatibilityUpdateDecision {
+    [CmdletBinding()]
+    param(
+        [AllowEmptyString()][string]$CodexVersion,
+        [AllowEmptyString()][string]$RequestedVersion = '',
+        [datetime]$LastAttempt = [datetime]::MinValue,
+        $UpdateStatus,
+        [bool]$TaskRunning = $false,
+        [datetime]$Now = (Get-Date),
+        [ValidateRange(5, 1440)][int]$RetryMinutes = 15
+    )
+
+    if ([string]::IsNullOrWhiteSpace($CodexVersion)) {
+        return [pscustomobject]@{ Action = 'None'; State = 'NotNeeded'; ResultEvent = $null; RetryAfterUtc = $null }
+    }
+
+    $sameVersion = [string]::Equals($RequestedVersion, $CodexVersion, [System.StringComparison]::OrdinalIgnoreCase)
+    if ($TaskRunning) {
+        return [pscustomobject]@{ Action = 'None'; State = 'Running'; ResultEvent = 'update_check_started'; RetryAfterUtc = $null }
+    }
+    if (-not $sameVersion) {
+        return [pscustomobject]@{ Action = 'Start'; State = 'Pending'; ResultEvent = $null; RetryAfterUtc = $null }
+    }
+
+    $eventName = ''
+    $eventTime = [datetime]::MinValue
+    if ($null -ne $UpdateStatus) {
+        $eventName = [string](Get-CpgConfigValue -Config $UpdateStatus -Name 'event' -Default '')
+        $eventTimeText = [string](Get-CpgConfigValue -Config $UpdateStatus -Name 'time' -Default '')
+        if (-not [string]::IsNullOrWhiteSpace($eventTimeText)) {
+            try { $eventTime = ([datetime]::Parse($eventTimeText)).ToLocalTime() } catch { $eventTime = [datetime]::MinValue }
+        }
+    }
+    $resultBelongsToAttempt = $LastAttempt -gt [datetime]::MinValue -and $eventTime -ge $LastAttempt.AddSeconds(-2)
+    if ($resultBelongsToAttempt) {
+        switch ($eventName) {
+            'update_not_available' {
+                return [pscustomobject]@{ Action = 'None'; State = 'Current'; ResultEvent = $eventName; RetryAfterUtc = $null }
+            }
+            'update_installed' {
+                return [pscustomobject]@{ Action = 'None'; State = 'Installed'; ResultEvent = $eventName; RetryAfterUtc = $null }
+            }
+            'automatic_update_disabled' {
+                return [pscustomobject]@{ Action = 'None'; State = 'Disabled'; ResultEvent = $eventName; RetryAfterUtc = $null }
+            }
+        }
+    }
+
+    $retryAfter = if ($LastAttempt -gt [datetime]::MinValue) { $LastAttempt.AddMinutes($RetryMinutes) } else { [datetime]::MinValue }
+    if ($retryAfter -gt $Now) {
+        return [pscustomobject]@{
+            Action = 'None'
+            State = if ($resultBelongsToAttempt -and $eventName -eq 'update_failed') { 'FailedRetryScheduled' } else { 'RetryDeferred' }
+            ResultEvent = if ([string]::IsNullOrWhiteSpace($eventName)) { $null } else { $eventName }
+            RetryAfterUtc = $retryAfter.ToUniversalTime().ToString('o')
+        }
+    }
+
+    return [pscustomobject]@{
+        Action = 'Start'
+        State = if ($resultBelongsToAttempt -and $eventName -eq 'update_failed') { 'Retrying' } else { 'Pending' }
+        ResultEvent = if ([string]::IsNullOrWhiteSpace($eventName)) { $null } else { $eventName }
+        RetryAfterUtc = $null
+    }
+}
+
 Export-ModuleMember -Function @(
     'Get-CpgConfigValue',
     'Update-CpgConfigDefaults',
@@ -897,5 +1013,7 @@ Export-ModuleMember -Function @(
     'Get-CpgCodexApplicationCandidates',
     'Get-CpgCodexApp',
     'Test-CpgCodexRootProcess',
-    'Test-CpgInstallMarker'
+    'Test-CpgInstallMarker',
+    'Get-CpgUpdateProxyDecision',
+    'Get-CpgCompatibilityUpdateDecision'
 )

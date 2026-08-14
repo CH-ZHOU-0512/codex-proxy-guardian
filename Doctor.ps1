@@ -146,6 +146,16 @@ if ($markerValid -and $null -ne $config -and [bool](Get-CpgConfigValue $config '
     $issues += 'automatic_update_task_missing'
     $recommendations += 'Re-run Install.ps1 to restore the daily verified-release update task, or disable AutomaticUpdates in Settings.'
 }
+if ($null -ne $updateStatus -and [string](Get-SafeProperty $updateStatus 'event' '') -eq 'update_failed') {
+    $issues += 'automatic_update_last_attempt_failed'
+    $retryAfter = [string](Get-SafeProperty $status 'compatibilityUpdateRetryAfterUtc' '')
+    $recommendations += if ([string]::IsNullOrWhiteSpace($retryAfter)) {
+        'The last GitHub update request failed. Guardian keeps the daily fallback; run Settings > Check for updates to verify the current route.'
+    }
+    else {
+        "The last GitHub update request failed. Guardian will retry this Codex version after $retryAfter and keeps the daily fallback."
+    }
+}
 if (-not $proxyEnabled -and @($environmentProxyNames).Count -eq 0 -and @($recognizedListeners).Count -eq 0 -and @($tunnelAdapters).Count -gt 0) {
     $issues += 'tun_only_likely'
     $recommendations += 'A tunnel adapter is present without a discoverable HTTP endpoint. Codex may already be transparently routed; use a mixed/HTTP inbound for explicit verification.'
@@ -203,7 +213,7 @@ if (@($issues).Count -eq 0 -and $guardianLifecycle -eq 'ObservingAfterCodexUpdat
 if ($issues -contains 'unsupported_os' -or $issues -contains 'powershell_too_old' -or $issues -contains 'constrained_language_mode' -or $issues -contains 'codex_msix_not_found') { $health = 'Blocked' }
 
 $report = [ordered]@{
-    reportSchema = 7
+    reportSchema = 8
     generatedUtc = (Get-Date).ToUniversalTime().ToString('o')
     safeForSharing = $true
     health = $health
@@ -278,6 +288,8 @@ $report = [ordered]@{
         codexCompatibilitySafeHold = [bool](Get-SafeProperty $status 'codexCompatibilitySafeHold' $false)
         compatibilityUpdateCheckState = Get-SafeProperty $status 'compatibilityUpdateCheckState' $null
         compatibilityUpdateRequestedVersion = Get-SafeProperty $status 'compatibilityUpdateRequestedVersion' $null
+        compatibilityUpdateResultEvent = Get-SafeProperty $status 'compatibilityUpdateResultEvent' $null
+        compatibilityUpdateRetryAfterUtc = Get-SafeProperty $status 'compatibilityUpdateRetryAfterUtc' $null
         compatibilityAutomation = Get-SafeProperty $status 'compatibilityAutomation' $null
         proxyTestSuccessCount = [int](Get-SafeProperty $status 'proxyTestSuccessCount' 0)
         proxyTestRequiredCount = [int](Get-SafeProperty $status 'proxyTestRequiredCount' 0)
@@ -302,6 +314,7 @@ $report = [ordered]@{
         taskState = if ($null -eq $updateTask) { $null } else { [string]$updateTask.State }
         lastCheckUtc = if ($null -eq $updateStatus) { $null } else { [string](Get-SafeProperty $updateStatus 'time' '') }
         lastEvent = if ($null -eq $updateStatus) { $null } else { [string](Get-SafeProperty $updateStatus 'event' '') }
+        lastNetworkRoute = if ($null -eq $updateStatus) { $null } else { [string](Get-SafeProperty $updateStatus 'network_route' (Get-SafeProperty $updateStatus 'preferred_route' '')) }
         lastRunTime = if ($updateTaskHasRun) { $updateTaskInfo.LastRunTime.ToUniversalTime().ToString('o') } else { $null }
         lastResult = if ($updateTaskHasRun) { $updateTaskInfo.LastTaskResult } else { $null }
     }
@@ -334,6 +347,8 @@ if ($Json) { $reportJson; return }
     CodexCompatibilityEvidence = Get-SafeProperty $status 'codexCompatibilityEvidence' $null
     CodexCompatibilitySafeHold = [bool](Get-SafeProperty $status 'codexCompatibilitySafeHold' $false)
     CompatibilityUpdateCheckState = Get-SafeProperty $status 'compatibilityUpdateCheckState' $null
+    CompatibilityUpdateResultEvent = Get-SafeProperty $status 'compatibilityUpdateResultEvent' $null
+    CompatibilityUpdateRetryAfterUtc = Get-SafeProperty $status 'compatibilityUpdateRetryAfterUtc' $null
     ProxyTests = ('{0}/{1}' -f [int](Get-SafeProperty $status 'proxyTestSuccessCount' 0), [int](Get-SafeProperty $status 'proxyTestRequiredCount' 0))
     ProxyCriticalTargetsPassed = [bool](Get-SafeProperty $status 'proxyCriticalTargetsPassed' $false)
     ProxyCriticalFailures = @((Get-SafeProperty $status 'proxyCriticalFailures' @()))
