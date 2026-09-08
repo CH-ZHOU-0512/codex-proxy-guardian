@@ -299,6 +299,8 @@ Invoke-Test 'Windows updater expands REST release arrays and reuses the validate
     Assert-True ($updateSource.Contains('Get-CpgUpdateProxyDecision'))
     Assert-True ($updateSource.Contains("'update_request_retry'"))
     Assert-True ($updateSource.Contains('Invoke-UpdateCurlDownload'))
+    Assert-True ($updateSource.Contains('$preferredUpdateRoute.Transport = ''Curl'''))
+    Assert-True ($updateSource.Contains('[string]$route.Transport -eq ''Curl'''))
     Assert-True ($updateSource.Contains('New-Object System.Text.UTF8Encoding($false, $true)'))
     Assert-True ($updateSource.Contains('NetworkRoute = $script:LastUpdateNetworkRoute'))
 }
@@ -350,6 +352,39 @@ Invoke-Test 'Compatibility updates track terminal results and retry the same Cod
     $staleSuccess = [pscustomobject]@{ event = 'update_not_available'; time = $now.AddMinutes(-5).ToString('o') }
     $notFooled = Get-CpgCompatibilityUpdateDecision -CodexVersion '26.900.1.0' -RequestedVersion '26.900.1.0' -LastAttempt $now -UpdateStatus $staleSuccess -Now $now.AddMinutes(15) -RetryMinutes 15
     Assert-Equal 'Start' ([string]$notFooled.Action)
+}
+
+Invoke-Test 'Update heartbeat detects stale results and honors retry windows' {
+    $now = [datetime]'2026-09-08T10:00:00Z'
+    $due = Get-CpgUpdateHeartbeatDecision -AutomaticUpdates:$true -Now $now
+    Assert-Equal 'Start' ([string]$due.Action)
+    Assert-Equal 'Due' ([string]$due.State)
+
+    $freshStatus = [pscustomobject]@{ event = 'update_not_available'; time = $now.AddMinutes(-10).ToString('o') }
+    $current = Get-CpgUpdateHeartbeatDecision -AutomaticUpdates:$true -UpdateStatus $freshStatus -Now $now -IntervalMinutes 60
+    Assert-Equal 'None' ([string]$current.Action)
+    Assert-Equal 'Current' ([string]$current.State)
+
+    $failedStatus = [pscustomobject]@{ event = 'update_failed'; time = $now.AddMinutes(-5).ToString('o') }
+    $retry = Get-CpgUpdateHeartbeatDecision -AutomaticUpdates:$true -UpdateStatus $failedStatus -LastAttempt $now.AddMinutes(-5) -Now $now -RetryMinutes 15
+    Assert-Equal 'None' ([string]$retry.Action)
+    Assert-Equal 'FailedRetryScheduled' ([string]$retry.State)
+
+    $running = Get-CpgUpdateHeartbeatDecision -AutomaticUpdates:$true -UpdateStatus $freshStatus -UpdaterRunning:$true -Now $now
+    Assert-Equal 'Running' ([string]$running.State)
+}
+
+Invoke-Test 'Reconnect listener classifies Codex WebSocket failures and ignores normal lines' {
+    $line = '2026-09-08T03:14:28.065Z warning failed to connect to app-server remote control websocket wss://chatgpt.com/backend-api/wham/remote/control/server error: os error 10060 reconnect_attempt\":10'
+    $signal = Get-CpgReconnectLogSignal $line
+    Assert-True $signal.IsSignal
+    Assert-Equal 'RemoteControlWebSocket' ([string]$signal.Category)
+    Assert-Equal 'ConnectionTimeout' ([string]$signal.ErrorClass)
+    Assert-Equal 'chatgpt.com' ([string]$signal.Endpoint)
+    Assert-Equal 10 ([int]$signal.Attempt)
+
+    $normal = Get-CpgReconnectLogSignal '2026-09-08T03:14:28.065Z info app_server_connection.state_changed currentState=connected'
+    Assert-False $normal.IsSignal
 }
 
 Invoke-Test 'Settings never reports a skipped update check as current' {
@@ -685,14 +720,23 @@ Invoke-Test 'Codex package changes trigger owned verified updates and fail safe'
     foreach ($required in @(
         'Request-CompatibilityUpdateCheck',
         'Test-CpgInstallMarker -InstallRoot $script:Root',
-        'Start-ScheduledTask -TaskName $updateTaskName',
+        'Start-CpgOwnedUpdateCheck',
+        'Start-ScheduledTask -TaskName ([string]$Context.TaskName)',
         "'codex_compatibility_update_requested'",
         "'codex_compatibility_review_required'",
         'failSafeNoRestartOnUnconfirmedAdapter',
         'codexCompatibilityFingerprint',
-        'managed-streaming-contract-v2',
+        'managed-streaming-contract-v3',
         'codexVersionInvalidatesPreviousEvidence',
-        'managedLaunchAndFreshTrafficRequired'
+        'managedLaunchAndFreshTrafficRequired',
+        'Initialize-CpgEventListener',
+        'Receive-CpgReconnectSignals',
+        'guardian_update_heartbeat_started',
+        'DirectOwnedFallback',
+        'SourceIdentifiers',
+        'Register-ObjectEvent',
+        'eventListenerEnabled',
+        'reconnectListenerAction'
     )) {
         Assert-True $watcher.Contains($required) "Watcher is missing compatibility automation: $required"
     }

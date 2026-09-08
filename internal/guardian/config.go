@@ -16,6 +16,7 @@ type Config struct {
 	AutomaticUpdates                   bool     `json:"AutomaticUpdates"`
 	NotifyAfterAutomaticUpdate         bool     `json:"NotifyAfterAutomaticUpdate"`
 	UpdateChannel                      string   `json:"UpdateChannel"`
+	GuardianUpdateCheckIntervalMinutes int      `json:"GuardianUpdateCheckIntervalMinutes"`
 	PollSeconds                        int      `json:"PollSeconds"`
 	StableSamples                      int      `json:"StableSamples"`
 	DebounceSeconds                    int      `json:"DebounceSeconds"`
@@ -56,7 +57,7 @@ type Config struct {
 
 func DefaultConfig() Config {
 	return Config{
-		SchemaVersion: 1, Mode: "Safe", AutomaticUpdates: true, NotifyAfterAutomaticUpdate: true, UpdateChannel: "Stable",
+		SchemaVersion: 1, Mode: "Safe", AutomaticUpdates: true, NotifyAfterAutomaticUpdate: true, UpdateChannel: "Stable", GuardianUpdateCheckIntervalMinutes: 60,
 		PollSeconds: 5, StableSamples: 3, DebounceSeconds: 10,
 		SafeRepairExternalCodexLaunches: true, SafeExternalLaunchGraceSeconds: 20,
 		ExternalLaunchDebounceSeconds: 15, RestartCooldownSeconds: 45,

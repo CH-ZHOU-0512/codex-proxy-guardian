@@ -211,6 +211,8 @@ $health = 'Ready'
 if (@($issues).Count -gt 0) { $health = 'NeedsAttention' }
 if (@($issues).Count -eq 0 -and $guardianLifecycle -eq 'ObservingAfterCodexUpdate') { $health = 'Observing' }
 if ($issues -contains 'unsupported_os' -or $issues -contains 'powershell_too_old' -or $issues -contains 'constrained_language_mode' -or $issues -contains 'codex_msix_not_found') { $health = 'Blocked' }
+$heartbeatIntervalMinutes = 60
+if ($null -ne $config) { $heartbeatIntervalMinutes = [int](Get-CpgConfigValue $config 'GuardianUpdateCheckIntervalMinutes' 60) }
 
 $report = [ordered]@{
     reportSchema = 8
@@ -270,6 +272,12 @@ $report = [ordered]@{
         proxyEndpointReachable = Get-SafeProperty $status 'proxyEndpointReachable' $null
         streamStability = Get-SafeProperty $status 'streamStability' $null
         streamStabilityLimitation = Get-SafeProperty $status 'streamStabilityLimitation' $null
+        eventListenerState = Get-SafeProperty $status 'eventListenerState' 'PeriodicFallback'
+        eventListenerComponents = @(Get-SafeProperty $status 'eventListenerComponents' @())
+        reconnectSignalsDetected = [int](Get-SafeProperty $status 'reconnectSignalsDetected' 0)
+        reconnectBurstCount = [int](Get-SafeProperty $status 'reconnectBurstCount' 0)
+        lastReconnectSignalUtc = Get-SafeProperty $status 'lastReconnectSignalUtc' $null
+        reconnectListenerAction = Get-SafeProperty $status 'reconnectListenerAction' 'Monitoring'
         streamingProxyGuaranteeRequired = [bool](Get-SafeProperty $status 'streamingProxyGuaranteeRequired' $true)
         streamingProxyGuaranteed = [bool](Get-SafeProperty $status 'streamingProxyGuaranteed' $false)
         streamingProxyEvidence = Get-SafeProperty $status 'streamingProxyEvidence' $null
@@ -305,6 +313,7 @@ $report = [ordered]@{
         guardianEvidenceEvents = @('codex_restart', 'proxy_changed')
         commonUpstreamSignals = @('TLS EOF', 'WebSocket reset', 'Windows 10054', 'request timeout')
         providerNodeManagedByGuardian = $false
+        listener = 'Codex log and process events trigger immediate fresh proxy validation; they do not restart Codex by themselves.'
         guidance = 'Compare timestamps. Without a matching Guardian lifecycle event, inspect or change the provider node in the proxy application.'
     }
     updates = [ordered]@{
@@ -317,6 +326,9 @@ $report = [ordered]@{
         lastNetworkRoute = if ($null -eq $updateStatus) { $null } else { [string](Get-SafeProperty $updateStatus 'network_route' (Get-SafeProperty $updateStatus 'preferred_route' '')) }
         lastRunTime = if ($updateTaskHasRun) { $updateTaskInfo.LastRunTime.ToUniversalTime().ToString('o') } else { $null }
         lastResult = if ($updateTaskHasRun) { $updateTaskInfo.LastTaskResult } else { $null }
+        heartbeatState = Get-SafeProperty $status 'guardianUpdateHeartbeatState' $null
+        heartbeatIntervalMinutes = Get-SafeProperty $status 'guardianUpdateCheckIntervalMinutes' $heartbeatIntervalMinutes
+        heartbeatResultEvent = Get-SafeProperty $status 'guardianUpdateResultEvent' $null
     }
     onlineTest = $onlineResult
 }
@@ -337,6 +349,10 @@ if ($Json) { $reportJson; return }
     EffectivenessEvidence = Get-SafeProperty $status 'effectivenessEvidence' $null
     ProxyReachability = Get-SafeProperty $status 'proxyReachability' $null
     StreamStability = Get-SafeProperty $status 'streamStability' $null
+    EventListenerState = Get-SafeProperty $status 'eventListenerState' 'PeriodicFallback'
+    ReconnectSignalsDetected = [int](Get-SafeProperty $status 'reconnectSignalsDetected' 0)
+    ReconnectBurstCount = [int](Get-SafeProperty $status 'reconnectBurstCount' 0)
+    ReconnectListenerAction = Get-SafeProperty $status 'reconnectListenerAction' 'Monitoring'
     StreamingProxyGuaranteed = [bool](Get-SafeProperty $status 'streamingProxyGuaranteed' $false)
     StreamingProxyEvidence = Get-SafeProperty $status 'streamingProxyEvidence' $null
     StreamingRepairRequired = [bool](Get-SafeProperty $status 'streamingRepairRequired' $false)

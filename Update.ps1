@@ -80,6 +80,12 @@ $guardianStatus = try {
 catch { $null }
 $preferredUpdateRoute = Get-CpgUpdateProxyDecision -Status $guardianStatus -Config $config
 $script:LastUpdateNetworkRoute = [string]$preferredUpdateRoute.Source
+# Windows PowerShell's web cmdlets can return a misleading 403 through local
+# proxy stacks. curl.exe is present on supported Windows 11 installations and
+# uses the same proxy endpoint without that compatibility issue.
+if ($null -ne (Get-Command curl.exe -ErrorAction SilentlyContinue)) {
+    $preferredUpdateRoute.Transport = 'Curl'
+}
 
 function Get-UpdateRequestAttempts {
     $attempts = @()
@@ -136,7 +142,7 @@ function Invoke-UpdateJsonRequest {
         $attemptNumber++
         $temporaryJson = $null
         try {
-            if ([bool]$route.UseProxy -and [string]$route.Transport -eq 'Curl') {
+            if ([string]$route.Transport -eq 'Curl') {
                 $temporaryJson = Join-Path ([System.IO.Path]::GetTempPath()) ("CodexProxyGuardian-update-json-{0}.tmp" -f [Guid]::NewGuid().ToString('N'))
                 Invoke-UpdateCurlDownload -Uri $Uri -Headers $Headers -OutFile $temporaryJson -TimeoutSeconds $TimeoutSeconds -ProxyUri ([string]$route.ProxyUri)
                 $jsonText = [System.IO.File]::ReadAllText($temporaryJson, (New-Object System.Text.UTF8Encoding($false, $true)))
@@ -180,7 +186,7 @@ function Invoke-UpdateAssetDownload {
         $attemptNumber++
         try {
             Remove-Item -LiteralPath $OutFile -Force -ErrorAction SilentlyContinue
-            if ([bool]$route.UseProxy -and [string]$route.Transport -eq 'Curl') {
+            if ([string]$route.Transport -eq 'Curl') {
                 Invoke-UpdateCurlDownload -Uri $Uri -Headers $Headers -OutFile $OutFile -TimeoutSeconds $TimeoutSeconds -ProxyUri ([string]$route.ProxyUri)
             }
             else {

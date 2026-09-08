@@ -159,7 +159,11 @@ func (daemon *daemonRuntime) tick(ctx context.Context) error {
 		return err
 	}
 
-	if daemon.cfg.AutomaticUpdates && (daemon.lastUpdateCheck.IsZero() || time.Since(daemon.lastUpdateCheck) >= 24*time.Hour) {
+	updateInterval := time.Duration(daemon.cfg.GuardianUpdateCheckIntervalMinutes) * time.Minute
+	if updateInterval < 15*time.Minute {
+		updateInterval = 60 * time.Minute
+	}
+	if daemon.cfg.AutomaticUpdates && (daemon.lastUpdateCheck.IsZero() || time.Since(daemon.lastUpdateCheck) >= updateInterval) {
 		daemon.lastUpdateCheck = time.Now()
 		if result, err := CheckForUpdate(true); err == nil && strings.HasPrefix(result, "updated ") {
 			daemon.logger.Log("INFO", "automatic_update", result, nil)

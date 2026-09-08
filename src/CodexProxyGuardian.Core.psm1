@@ -981,6 +981,121 @@ function Get-CpgCompatibilityUpdateDecision {
     }
 }
 
+function Get-CpgUpdateHeartbeatDecision {
+    [CmdletBinding()]
+    param(
+        [bool]$AutomaticUpdates = $true,
+        $UpdateStatus,
+        [bool]$UpdaterRunning = $false,
+        [datetime]$LastAttempt = [datetime]::MinValue,
+        [datetime]$Now = (Get-Date),
+        [ValidateRange(15, 1440)][int]$IntervalMinutes = 60,
+        [ValidateRange(5, 1440)][int]$RetryMinutes = 15
+    )
+
+    if (-not $AutomaticUpdates) {
+        return [pscustomobject]@{ Action = 'None'; State = 'Disabled'; ResultEvent = $null; RetryAfterUtc = $null }
+    }
+    if ($UpdaterRunning) {
+        return [pscustomobject]@{ Action = 'None'; State = 'Running'; ResultEvent = 'update_check_started'; RetryAfterUtc = $null }
+    }
+
+    $eventName = ''
+    $statusTime = [datetime]::MinValue
+    if ($null -ne $UpdateStatus) {
+        $eventName = [string](Get-CpgConfigValue -Config $UpdateStatus -Name 'event' -Default '')
+        $statusTimeText = [string](Get-CpgConfigValue -Config $UpdateStatus -Name 'time' -Default '')
+        if (-not [string]::IsNullOrWhiteSpace($statusTimeText)) {
+            try { $statusTime = ([datetime]::Parse($statusTimeText)).ToLocalTime() } catch { $statusTime = [datetime]::MinValue }
+        }
+    }
+
+    $mostRecentAttempt = $LastAttempt
+    if ($statusTime -gt $mostRecentAttempt) { $mostRecentAttempt = $statusTime }
+    if ($mostRecentAttempt -eq [datetime]::MinValue) {
+        return [pscustomobject]@{ Action = 'Start'; State = 'Due'; ResultEvent = $null; RetryAfterUtc = $null }
+    }
+
+    $failed = $eventName -in @('update_failed', 'update_request_failed') -and $statusTime -ge $LastAttempt.AddSeconds(-2)
+    $waitMinutes = if ($failed) { $RetryMinutes } else { $IntervalMinutes }
+    $retryAfter = $mostRecentAttempt.AddMinutes($waitMinutes)
+    if ($retryAfter -gt $Now) {
+        return [pscustomobject]@{
+            Action = 'None'
+            State = if ($failed) { 'FailedRetryScheduled' } else { 'Current' }
+            ResultEvent = if ([string]::IsNullOrWhiteSpace($eventName)) { $null } else { $eventName }
+            RetryAfterUtc = $retryAfter.ToUniversalTime().ToString('o')
+        }
+    }
+
+    return [pscustomobject]@{
+        Action = 'Start'
+        State = if ($failed) { 'Retrying' } else { 'Due' }
+        ResultEvent = if ([string]::IsNullOrWhiteSpace($eventName)) { $null } else { $eventName }
+        RetryAfterUtc = $null
+    }
+}
+
+function Get-CpgReconnectLogSignal {
+    [CmdletBinding()]
+    param([AllowEmptyString()][string]$Line)
+
+    $empty = [pscustomobject]@{
+        IsSignal = $false
+        Category = $null
+        ErrorClass = $null
+        Endpoint = $null
+        Attempt = 0
+        ObservedUtc = $null
+        SignalId = $null
+    }
+    if ([string]::IsNullOrWhiteSpace($Line)) { return $empty }
+
+    $category = $null
+    if ($Line -match '(?i)failed to (?:connect to )?app-server remote control websocket|required remote control server token refresh failed') {
+        $category = 'RemoteControlWebSocket'
+    }
+    elseif ($Line -match '(?i)(?:response stream|websocket).*(?:connection reset|timed out|timeout|unexpected eof|disconnected before completion)' -and
+        $Line -match '(?i)(?:chatgpt\.com|api\.openai\.com)') {
+        $category = 'ResponseStream'
+    }
+    elseif ($Line -match '(?i)error sending request for url \(https://(?:chatgpt\.com|api\.openai\.com)/') {
+        $category = 'RequestTransport'
+    }
+    if ($null -eq $category) { return $empty }
+
+    $errorClass = 'TransportError'
+    if ($Line -match '(?i)(?:os error 10054|connection reset)') { $errorClass = 'ConnectionReset' }
+    elseif ($Line -match '(?i)(?:os error 10060|timedout|timed out|timeout)') { $errorClass = 'ConnectionTimeout' }
+    elseif ($Line -match '(?i)(?:unexpected eof|tls eof)') { $errorClass = 'TlsEof' }
+
+    $endpoint = $null
+    $endpointMatch = [regex]::Match($Line, '(?i)(?:wss|https)://(?<host>chatgpt\.com|api\.openai\.com)(?:[/\\][^\s\"'']*)?')
+    if ($endpointMatch.Success) { $endpoint = $endpointMatch.Groups['host'].Value.ToLowerInvariant() }
+
+    $attempt = 0
+    $attemptMatches = [regex]::Matches($Line, '(?i)reconnect_attempt\\?\"\s*:\s*(?<attempt>\d+)')
+    if ($attemptMatches.Count -gt 0) { $attempt = [int]$attemptMatches[$attemptMatches.Count - 1].Groups['attempt'].Value }
+
+    $observedUtc = $null
+    $timestampMatches = [regex]::Matches($Line, '\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z')
+    if ($timestampMatches.Count -gt 0) {
+        try { $observedUtc = ([datetime]::Parse($timestampMatches[$timestampMatches.Count - 1].Value)).ToUniversalTime() } catch { $observedUtc = $null }
+    }
+    if ($null -eq $observedUtc) { $observedUtc = (Get-Date).ToUniversalTime() }
+
+    $signalId = '{0}|{1}|{2}|{3}|{4}' -f $category, $observedUtc.ToString('o'), $endpoint, $attempt, $errorClass
+    return [pscustomobject]@{
+        IsSignal = $true
+        Category = $category
+        ErrorClass = $errorClass
+        Endpoint = $endpoint
+        Attempt = $attempt
+        ObservedUtc = $observedUtc
+        SignalId = $signalId
+    }
+}
+
 Export-ModuleMember -Function @(
     'Get-CpgConfigValue',
     'Update-CpgConfigDefaults',
@@ -1015,5 +1130,7 @@ Export-ModuleMember -Function @(
     'Test-CpgCodexRootProcess',
     'Test-CpgInstallMarker',
     'Get-CpgUpdateProxyDecision',
-    'Get-CpgCompatibilityUpdateDecision'
+    'Get-CpgCompatibilityUpdateDecision',
+    'Get-CpgUpdateHeartbeatDecision',
+    'Get-CpgReconnectLogSignal'
 )

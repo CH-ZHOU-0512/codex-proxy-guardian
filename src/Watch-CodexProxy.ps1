@@ -22,9 +22,12 @@ $script:StopRequestPath = Join-Path $script:Root 'stop.request'
 $script:LaunchRequestPath = Join-Path $script:Root 'launch.request'
 $script:AdoptRequestPath = Join-Path $script:Root 'adopt-current-once.request'
 $script:ConfigReloadRequestPath = Join-Path $script:Root 'config.reload.request'
+$script:UpdateStatusPath = Join-Path $script:Root 'update-status.json'
 $script:ValidationCache = @{}
 $script:ProxyAddressCache = @{}
 $script:PACDiscoveryCache = $null
+$script:CodexLogOffsets = @{}
+$script:ReconnectSignalFingerprints = @{}
 $script:InheritedProxyEnvironment = @{}
 foreach ($proxyVariableName in @('HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy', 'ALL_PROXY', 'all_proxy')) {
     $script:InheritedProxyEnvironment[$proxyVariableName] = [Environment]::GetEnvironmentVariable($proxyVariableName, 'Process')
@@ -121,6 +124,266 @@ function Write-JsonAtomically {
     $temporaryPath = "$Path.tmp"
     $Value | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $temporaryPath -Encoding UTF8
     Move-Item -LiteralPath $temporaryPath -Destination $Path -Force
+}
+
+function Get-CpgRecentCodexLogFiles {
+    param($Config)
+
+    $configuredRoot = [string](Get-CpgConfigValue $Config 'CodexLogRoot' '')
+    $logRoot = if ([string]::IsNullOrWhiteSpace($configuredRoot)) {
+        Join-Path $env:LOCALAPPDATA 'Codex\Logs'
+    }
+    else {
+        [Environment]::ExpandEnvironmentVariables($configuredRoot)
+    }
+    if (-not (Test-Path -LiteralPath $logRoot)) { return @() }
+
+    $files = @()
+    foreach ($date in @((Get-Date), (Get-Date).AddDays(-1))) {
+        $datePath = Join-Path (Join-Path (Join-Path $logRoot $date.ToString('yyyy')) $date.ToString('MM')) $date.ToString('dd')
+        if (-not (Test-Path -LiteralPath $datePath)) { continue }
+        $files += @(Get-ChildItem -LiteralPath $datePath -Filter 'codex-desktop-*.log' -File -ErrorAction SilentlyContinue)
+    }
+    return @($files | Sort-Object LastWriteTime -Descending | Select-Object -First 20)
+}
+
+function Initialize-CpgCodexLogTail {
+    param($Config)
+
+    $script:CodexLogOffsets = @{}
+    foreach ($file in @(Get-CpgRecentCodexLogFiles $Config)) {
+        $script:CodexLogOffsets[$file.FullName] = [pscustomobject]@{ Offset = [int64]$file.Length; Carry = '' }
+    }
+}
+
+function Read-CpgNewCodexLogLines {
+    param($Config)
+
+    $result = @()
+    $maxReadBytes = [Math]::Max(65536, [int](Get-CpgConfigValue $Config 'ReconnectLogMaxReadBytes' 262144))
+    $encoding = New-Object System.Text.UTF8Encoding($false, $false)
+    foreach ($file in @(Get-CpgRecentCodexLogFiles $Config)) {
+        if (-not $script:CodexLogOffsets.ContainsKey($file.FullName)) {
+            $script:CodexLogOffsets[$file.FullName] = [pscustomobject]@{ Offset = [int64]0; Carry = '' }
+        }
+        $tail = $script:CodexLogOffsets[$file.FullName]
+        try {
+            $stream = New-Object System.IO.FileStream($file.FullName, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, ([System.IO.FileShare]::ReadWrite -bor [System.IO.FileShare]::Delete))
+            try {
+                if ([int64]$tail.Offset -gt $stream.Length) {
+                    $tail.Offset = [int64]0
+                    $tail.Carry = ''
+                }
+                $remaining = $stream.Length - [int64]$tail.Offset
+                if ($remaining -le 0) { continue }
+                $readLength = [int][Math]::Min([int64]$maxReadBytes, $remaining)
+                $buffer = New-Object byte[] $readLength
+                [void]$stream.Seek([int64]$tail.Offset, [System.IO.SeekOrigin]::Begin)
+                $read = $stream.Read($buffer, 0, $readLength)
+                if ($read -le 0) { continue }
+                $tail.Offset = [int64]$tail.Offset + $read
+                $text = [string]$tail.Carry + $encoding.GetString($buffer, 0, $read)
+                $parts = @($text -split "`n", -1)
+                if ($parts.Count -gt 1) {
+                    for ($index = 0; $index -lt ($parts.Count - 1); $index++) {
+                        $line = $parts[$index].TrimEnd("`r")
+                        if (-not [string]::IsNullOrWhiteSpace($line)) { $result += $line }
+                    }
+                    $tail.Carry = $parts[-1]
+                }
+                else {
+                    $tail.Carry = $text
+                }
+                if ([string]$tail.Carry.Length -gt 131072) { $tail.Carry = ([string]$tail.Carry).Substring(([string]$tail.Carry).Length - 131072) }
+            }
+            finally { $stream.Dispose() }
+        }
+        catch {
+            Write-GuardianLog 'DEBUG' 'codex_log_tail_retry' 'A Codex log could not be tailed yet; the listener will retry.' @{ error = $_.Exception.GetType().Name }
+        }
+    }
+    return @($result)
+}
+
+function Receive-CpgReconnectSignals {
+    param($Config)
+
+    $now = Get-Date
+    $dedupeMinutes = [Math]::Max(1, [int](Get-CpgConfigValue $Config 'ReconnectSignalDedupeMinutes' 10))
+    $burstSeconds = [Math]::Max(10, [int](Get-CpgConfigValue $Config 'ReconnectSignalWindowSeconds' 120))
+    foreach ($key in @($script:ReconnectSignalFingerprints.Keys)) {
+        if (($now - [datetime]$script:ReconnectSignalFingerprints[$key]).TotalMinutes -ge $dedupeMinutes) {
+            $script:ReconnectSignalFingerprints.Remove($key)
+        }
+    }
+
+    $signals = @()
+    foreach ($line in @(Read-CpgNewCodexLogLines $Config)) {
+        $signal = Get-CpgReconnectLogSignal $line
+        if (-not [bool]$signal.IsSignal -or $script:ReconnectSignalFingerprints.ContainsKey([string]$signal.SignalId)) { continue }
+        $script:ReconnectSignalFingerprints[[string]$signal.SignalId] = $now
+        $signals += $signal
+        $script:ReconnectSignalHistory = @($script:ReconnectSignalHistory) + @($now)
+        $script:ReconnectSignalCount++
+        $script:LastReconnectSignalAt = $now
+        $script:LastReconnectCategory = [string]$signal.Category
+        $script:LastReconnectErrorClass = [string]$signal.ErrorClass
+        Write-GuardianLog 'WARN' 'codex_reconnect_signal_detected' 'Codex reported a real streaming or WebSocket connection failure; cached proxy evidence will be discarded and revalidated immediately.' @{
+            category = [string]$signal.Category
+            error_class = [string]$signal.ErrorClass
+            endpoint = [string]$signal.Endpoint
+            reconnect_attempt = [int]$signal.Attempt
+            codex_restart_requested = $false
+            system_proxy_modified = $false
+        }
+    }
+    $cutoff = $now.AddSeconds(-$burstSeconds)
+    $script:ReconnectSignalHistory = @($script:ReconnectSignalHistory | Where-Object { $_ -ge $cutoff -and $_ -le $now })
+    $script:ReconnectBurstCount = @($script:ReconnectSignalHistory).Count
+    if ($signals.Count -gt 0) {
+        $script:ValidationCache.Clear()
+        $script:ProxyAddressCache.Clear()
+        $script:PACDiscoveryCache = $null
+        $script:ReconnectListenerAction = 'ImmediateProxyRevalidation'
+    }
+    return @($signals)
+}
+
+function Initialize-CpgEventListener {
+    param($Config)
+
+    $sourcePrefix = "CodexProxyGuardian.$PID"
+    $subscriptions = New-Object System.Collections.ArrayList
+    $sourceIdentifiers = New-Object System.Collections.ArrayList
+    $watchers = New-Object System.Collections.ArrayList
+    $components = New-Object System.Collections.ArrayList
+
+    try {
+        $localAppData = [Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)
+        if ([string]::IsNullOrWhiteSpace($localAppData)) { $localAppData = [string]$env:LOCALAPPDATA }
+        $codexRoot = Join-Path $localAppData 'Codex'
+        $codexLogRoot = Join-Path $codexRoot 'Logs'
+        $watchPath = $null
+        $watchFilter = '*.log'
+        $watchIncludeSubdirectories = $true
+        if (Test-Path -LiteralPath $codexLogRoot -PathType Container) {
+            $watchPath = $codexLogRoot
+            $watchIncludeSubdirectories = $true
+        }
+        elseif (Test-Path -LiteralPath $codexRoot -PathType Container) {
+            $watchPath = $codexRoot
+            $watchIncludeSubdirectories = $true
+        }
+        else {
+            $watchPath = Split-Path -Parent $codexRoot
+            $watchFilter = 'Codex'
+            $watchIncludeSubdirectories = $false
+        }
+        if (Test-Path -LiteralPath $watchPath -PathType Container) {
+            $watcher = New-Object System.IO.FileSystemWatcher($watchPath, $watchFilter)
+            $watcher.IncludeSubdirectories = $watchIncludeSubdirectories
+            $watcher.NotifyFilter = [System.IO.NotifyFilters]'FileName, LastWrite, Size'
+            foreach ($eventName in @('Changed', 'Created', 'Renamed')) {
+                $sourceIdentifier = "$sourcePrefix.CodexLog.$eventName"
+                $subscription = Register-ObjectEvent -InputObject $watcher -EventName $eventName -SourceIdentifier $sourceIdentifier
+                [void]$subscriptions.Add($subscription)
+                [void]$sourceIdentifiers.Add($sourceIdentifier)
+            }
+            $watcher.EnableRaisingEvents = $true
+            [void]$watchers.Add($watcher)
+            [void]$components.Add('CodexLog')
+        }
+        else {
+            Write-GuardianLog 'WARN' 'event_listener_codex_log_unavailable' 'The Codex log parent directory is unavailable; periodic checks remain active.' @{ path = $watchPath }
+        }
+    }
+    catch {
+        Write-GuardianLog 'WARN' 'event_listener_codex_log_unavailable' 'Codex log events are unavailable; periodic checks remain active.' @{ error = $_.Exception.GetType().Name }
+    }
+
+    try {
+        $watcher = New-Object System.IO.FileSystemWatcher($script:Root, 'update-status.json')
+        $watcher.NotifyFilter = [System.IO.NotifyFilters]'FileName, LastWrite, Size'
+        foreach ($eventName in @('Changed', 'Created', 'Renamed')) {
+            $sourceIdentifier = "$sourcePrefix.UpdateStatus.$eventName"
+            $subscription = Register-ObjectEvent -InputObject $watcher -EventName $eventName -SourceIdentifier $sourceIdentifier
+            [void]$subscriptions.Add($subscription)
+            [void]$sourceIdentifiers.Add($sourceIdentifier)
+        }
+        $watcher.EnableRaisingEvents = $true
+        [void]$watchers.Add($watcher)
+        [void]$components.Add('UpdateStatus')
+    }
+    catch {
+        Write-GuardianLog 'WARN' 'event_listener_update_status_unavailable' 'Update-result events are unavailable; periodic checks remain active.' @{ error = $_.Exception.GetType().Name }
+    }
+
+    try {
+        $query = New-Object System.Management.WqlEventQuery("SELECT * FROM Win32_ProcessStartTrace WHERE ProcessName = 'ChatGPT.exe' OR ProcessName = 'Codex.exe'")
+        $processWatcher = New-Object System.Management.ManagementEventWatcher($query)
+        $sourceIdentifier = "$sourcePrefix.CodexProcess.Started"
+        $subscription = Register-ObjectEvent -InputObject $processWatcher -EventName EventArrived -SourceIdentifier $sourceIdentifier
+        [void]$subscriptions.Add($subscription)
+        [void]$sourceIdentifiers.Add($sourceIdentifier)
+        $processWatcher.Start()
+        [void]$watchers.Add($processWatcher)
+        [void]$components.Add('CodexProcess')
+    }
+    catch {
+        Write-GuardianLog 'WARN' 'event_listener_codex_process_unavailable' 'Codex process events are unavailable; periodic checks remain active.' @{ error = $_.Exception.GetType().Name }
+    }
+
+    return [pscustomobject]@{
+        # Register-ObjectEvent returns no pipeline object in Windows PowerShell 5.1,
+        # even though the subscription is registered. Track source identifiers
+        # explicitly so the listener is enabled and can be cleaned up reliably.
+        Enabled = $components.Count -gt 0
+        SourcePrefix = $sourcePrefix
+        Subscriptions = @($subscriptions)
+        SourceIdentifiers = @($sourceIdentifiers)
+        Watchers = @($watchers)
+        Components = @($components)
+    }
+}
+
+function Wait-CpgEventListener {
+    param($Listener, [int]$TimeoutSeconds, [int]$DebounceMilliseconds)
+
+    if ($null -eq $Listener -or -not [bool]$Listener.Enabled) {
+        Start-Sleep -Seconds $TimeoutSeconds
+        return @()
+    }
+    $firstEvent = Wait-Event -Timeout $TimeoutSeconds
+    if ($null -eq $firstEvent) { return @() }
+    if ($DebounceMilliseconds -gt 0) { Start-Sleep -Milliseconds $DebounceMilliseconds }
+
+    $reasons = @()
+    foreach ($eventRecord in @(Get-Event -ErrorAction SilentlyContinue | Where-Object { [string]$_.SourceIdentifier -like "$($Listener.SourcePrefix).*" })) {
+        $source = [string]$eventRecord.SourceIdentifier
+        if ($source -like '*.CodexLog.*') { $reasons += 'CodexLog' }
+        elseif ($source -like '*.UpdateStatus.*') { $reasons += 'UpdateStatus' }
+        elseif ($source -like '*.CodexProcess.*') { $reasons += 'CodexProcess' }
+        Remove-Event -EventIdentifier $eventRecord.EventIdentifier -ErrorAction SilentlyContinue
+    }
+    if ($reasons.Count -eq 0) { $reasons += 'Other' }
+    return @($reasons | Select-Object -Unique)
+}
+
+function Stop-CpgEventListener {
+    param($Listener)
+    if ($null -eq $Listener) { return }
+    foreach ($sourceIdentifier in @($Listener.SourceIdentifiers)) {
+        Unregister-Event -SourceIdentifier ([string]$sourceIdentifier) -ErrorAction SilentlyContinue
+        Get-Job -Name ([string]$sourceIdentifier) -ErrorAction SilentlyContinue | Remove-Job -Force -ErrorAction SilentlyContinue
+    }
+    foreach ($subscription in @($Listener.Subscriptions)) {
+        Unregister-Event -SourceIdentifier ([string]$subscription.Name) -ErrorAction SilentlyContinue
+        Remove-Job -Id ([int]$subscription.Id) -Force -ErrorAction SilentlyContinue
+    }
+    foreach ($watcher in @($Listener.Watchers)) {
+        try { if ($watcher -is [System.Management.ManagementEventWatcher]) { $watcher.Stop() } } catch { }
+        try { $watcher.Dispose() } catch { }
+    }
 }
 
 function New-ProxyCandidate {
@@ -1239,7 +1502,12 @@ $restartLimitWindowMinutes = [Math]::Max(1, [int](Get-CpgConfigValue $config 'Re
 $circuitBreakerMinutes = [Math]::Max(1, [int](Get-CpgConfigValue $config 'CircuitBreakerMinutes' 15))
 $recoveryLaunchRetrySeconds = [Math]::Max(5, [int](Get-CpgConfigValue $config 'RecoveryLaunchRetrySeconds' 10))
 $codexResolveIntervalSeconds = [Math]::Max(10, [int](Get-CpgConfigValue $config 'CodexResolveIntervalSeconds' 60))
+$listenerDebounceMilliseconds = [Math]::Max(250, [int](Get-CpgConfigValue $config 'EventListenerDebounceMilliseconds' 1000))
+$updateHeartbeatEvaluationSeconds = [Math]::Max(15, [int](Get-CpgConfigValue $config 'UpdateHeartbeatEvaluationSeconds' 30))
 $trafficEvidenceWindowSeconds = [Math]::Max(30, [int](Get-CpgConfigValue $config 'ProxyConnectionEvidenceWindowSeconds' 300))
+$listenerDebounceMilliseconds = [Math]::Max(250, [int](Get-CpgConfigValue $config 'EventListenerDebounceMilliseconds' 1000))
+$updateHeartbeatEvaluationSeconds = [Math]::Max(15, [int](Get-CpgConfigValue $config 'UpdateHeartbeatEvaluationSeconds' 30))
+$reconnectBurstThreshold = [Math]::Max(1, [int](Get-CpgConfigValue $config 'ReconnectSignalBurstThreshold' 2))
 $postUpdateStabilityEnabled = [bool](Get-CpgConfigValue $config 'PostUpdateStabilityEnabled' $true)
 $postUpdateStabilitySamples = [Math]::Max(1, [int](Get-CpgConfigValue $config 'PostUpdateStabilitySamples' 3))
 $postUpdateStabilitySeconds = [Math]::Max(0, [int](Get-CpgConfigValue $config 'PostUpdateStabilitySeconds' 60))
@@ -1287,6 +1555,21 @@ $script:CompatibilityHold = $false
 $script:CompatibilityHoldCodexVersion = ''
 $script:CompatibilityHoldGuardianVersion = ''
 $script:LastCompatibleCodexFingerprint = ''
+$script:FallbackUpdateProcess = $null
+$script:UpdateHeartbeatLastAttempt = [datetime]::MinValue
+$script:UpdateHeartbeatResultEvent = ''
+$script:UpdateHeartbeatRetryAfterUtc = ''
+$script:ReconnectSignalHistory = @()
+$script:ReconnectSignalCount = 0
+$script:ReconnectBurstCount = 0
+$script:LastReconnectSignalAt = [datetime]::MinValue
+$script:LastReconnectCategory = ''
+$script:LastReconnectErrorClass = ''
+$script:ReconnectListenerAction = 'Monitoring'
+$script:PendingListenerWakeReasons = @()
+$script:LastListenerWakeAt = [datetime]::MinValue
+$script:LastListenerWakeReason = ''
+$script:EventListener = $null
 $hadStoredCodexPackageVersion = $false
 $lastEquivalentValidationUri = ''
 if ($null -ne $persistentState) {
@@ -1343,6 +1626,95 @@ if ($null -ne $persistentState) {
     $script:LastCompatibleCodexFingerprint = [string](Get-CpgConfigValue $persistentState 'lastCompatibleCodexFingerprint' '')
 }
 
+function Get-CpgOwnedUpdateContext {
+    $markerPath = Join-Path $script:Root '.cpg-install.json'
+    if (-not (Test-Path -LiteralPath $markerPath)) { throw 'The install marker is unavailable.' }
+    $marker = Get-Content -Raw -LiteralPath $markerPath | ConvertFrom-Json
+    if (-not (Test-CpgInstallMarker -InstallRoot $script:Root -Marker $marker)) { throw 'The install marker does not own this directory.' }
+
+    $updaterPath = Join-Path $script:Root 'Update.ps1'
+    if (-not (Test-Path -LiteralPath $updaterPath)) { throw 'The installed updater is unavailable.' }
+    $updateTaskName = [string](Get-CpgConfigValue $marker 'updateTaskName' 'Codex Proxy Guardian Update')
+    $task = Get-ScheduledTask -TaskName $updateTaskName -ErrorAction SilentlyContinue
+    $taskOwned = $false
+    if ($null -ne $task) {
+        $expectedFileArgument = '-File "{0}"' -f $updaterPath
+        $taskOwned = @($task.Actions | Where-Object {
+            ([string]$_.Execute).EndsWith('powershell.exe', [System.StringComparison]::OrdinalIgnoreCase) -and
+            ([string]$_.Arguments).IndexOf($expectedFileArgument, [System.StringComparison]::OrdinalIgnoreCase) -ge 0
+        }).Count -gt 0
+    }
+    $fallbackRunning = $null -ne $script:FallbackUpdateProcess -and -not $script:FallbackUpdateProcess.HasExited
+    return [pscustomobject]@{
+        TaskName = $updateTaskName
+        Task = $task
+        TaskOwned = $taskOwned
+        Running = ($fallbackRunning -or ($taskOwned -and [string]$task.State -eq 'Running'))
+        UpdaterPath = $updaterPath
+    }
+}
+
+function Start-CpgOwnedUpdateCheck {
+    param($Context)
+    if ($null -eq $Context) { $Context = Get-CpgOwnedUpdateContext }
+
+    if ([bool]$Context.TaskOwned) {
+        Start-ScheduledTask -TaskName ([string]$Context.TaskName)
+        return 'ScheduledTask'
+    }
+
+    $powershellPath = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    $arguments = '-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File "{0}" -InstallRoot "{1}" -Install -Silent' -f ([string]$Context.UpdaterPath), $script:Root
+    [void]($script:FallbackUpdateProcess = Start-Process -FilePath $powershellPath -ArgumentList $arguments -WindowStyle Hidden -PassThru)
+    return 'DirectOwnedFallback'
+}
+
+function Read-CpgUpdateStatus {
+    try {
+        if (Test-Path -LiteralPath $script:UpdateStatusPath) { return Get-Content -Raw -LiteralPath $script:UpdateStatusPath | ConvertFrom-Json }
+    }
+    catch { }
+    return $null
+}
+
+function Request-GuardianUpdateHeartbeat {
+    param($Config)
+
+    $intervalMinutes = [Math]::Max(15, [int](Get-CpgConfigValue $Config 'GuardianUpdateCheckIntervalMinutes' 60))
+    $retryMinutes = [Math]::Max(5, [int](Get-CpgConfigValue $Config 'CompatibilityUpdateRetryMinutes' 15))
+    try {
+        $context = Get-CpgOwnedUpdateContext
+        $updateStatus = Read-CpgUpdateStatus
+        $decision = Get-CpgUpdateHeartbeatDecision `
+            -AutomaticUpdates:([bool](Get-CpgConfigValue $Config 'AutomaticUpdates' $true)) `
+            -UpdateStatus $updateStatus -UpdaterRunning:([bool]$context.Running) `
+            -LastAttempt $script:UpdateHeartbeatLastAttempt -Now (Get-Date) `
+            -IntervalMinutes $intervalMinutes -RetryMinutes $retryMinutes
+        $script:UpdateHeartbeatResultEvent = [string]$decision.ResultEvent
+        $script:UpdateHeartbeatRetryAfterUtc = [string]$decision.RetryAfterUtc
+        if ([string]$decision.Action -ne 'Start') { return [string]$decision.State }
+
+        $script:UpdateHeartbeatLastAttempt = Get-Date
+        $source = Start-CpgOwnedUpdateCheck $context
+        Write-GuardianLog 'INFO' 'guardian_update_heartbeat_started' 'The update listener started a verified release check.' @{
+            guardian_version = $guardianVersion
+            source = $source
+            interval_minutes = $intervalMinutes
+        }
+        return 'Running'
+    }
+    catch {
+        $script:UpdateHeartbeatLastAttempt = Get-Date
+        $script:UpdateHeartbeatResultEvent = 'update_request_failed'
+        $script:UpdateHeartbeatRetryAfterUtc = $script:UpdateHeartbeatLastAttempt.AddMinutes($retryMinutes).ToUniversalTime().ToString('o')
+        Write-GuardianLog 'WARN' 'guardian_update_heartbeat_failed' 'The update listener could not start a release check and will retry.' @{
+            error = $_.Exception.Message
+            retry_minutes = $retryMinutes
+        }
+        return 'FailedRetryScheduled'
+    }
+}
+
 function Request-CompatibilityUpdateCheck {
     param([string]$CodexVersion, $Config)
 
@@ -1355,28 +1727,13 @@ function Request-CompatibilityUpdateCheck {
     $retryMinutes = [Math]::Max(5, [int](Get-CpgConfigValue $Config 'CompatibilityUpdateRetryMinutes' 15))
 
     try {
-        $markerPath = Join-Path $script:Root '.cpg-install.json'
-        if (-not (Test-Path -LiteralPath $markerPath)) { throw 'The install marker is unavailable.' }
-        $marker = Get-Content -Raw -LiteralPath $markerPath | ConvertFrom-Json
-        if (-not (Test-CpgInstallMarker -InstallRoot $script:Root -Marker $marker)) { throw 'The install marker does not own this directory.' }
-        $updateTaskName = [string](Get-CpgConfigValue $marker 'updateTaskName' 'Codex Proxy Guardian Update')
-        $task = Get-ScheduledTask -TaskName $updateTaskName -ErrorAction Stop
-        $expectedUpdater = Join-Path $script:Root 'Update.ps1'
-        $expectedFileArgument = '-File "{0}"' -f $expectedUpdater
-        $ownedAction = @($task.Actions | Where-Object {
-            ([string]$_.Execute).EndsWith('powershell.exe', [System.StringComparison]::OrdinalIgnoreCase) -and
-            ([string]$_.Arguments).IndexOf($expectedFileArgument, [System.StringComparison]::OrdinalIgnoreCase) -ge 0
-        }).Count -gt 0
-        if (-not $ownedAction) { throw 'The update task action is not owned by this installation.' }
-        $updateStatusPath = Join-Path $script:Root 'update-status.json'
-        $updateStatus = try {
-            if (Test-Path -LiteralPath $updateStatusPath) { Get-Content -Raw -LiteralPath $updateStatusPath | ConvertFrom-Json } else { $null }
-        }
-        catch { $null }
+        $updateContext = Get-CpgOwnedUpdateContext
+        $updateTaskName = [string]$updateContext.TaskName
+        $updateStatus = Read-CpgUpdateStatus
         $decision = Get-CpgCompatibilityUpdateDecision -CodexVersion $CodexVersion `
             -RequestedVersion $script:CompatibilityUpdateRequestedVersion `
             -LastAttempt $script:CompatibilityUpdateLastAttempt -UpdateStatus $updateStatus `
-            -TaskRunning:([string]$task.State -eq 'Running') -Now $now -RetryMinutes $retryMinutes
+            -TaskRunning:([bool]$updateContext.Running) -Now $now -RetryMinutes $retryMinutes
         $script:CompatibilityUpdateResultEvent = [string]$decision.ResultEvent
         $script:CompatibilityUpdateRetryAfterUtc = [string]$decision.RetryAfterUtc
 
@@ -1394,7 +1751,7 @@ function Request-CompatibilityUpdateCheck {
 
         $script:CompatibilityUpdateRequestedVersion = $CodexVersion
         $script:CompatibilityUpdateLastAttempt = $now
-        Start-ScheduledTask -TaskName $updateTaskName
+        $updateSource = Start-CpgOwnedUpdateCheck $updateContext
         $script:CompatibilityUpdateResultEvent = 'update_check_started'
         $script:CompatibilityUpdateRetryAfterUtc = $now.AddMinutes($retryMinutes).ToUniversalTime().ToString('o')
         $requestEvent = if ([string]$decision.State -eq 'Retrying') { 'codex_compatibility_update_retried' } else { 'codex_compatibility_update_requested' }
@@ -1402,6 +1759,7 @@ function Request-CompatibilityUpdateCheck {
             codex_version = $CodexVersion
             guardian_version = $guardianVersion
             update_task = $updateTaskName
+            update_source = $updateSource
             retry_minutes = $retryMinutes
         }
         return 'Running'
@@ -1431,7 +1789,7 @@ function Get-CodexCompatibilityFingerprint {
         [string]$CodexApp.ResolutionMethod,
         [string]$UseProxyArgument,
         [string]$RequireManagedStreaming,
-        'managed-streaming-contract-v2'
+        'managed-streaming-contract-v3'
     ) -join '|'
     $sha = [Security.Cryptography.SHA256]::Create()
     try { return ([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($text)))).Replace('-', '').ToLowerInvariant() }
@@ -1463,6 +1821,7 @@ else {
     'Pending'
 }
 $lastCompatibilityUpdateEvaluation = [datetime]::MinValue
+$updateHeartbeatState = 'Pending'
 $restartRequired = $false
 $consecutiveErrors = 0
 $lastUnavailableLog = [datetime]::MinValue
@@ -1504,12 +1863,18 @@ if (Test-Path -LiteralPath $script:AdoptRequestPath) {
     }
 }
 
+Initialize-CpgCodexLogTail $config
+$script:EventListener = Initialize-CpgEventListener $config
+$lastUpdateHeartbeatEvaluation = [datetime]::MinValue
+
 Write-GuardianLog 'INFO' 'guardian_started' 'Codex Proxy Guardian started.' @{
     version = $guardianVersion
     pid = $PID
     mode = if ($ObserveOnly) { 'ObserveOnly' } else { $guardianMode }
     external_launch_policy = $externalLaunchPolicy
     package_found = ($null -ne $codexApp)
+    event_listener_enabled = [bool]$script:EventListener.Enabled
+    event_listener_components = @($script:EventListener.Components)
 }
 
 try {
@@ -1547,6 +1912,23 @@ try {
                 }
             }
 
+            $listenerWakeReasons = @($script:PendingListenerWakeReasons)
+            $script:PendingListenerWakeReasons = @()
+            if ($listenerWakeReasons.Count -gt 0) {
+                $script:LastListenerWakeAt = Get-Date
+                $script:LastListenerWakeReason = ($listenerWakeReasons -join ',')
+                if ('CodexProcess' -in $listenerWakeReasons) {
+                    $lastCodexResolve = [datetime]::MinValue
+                    $lastCompatibilityUpdateEvaluation = [datetime]::MinValue
+                }
+                if ('UpdateStatus' -in $listenerWakeReasons) {
+                    $lastCompatibilityUpdateEvaluation = [datetime]::MinValue
+                    $lastUpdateHeartbeatEvaluation = [datetime]::MinValue
+                }
+            }
+
+            $newReconnectSignals = @(Receive-CpgReconnectSignals $config)
+
             if ($null -eq $codexApp -or -not (Test-Path -LiteralPath ([string]$codexApp.ExecutablePath)) -or ((Get-Date) - $lastCodexResolve).TotalSeconds -ge $codexResolveIntervalSeconds) {
                 $resolvedApp = Get-CpgCodexApp -Config $config
                 $lastCodexResolve = Get-Date
@@ -1578,6 +1960,11 @@ try {
                     }
                 }
                 elseif ($null -ne $codexApp -and -not (Test-Path -LiteralPath ([string]$codexApp.ExecutablePath))) { $codexApp = $null }
+            }
+
+            if (((Get-Date) - $lastUpdateHeartbeatEvaluation).TotalSeconds -ge $updateHeartbeatEvaluationSeconds) {
+                $lastUpdateHeartbeatEvaluation = Get-Date
+                $updateHeartbeatState = Request-GuardianUpdateHeartbeat -Config $config
             }
 
             if ($null -ne $codexApp -and ((Get-Date) - $lastCompatibilityUpdateEvaluation).TotalSeconds -ge 30) {
@@ -1787,6 +2174,31 @@ try {
                 }
             }
             elseif ($managedRootPid -ne 0 -and $managedRootPid -notin $rootIds) { $managedRootPid = 0 }
+
+            if ($script:LastReconnectSignalAt -gt [datetime]::MinValue) {
+                $previousReconnectAction = $script:ReconnectListenerAction
+                if ($script:UpstreamSuspected) {
+                    $script:ReconnectListenerAction = 'UpstreamSuspected'
+                }
+                elseif (-not $proxyIsValid) {
+                    $script:ReconnectListenerAction = 'ProxyRevalidationFailed'
+                }
+                elseif ($roots.Count -gt 0 -and $matchingRoots.Count -eq 0 -and $requireManagedLaunchForStreaming) {
+                    $script:ReconnectListenerAction = 'ManagedRepairRecommended'
+                }
+                else {
+                    $script:ReconnectListenerAction = 'ValidatedAfterSignal'
+                }
+                if ($newReconnectSignals.Count -gt 0 -or $previousReconnectAction -ne $script:ReconnectListenerAction) {
+                    Write-GuardianLog 'INFO' 'codex_reconnect_signal_assessed' 'The reconnect listener completed an immediate proxy assessment without restarting Codex.' @{
+                        action = $script:ReconnectListenerAction
+                        proxy_valid = $proxyIsValid
+                        streaming_proxy_guaranteed = ($matchingRoots.Count -gt 0)
+                        upstream_suspected = $script:UpstreamSuspected
+                        codex_restart_requested = $false
+                    }
+                }
+            }
 
             $trafficObservedNow = $false
             if ($proxyIsValid -and $roots.Count -gt 0) {
@@ -2046,9 +2458,15 @@ try {
             Write-JsonAtomically $script:StatusPath ([ordered]@{
                 running = $true
                 guardianPid = $PID
+                version = $guardianVersion
                 updatedUtc = (Get-Date).ToUniversalTime().ToString('o')
                 guardianState = $guardianState
                 mode = if ($ObserveOnly) { 'ObserveOnly' } else { $guardianMode }
+                eventListenerEnabled = [bool]$script:EventListener.Enabled
+                eventListenerComponents = @($script:EventListener.Components)
+                eventListenerState = if ([bool]$script:EventListener.Enabled) { 'Ready' } else { 'PeriodicFallback' }
+                lastListenerWakeUtc = if ($script:LastListenerWakeAt -gt [datetime]::MinValue) { $script:LastListenerWakeAt.ToUniversalTime().ToString('o') } else { $null }
+                lastListenerWakeReason = if ([string]::IsNullOrWhiteSpace($script:LastListenerWakeReason)) { $null } else { $script:LastListenerWakeReason }
                 externalLaunchPolicy = $externalLaunchPolicy
                 externalLaunchState = $externalLaunchState
                 safeRepairExternalLaunches = $safeRepairExternalLaunches
@@ -2066,6 +2484,12 @@ try {
                 proxyEndpointReachable = $currentEndpointReachable
                 streamStability = $streamStability
                 streamStabilityLimitation = 'Critical HTTPS probes and local traffic are indirect evidence; authenticated long-lived Codex streams cannot be proven externally.'
+                reconnectSignalsDetected = $script:ReconnectSignalCount
+                reconnectBurstCount = $script:ReconnectBurstCount
+                lastReconnectSignalUtc = if ($script:LastReconnectSignalAt -gt [datetime]::MinValue) { $script:LastReconnectSignalAt.ToUniversalTime().ToString('o') } else { $null }
+                lastReconnectCategory = if ([string]::IsNullOrWhiteSpace($script:LastReconnectCategory)) { $null } else { $script:LastReconnectCategory }
+                lastReconnectErrorClass = if ([string]::IsNullOrWhiteSpace($script:LastReconnectErrorClass)) { $null } else { $script:LastReconnectErrorClass }
+                reconnectListenerAction = $script:ReconnectListenerAction
                 upstreamSuspected = $script:UpstreamSuspected
                 upstreamSuspectedSinceUtc = if ($script:UpstreamSuspectedSince -gt [datetime]::MinValue) { $script:UpstreamSuspectedSince.ToUniversalTime().ToString('o') } else { $null }
                 upstreamRecommendedAction = if ($script:UpstreamSuspected) { 'Keep Codex open and change the provider node in the proxy application if reconnects continue.' } else { $null }
@@ -2087,8 +2511,13 @@ try {
                 compatibilityUpdateLastAttemptUtc = if ($script:CompatibilityUpdateLastAttempt -gt [datetime]::MinValue) { $script:CompatibilityUpdateLastAttempt.ToUniversalTime().ToString('o') } else { $null }
                 compatibilityUpdateResultEvent = if ([string]::IsNullOrWhiteSpace($script:CompatibilityUpdateResultEvent)) { $null } else { $script:CompatibilityUpdateResultEvent }
                 compatibilityUpdateRetryAfterUtc = if ([string]::IsNullOrWhiteSpace($script:CompatibilityUpdateRetryAfterUtc)) { $null } else { $script:CompatibilityUpdateRetryAfterUtc }
+                guardianUpdateHeartbeatState = $updateHeartbeatState
+                guardianUpdateCheckIntervalMinutes = [Math]::Max(15, [int](Get-CpgConfigValue $config 'GuardianUpdateCheckIntervalMinutes' 60))
+                guardianUpdateLastAttemptUtc = if ($script:UpdateHeartbeatLastAttempt -gt [datetime]::MinValue) { $script:UpdateHeartbeatLastAttempt.ToUniversalTime().ToString('o') } else { $null }
+                guardianUpdateResultEvent = if ([string]::IsNullOrWhiteSpace($script:UpdateHeartbeatResultEvent)) { $null } else { $script:UpdateHeartbeatResultEvent }
+                guardianUpdateRetryAfterUtc = if ([string]::IsNullOrWhiteSpace($script:UpdateHeartbeatRetryAfterUtc)) { $null } else { $script:UpdateHeartbeatRetryAfterUtc }
                 compatibilityAutomation = @{
-                    contractVersion = 2
+                    contractVersion = 3
                     behaviorBasedEvidence = $true
                     codexVersionInvalidatesPreviousEvidence = $true
                     managedLaunchAndFreshTrafficRequired = $requireManagedLaunchForStreaming
@@ -2096,6 +2525,8 @@ try {
                     postUpdateCapabilityAudit = $postUpdateStabilityEnabled
                     immediateVerifiedGuardianUpdateCheck = [bool](Get-CpgConfigValue $config 'CheckForGuardianUpdateOnCodexChange' $true)
                     dailyVerifiedGuardianUpdateFallback = [bool](Get-CpgConfigValue $config 'AutomaticUpdates' $true)
+                    eventDrivenUpdateHeartbeat = [bool](Get-CpgConfigValue $config 'AutomaticUpdates' $true)
+                    reconnectSignalForcesFreshValidation = $true
                     failSafeNoRestartOnUnconfirmedAdapter = $true
                 }
                 proxyTestSuccessCount = if ($null -eq $currentValidation) { 0 } else { $currentValidation.SuccessCount }
@@ -2133,7 +2564,10 @@ try {
 
             $consecutiveErrors = 0
             if ($RunOnce) { break }
-            Start-Sleep -Seconds $pollSeconds
+            $wakeReasons = @(Wait-CpgEventListener -Listener $script:EventListener -TimeoutSeconds $pollSeconds -DebounceMilliseconds $listenerDebounceMilliseconds)
+            if ($wakeReasons.Count -gt 0) {
+                $script:PendingListenerWakeReasons = @($wakeReasons | Select-Object -Unique)
+            }
         }
         catch {
             $consecutiveErrors++
@@ -2145,6 +2579,7 @@ try {
     }
 }
 finally {
+    Stop-CpgEventListener $script:EventListener
     Write-GuardianLog 'INFO' 'guardian_stopped' 'Codex Proxy Guardian stopped.' @{}
     $mutex.ReleaseMutex()
     $mutex.Dispose()

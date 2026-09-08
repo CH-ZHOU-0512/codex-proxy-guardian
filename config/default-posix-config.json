@@ -4,6 +4,7 @@
   "AutomaticUpdates": true,
   "NotifyAfterAutomaticUpdate": true,
   "UpdateChannel": "Stable",
+  "GuardianUpdateCheckIntervalMinutes": 60,
   "PollSeconds": 5,
   "StableSamples": 3,
   "DebounceSeconds": 10,
