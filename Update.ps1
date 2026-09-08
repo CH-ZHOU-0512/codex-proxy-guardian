@@ -89,15 +89,20 @@ if ($null -ne (Get-Command curl.exe -ErrorAction SilentlyContinue)) {
 
 function Get-UpdateRequestAttempts {
     $attempts = @()
+    $directCurl = [pscustomobject]@{ UseProxy = $false; ProxyUri = $null; Source = 'WindowsDirectRoute'; Transport = 'Curl' }
+    $directPowerShell = [pscustomobject]@{ UseProxy = $false; ProxyUri = $null; Source = 'WindowsDefaultRoute'; Transport = 'PowerShell' }
     if ([bool]$preferredUpdateRoute.UseProxy) {
         $attempts += $preferredUpdateRoute
         $attempts += $preferredUpdateRoute
-        $attempts += [pscustomobject]@{ UseProxy = $false; ProxyUri = $null; Source = 'WindowsDefaultRoute'; Transport = 'PowerShell' }
+        # A direct curl attempt must bypass inherited proxy environment variables;
+        # otherwise a rate-limited proxy exit can make the "fallback" identical.
+        $attempts += $directCurl
+        $attempts += $directPowerShell
     }
     else {
-        1..3 | ForEach-Object {
-            $attempts += [pscustomobject]@{ UseProxy = $false; ProxyUri = $null; Source = 'WindowsDefaultRoute'; Transport = 'PowerShell' }
-        }
+        $attempts += $directCurl
+        $attempts += $directPowerShell
+        $attempts += $directPowerShell
     }
     return @($attempts)
 }
@@ -128,6 +133,7 @@ function Invoke-UpdateCurlDownload {
         $arguments += @('--header', ('{0}: {1}' -f $headerName, [string]$Headers[$headerName]))
     }
     if (-not [string]::IsNullOrWhiteSpace($ProxyUri)) { $arguments += @('--proxy', $ProxyUri) }
+    else { $arguments += @('--noproxy', '*') }
     $arguments += @('--output', $OutFile, $Uri)
     & ([string]$curl.Source) @arguments
     if ($LASTEXITCODE -ne 0) { throw "curl.exe failed with exit code $LASTEXITCODE." }

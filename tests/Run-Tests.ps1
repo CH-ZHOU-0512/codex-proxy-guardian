@@ -301,6 +301,8 @@ Invoke-Test 'Windows updater expands REST release arrays and reuses the validate
     Assert-True ($updateSource.Contains('Invoke-UpdateCurlDownload'))
     Assert-True ($updateSource.Contains('$preferredUpdateRoute.Transport = ''Curl'''))
     Assert-True ($updateSource.Contains('[string]$route.Transport -eq ''Curl'''))
+    Assert-True ($updateSource.Contains("'WindowsDirectRoute'"))
+    Assert-True ($updateSource.Contains("'--noproxy', '*'"))
     Assert-True ($updateSource.Contains('New-Object System.Text.UTF8Encoding($false, $true)'))
     Assert-True ($updateSource.Contains('NetworkRoute = $script:LastUpdateNetworkRoute'))
 }

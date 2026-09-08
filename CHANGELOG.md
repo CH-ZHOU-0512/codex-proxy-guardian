@@ -4,6 +4,11 @@ All notable changes are documented here. This project follows semantic versionin
 
 ## [未发布 / Unreleased]
 
+## [1.6.1] - 2026-09-08
+
+- 修复自动更新的直连回退仍继承系统代理的问题。代理出口被 GitHub API 限流或返回 403 时，Windows 更新器现在会明确使用 `curl --noproxy "*"` 直连，再按需回退到 PowerShell；不会把同一个受限代理重复当成“默认网络”。
+- 更新诊断会区分 `GuardianValidatedProxy` 与 `WindowsDirectRoute`，便于确认实际使用的网络路径。
+
 ## [1.6.0] - 2026-09-08
 
 - 新增事件监听层：Windows 监听 Codex 日志、Codex 进程启动和更新结果文件。发现真实 WebSocket/流式连接失败后，会立即丢弃旧代理验证缓存并重新验证，不再只等固定轮询周期。
