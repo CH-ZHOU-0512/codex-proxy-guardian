@@ -52,6 +52,13 @@ if ($null -ne $updateTask) {
 
 if (-not $PSCmdlet.ShouldProcess($resolvedRoot, 'Uninstall Codex Proxy Guardian and remove its files')) { return }
 
+$compatibilityModule = Join-Path $resolvedRoot 'CodexProxyGuardian.Compatibility.psm1'
+if (Test-Path -LiteralPath $compatibilityModule -PathType Leaf) {
+    Import-Module $compatibilityModule -Force
+    $codexConfigRoot = if ([string]::IsNullOrWhiteSpace($env:CODEX_HOME)) { Join-Path $env:USERPROFILE '.codex' } else { $env:CODEX_HOME }
+    Disable-CpgOwnedSystemProxyConfig -ConfigPath (Join-Path $codexConfigRoot 'config.toml')
+}
+
 $statusPath = Join-Path $resolvedRoot 'status.json'
 $guardianPid = 0
 if (Test-Path -LiteralPath $statusPath) {

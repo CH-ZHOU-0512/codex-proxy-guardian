@@ -44,6 +44,7 @@
     "ReconnectLogMaxReadBytes": { "type": "integer", "minimum": 65536, "maximum": 4194304 },
     "CodexLogRoot": { "type": "string" },
     "CodexSqliteLogPath": { "type": "string" },
+    "EnableCodexSystemProxyAdaptation": { "type": "boolean" },
     "UnavailableLogIntervalSeconds": { "type": "integer", "minimum": 30, "maximum": 86400 },
     "ExplicitProxy": { "type": "string" },
     "ExplicitPAC": { "type": "string" },

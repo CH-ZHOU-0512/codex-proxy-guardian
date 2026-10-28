@@ -267,6 +267,7 @@ $report = [ordered]@{
         eventListenerState = Get-SafeProperty $status 'eventListenerState' 'PeriodicFallback'
         eventListenerComponents = @(Get-SafeProperty $status 'eventListenerComponents' @())
         codexLogBackend = Get-SafeProperty $status 'codexLogBackend' 'LegacyText'
+        codexSystemProxyAdaptationState = Get-SafeProperty $status 'codexSystemProxyAdaptationState' 'Unavailable'
         reconnectSignalsDetected = [int](Get-SafeProperty $status 'reconnectSignalsDetected' 0)
         reconnectBurstCount = [int](Get-SafeProperty $status 'reconnectBurstCount' 0)
         lastReconnectSignalUtc = Get-SafeProperty $status 'lastReconnectSignalUtc' $null

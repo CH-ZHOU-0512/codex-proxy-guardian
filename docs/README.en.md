@@ -27,9 +27,11 @@ Codex Proxy Guardian discovers candidates, proves that the proxy can carry real 
 > **Guardian never closes or restarts Codex.** It manages proxy discovery, validation, reconnect monitoring, and compatible local endpoint forwarding. It cannot repair packet loss, TLS EOF, WebSocket resets, Windows `10054`, or request timeouts inside a proxy-provider node.
 
 > [!TIP]
+> **v1.8.1 repairs first-request proxy routing.** With a validated Windows system proxy, Guardian checks whether the actual Codex CLI supports `respect_system_proxy` and enables it for new sessions while preserving the built-in OpenAI provider and Dot. It backs up config and respects an explicit opt-out. The feature is currently under development in Codex, so support is detected at runtime.
+>
 > **v1.8.0 makes `CodexRestartPolicy=Never` a hard rule.** When a Windows loopback proxy port changes, Guardian binds the released old port and forwards compatible HTTP-family or SOCKS5-family TCP streams to the validated endpoint. A failed bind or incompatible protocol leaves Codex untouched and is reported as `InPlaceRepairPending`.
 >
-> Codex `26.1021.3705.0` moved app-server connection evidence into `logs_2.sqlite`. Guardian tails its WAL without an external SQLite dependency and recognizes `stream disconnected - retrying sampling request (n/5)`, remote-control WebSocket retries, and local IPC failures. Task content is not collected.
+> Codex `26.1021.3705.0` moved app-server connection evidence into `logs_2.sqlite`. Guardian queries committed records read-only through Windows' built-in SQLite engine, including after WAL reuse, and recognizes `stream disconnected - retrying sampling request (n/5)`, remote-control WebSocket retries, and local IPC failures. Task content is not collected.
 >
 > **v1.5.4 reports a successful automatic update to the signed-in user.** The one-time notification shows the previous and installed versions, states that Codex does not need to restart, requires no confirmation, and is not repeated at every login. Windows, macOS, and common Linux desktop notification systems are covered.
 >

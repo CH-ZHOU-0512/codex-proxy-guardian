@@ -15,6 +15,7 @@ $script:Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 Import-Module (Join-Path $script:Root 'CodexProxyGuardian.Core.psm1') -Force
 Import-Module (Join-Path $script:Root 'CodexProxyGuardian.Relay.psm1') -Force
 Import-Module (Join-Path $script:Root 'CodexProxyGuardian.CodexLogs.psm1') -Force
+Import-Module (Join-Path $script:Root 'CodexProxyGuardian.Compatibility.psm1') -Force
 
 $script:ConfigPath = Join-Path $script:Root 'config.json'
 $script:LogsPath = Join-Path $script:Root 'logs'
@@ -34,6 +35,8 @@ $script:ProxyAddressCache = @{}
 $script:PACDiscoveryCache = $null
 $script:CodexLogOffsets = @{}
 $script:CodexSqliteLogOffsets = @{}
+$script:CodexSystemProxyAdaptationKey = ''
+$script:CodexSystemProxyAdaptationState = 'WaitingForValidatedSystemProxy'
 $script:ReconnectSignalFingerprints = @{}
 $script:InheritedProxyEnvironment = @{}
 foreach ($proxyVariableName in @('HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy', 'ALL_PROXY', 'all_proxy')) {
@@ -2129,6 +2132,34 @@ try {
             }
 
             $roots = @(Get-CodexRootProcesses $codexApps)
+            if (-not $ObserveOnly -and $proxyIsValid -and $activeSource -like 'system:*' -and
+                [bool](Get-CpgConfigValue $config 'EnableCodexSystemProxyAdaptation' $true)) {
+                $rootPids = @($roots | ForEach-Object { [int]$_.ProcessId })
+                $cliRoot = Join-Path $env:LOCALAPPDATA 'OpenAI\Codex\bin'
+                $cliProcess = Get-CimInstance Win32_Process -Filter "Name = 'codex.exe'" -ErrorAction SilentlyContinue |
+                    Where-Object { $_.ParentProcessId -in $rootPids -and
+                        -not [string]::IsNullOrWhiteSpace([string]$_.ExecutablePath) -and
+                        ([string]$_.ExecutablePath).StartsWith($cliRoot + '\', [StringComparison]::OrdinalIgnoreCase) } |
+                    Select-Object -First 1
+                if ($null -ne $cliProcess) {
+                    $adaptationKey = [string]$cliProcess.ExecutablePath
+                    if ($script:CodexSystemProxyAdaptationKey -ne $adaptationKey) {
+                        try {
+                            $codexConfigRoot = if ([string]::IsNullOrWhiteSpace($env:CODEX_HOME)) { Join-Path $env:USERPROFILE '.codex' } else { $env:CODEX_HOME }
+                            $script:CodexSystemProxyAdaptationState = Enable-CpgCodexSystemProxy `
+                                -CliPath $adaptationKey -ConfigPath (Join-Path $codexConfigRoot 'config.toml')
+                            $script:CodexSystemProxyAdaptationKey = $adaptationKey
+                            Write-GuardianLog 'INFO' 'codex_system_proxy_adapted' 'Codex system-proxy capability was checked for new sessions; the built-in OpenAI provider and running processes were preserved.' @{
+                                state = $script:CodexSystemProxyAdaptationState
+                                codex_restart_requested = $false
+                            }
+                        } catch {
+                            $script:CodexSystemProxyAdaptationState = 'RetryPending'
+                            Write-GuardianLog 'WARN' 'codex_system_proxy_adaptation_failed' 'Codex proxy capability adaptation will be retried.' @{ error = $_.Exception.GetType().Name }
+                        }
+                    }
+                }
+            }
             $rootIds = @($roots | ForEach-Object { [int]$_.ProcessId })
             $currentPackageRoots = @()
             if ($null -ne $codexApp) {
@@ -2489,6 +2520,7 @@ try {
                 eventListenerComponents = @($script:EventListener.Components)
                 eventListenerState = if ([bool]$script:EventListener.Enabled) { 'Ready' } else { 'PeriodicFallback' }
                 codexLogBackend = 'LegacyTextAndSqliteWal'
+                codexSystemProxyAdaptationState = $script:CodexSystemProxyAdaptationState
                 lastListenerWakeUtc = if ($script:LastListenerWakeAt -gt [datetime]::MinValue) { $script:LastListenerWakeAt.ToUniversalTime().ToString('o') } else { $null }
                 lastListenerWakeReason = if ([string]::IsNullOrWhiteSpace($script:LastListenerWakeReason)) { $null } else { $script:LastListenerWakeReason }
                 externalLaunchPolicy = $externalLaunchPolicy

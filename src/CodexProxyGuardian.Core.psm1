@@ -1098,6 +1098,7 @@ function Get-CpgReconnectLogSignal {
     if ($null -eq $observedUtc) { $observedUtc = (Get-Date).ToUniversalTime() }
 
     $signalId = '{0}|{1}|{2}|{3}|{4}' -f $category, $observedUtc.ToString('o'), $endpoint, $attempt, $errorClass
+    if ($Line -match 'sqlite_log_id=(\d+)') { $signalId += '|row:' + $matches[1] }
     return [pscustomobject]@{
         IsSignal = $true
         Category = $category

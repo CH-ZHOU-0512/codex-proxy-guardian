@@ -1,33 +1,83 @@
 Set-StrictMode -Version 2.0
 
+function Initialize-CpgSqliteReader {
+    if ('CpgSqliteLogReader' -as [type]) { return }
+    Add-Type -TypeDefinition @'
+using System;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+using System.Text;
+public static class CpgSqliteLogReader {
+    [DllImport("winsqlite3.dll", CallingConvention=CallingConvention.Cdecl)]
+    static extern int sqlite3_open_v2(byte[] path, out IntPtr db, int flags, IntPtr vfs);
+    [DllImport("winsqlite3.dll", CallingConvention=CallingConvention.Cdecl)]
+    static extern int sqlite3_close(IntPtr db);
+    [DllImport("winsqlite3.dll", CallingConvention=CallingConvention.Cdecl)]
+    static extern int sqlite3_busy_timeout(IntPtr db, int ms);
+    [DllImport("winsqlite3.dll", CallingConvention=CallingConvention.Cdecl)]
+    static extern int sqlite3_prepare_v2(IntPtr db, byte[] sql, int size, out IntPtr stmt, IntPtr tail);
+    [DllImport("winsqlite3.dll", CallingConvention=CallingConvention.Cdecl)]
+    static extern int sqlite3_step(IntPtr stmt);
+    [DllImport("winsqlite3.dll", CallingConvention=CallingConvention.Cdecl)]
+    static extern int sqlite3_finalize(IntPtr stmt);
+    [DllImport("winsqlite3.dll", CallingConvention=CallingConvention.Cdecl)]
+    static extern long sqlite3_column_int64(IntPtr stmt, int column);
+    [DllImport("winsqlite3.dll", CallingConvention=CallingConvention.Cdecl)]
+    static extern IntPtr sqlite3_column_text(IntPtr stmt, int column);
+    [DllImport("winsqlite3.dll", CallingConvention=CallingConvention.Cdecl)]
+    static extern int sqlite3_column_bytes(IntPtr stmt, int column);
+    static byte[] Utf8(string value) { return Encoding.UTF8.GetBytes(value + "\0"); }
+    public static string[][] Query(string path, string sql) {
+        IntPtr db = IntPtr.Zero, stmt = IntPtr.Zero;
+        try {
+            // SQLITE_OPEN_READONLY respects committed WAL frames and checkpoints.
+            int rc = sqlite3_open_v2(Utf8(path), out db, 1, IntPtr.Zero);
+            if (rc != 0) throw new InvalidOperationException("SQLite read-only open failed: " + rc);
+            sqlite3_busy_timeout(db, 250);
+            rc = sqlite3_prepare_v2(db, Utf8(sql), -1, out stmt, IntPtr.Zero);
+            if (rc != 0) throw new InvalidOperationException("SQLite log schema unavailable: " + rc);
+            var rows = new List<string[]>();
+            while ((rc = sqlite3_step(stmt)) == 100) {
+                var values = new string[3];
+                values[0] = sqlite3_column_int64(stmt, 0).ToString(System.Globalization.CultureInfo.InvariantCulture);
+                values[1] = sqlite3_column_int64(stmt, 1).ToString(System.Globalization.CultureInfo.InvariantCulture);
+                int size = sqlite3_column_bytes(stmt, 2);
+                IntPtr pointer = sqlite3_column_text(stmt, 2);
+                if (pointer != IntPtr.Zero && size > 0) {
+                    byte[] bytes = new byte[size]; Marshal.Copy(pointer, bytes, 0, size);
+                    values[2] = Encoding.UTF8.GetString(bytes);
+                } else { values[2] = ""; }
+                rows.Add(values);
+            }
+            if (rc != 101) throw new InvalidOperationException("SQLite log read failed: " + rc);
+            return rows.ToArray();
+        } finally {
+            if (stmt != IntPtr.Zero) sqlite3_finalize(stmt);
+            if (db != IntPtr.Zero) sqlite3_close(db);
+        }
+    }
+}
+'@
+}
+
 function Get-CpgCodexSqliteWalPath {
     [CmdletBinding()]
     param([AllowEmptyString()][string]$ConfiguredPath = '')
-
     $path = [Environment]::ExpandEnvironmentVariables($ConfiguredPath)
     if ([string]::IsNullOrWhiteSpace($path)) {
         $profileRoot = [Environment]::GetFolderPath([Environment+SpecialFolder]::UserProfile)
         if ([string]::IsNullOrWhiteSpace($profileRoot)) { $profileRoot = [string]$env:USERPROFILE }
         $path = Join-Path $profileRoot '.codex\logs_2.sqlite-wal'
     }
-    elseif ($path.EndsWith('.sqlite', [System.StringComparison]::OrdinalIgnoreCase)) {
-        $path = "$path-wal"
-    }
+    elseif ($path.EndsWith('.sqlite', [System.StringComparison]::OrdinalIgnoreCase)) { $path = "$path-wal" }
     return [System.IO.Path]::GetFullPath($path)
 }
 
 function New-CpgCodexSqliteTailState {
     [CmdletBinding()]
     param([AllowEmptyString()][string]$ConfiguredPath = '')
-
-    $path = Get-CpgCodexSqliteWalPath -ConfiguredPath $ConfiguredPath
-    $length = if (Test-Path -LiteralPath $path -PathType Leaf) {
-        [int64](Get-Item -LiteralPath $path -ErrorAction Stop).Length
-    }
-    else { [int64]0 }
-    $state = @{}
-    $state[$path] = [pscustomobject]@{ Offset = $length; Carry = '' }
-    return $state
+    # Include recent failures when Guardian attaches after a failed first request.
+    return @{ LastId = [int64]0; SinceUnix = [int64]([DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - 120) }
 }
 
 function Read-CpgCodexSqliteTail {
@@ -37,53 +87,22 @@ function Read-CpgCodexSqliteTail {
         [AllowEmptyString()][string]$ConfiguredPath = '',
         [int]$MaxReadBytes = 262144
     )
-
-    $path = Get-CpgCodexSqliteWalPath -ConfiguredPath $ConfiguredPath
-    if (-not $State.ContainsKey($path)) {
-        $State[$path] = [pscustomobject]@{ Offset = [int64]0; Carry = '' }
+    $walPath = Get-CpgCodexSqliteWalPath -ConfiguredPath $ConfiguredPath
+    $dbPath = $walPath.Substring(0, $walPath.Length - 4)
+    if (-not (Test-Path -LiteralPath $dbPath -PathType Leaf)) { return @() }
+    Initialize-CpgSqliteReader
+    $lastId = [int64]$State.LastId
+    $since = [int64]$State.SinceUnix
+    # Only telemetry producers: never classify tool output or prompt echoes.
+    $sql = "SELECT id,ts,substr(feedback_log_body,-8192) FROM logs WHERE id > $lastId AND ts >= $since AND target IN ('codex_core::responses_retry','codex_api::endpoint::responses_websocket','codex_app_server_transport::transport::remote_control::websocket','codex_core::client') ORDER BY id LIMIT 256"
+    $rows = [CpgSqliteLogReader]::Query($dbPath, $sql)
+    $lines = New-Object System.Collections.ArrayList
+    foreach ($row in $rows) {
+        $State.LastId = [int64]$row[0]
+        $timestamp = [DateTimeOffset]::FromUnixTimeSeconds([int64]$row[1]).UtcDateTime.ToString('o')
+        [void]$lines.Add("$timestamp sqlite_log_id=$($row[0]) $($row[2])")
     }
-    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return @() }
-
-    $tail = $State[$path]
-    $limit = [Math]::Max(65536, [Math]::Min(4194304, $MaxReadBytes))
-    $encoding = New-Object System.Text.UTF8Encoding($false, $false)
-    $result = New-Object System.Collections.ArrayList
-    $stream = $null
-    try {
-        $stream = New-Object System.IO.FileStream($path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, ([System.IO.FileShare]::ReadWrite -bor [System.IO.FileShare]::Delete))
-        if ([int64]$tail.Offset -gt $stream.Length) {
-            # SQLite checkpoints can replace or truncate the WAL. Reading from
-            # zero is safe because reconnect fingerprints are deduplicated.
-            $tail.Offset = [int64]0
-            $tail.Carry = ''
-        }
-        $remaining = $stream.Length - [int64]$tail.Offset
-        if ($remaining -le 0) { return @() }
-
-        $readLength = [int][Math]::Min([int64]$limit, $remaining)
-        $buffer = New-Object byte[] $readLength
-        [void]$stream.Seek([int64]$tail.Offset, [System.IO.SeekOrigin]::Begin)
-        $read = $stream.Read($buffer, 0, $readLength)
-        if ($read -le 0) { return @() }
-        $tail.Offset = [int64]$tail.Offset + $read
-
-        $text = [string]$tail.Carry + $encoding.GetString($buffer, 0, $read)
-        $relevant = '(?i)(?:failed to (?:connect to )?app-server remote control websocket|required remote control server token refresh failed|stream disconnected\s*-\s*retrying sampling request|app_server_connection\.state_changed|AppServerConnection|error sending request for url|response stream)'
-        foreach ($fragment in @([regex]::Split($text, '[\x00-\x08\x0B\x0C\x0E-\x1F]+'))) {
-            if ($fragment -match $relevant) { [void]$result.Add($fragment.Trim()) }
-        }
-
-        $carryLength = [Math]::Min(8192, $text.Length)
-        $tail.Carry = if ($carryLength -gt 0) { $text.Substring($text.Length - $carryLength) } else { '' }
-    }
-    finally {
-        if ($null -ne $stream) { $stream.Dispose() }
-    }
-    return @($result)
+    return @($lines)
 }
 
-Export-ModuleMember -Function @(
-    'Get-CpgCodexSqliteWalPath',
-    'New-CpgCodexSqliteTailState',
-    'Read-CpgCodexSqliteTail'
-)
+Export-ModuleMember -Function @('Get-CpgCodexSqliteWalPath','New-CpgCodexSqliteTailState','Read-CpgCodexSqliteTail')

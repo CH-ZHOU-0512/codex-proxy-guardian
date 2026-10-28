@@ -46,6 +46,7 @@ function Assert-Null {
 
 Import-Module (Join-Path $repoRoot 'src\CodexProxyGuardian.Core.psm1') -Force
 Import-Module (Join-Path $repoRoot 'src\CodexProxyGuardian.CodexLogs.psm1') -Force
+Import-Module (Join-Path $repoRoot 'src\CodexProxyGuardian.Compatibility.psm1') -Force
 
 Invoke-Test 'All PowerShell files parse on this runtime' {
     $errors = @()
@@ -63,7 +64,7 @@ Invoke-Test 'Watcher modules coexist in Windows PowerShell 5.1' {
     $temporaryRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('cpg-module-test-' + [guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $temporaryRoot -Force | Out-Null
     try {
-        foreach ($name in @('Watch-CodexProxy.ps1', 'CodexProxyGuardian.Core.psm1', 'CodexProxyGuardian.Relay.psm1', 'CodexProxyGuardian.CodexLogs.psm1', 'ProxyRelay.ps1')) {
+        foreach ($name in @('Watch-CodexProxy.ps1', 'CodexProxyGuardian.Core.psm1', 'CodexProxyGuardian.Relay.psm1', 'CodexProxyGuardian.CodexLogs.psm1', 'CodexProxyGuardian.Compatibility.psm1', 'ProxyRelay.ps1')) {
             Copy-Item -LiteralPath (Join-Path (Join-Path $repoRoot 'src') $name) -Destination (Join-Path $temporaryRoot $name)
         }
         Copy-Item -LiteralPath (Join-Path $repoRoot 'config\default-config.json') -Destination (Join-Path $temporaryRoot 'config.default.json')
@@ -424,29 +425,29 @@ Invoke-Test 'Reconnect listener classifies Codex WebSocket failures and ignores 
     Assert-Equal 9 ([int]$sqliteRemote.Attempt)
 }
 
-Invoke-Test 'Codex 26.1021 SQLite WAL reconnect records are tailed without a SQLite dependency' {
-    $temporaryRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('cpg-sqlite-log-test-' + [guid]::NewGuid().ToString('N'))
-    New-Item -ItemType Directory -Path $temporaryRoot -Force | Out-Null
-    try {
-        $walPath = Join-Path $temporaryRoot 'logs_2.sqlite-wal'
-        [System.IO.File]::WriteAllBytes($walPath, (New-Object byte[] 32))
-        $state = New-CpgCodexSqliteTailState -ConfiguredPath $walPath
-        $message = 'codex_core::responses_retry stream disconnected - retrying sampling request (4/5 in 1.2s) retries=4 sampling_error=request timed out'
-        $payload = [System.Text.Encoding]::UTF8.GetBytes(([char]0 + $message + [char]0))
-        $stream = New-Object System.IO.FileStream($walPath, [System.IO.FileMode]::Append, [System.IO.FileAccess]::Write, [System.IO.FileShare]::ReadWrite)
-        try { $stream.Write($payload, 0, $payload.Length) }
-        finally { $stream.Dispose() }
+Invoke-Test 'SQLite reconnect reader survives committed WAL reuse and ignores prompt echoes' {
+    $windowsPowerShell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    $output = @(& $windowsPowerShell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $repoRoot 'tests\Test-CodexSqliteLogs.ps1') 2>&1)
+    Assert-Equal 0 $LASTEXITCODE (($output | ForEach-Object { [string]$_ }) -join [Environment]::NewLine)
+}
 
-        $records = @(Read-CpgCodexSqliteTail -State $state -ConfiguredPath $walPath -MaxReadBytes 65536)
-        Assert-Equal 1 $records.Count
-        $signal = Get-CpgReconnectLogSignal ([string]$records[0])
-        Assert-True $signal.IsSignal
-        Assert-Equal 'ResponseStream' ([string]$signal.Category)
-        Assert-Equal 4 ([int]$signal.Attempt)
-    }
-    finally {
-        Remove-Item -LiteralPath $temporaryRoot -Recurse -Force -ErrorAction SilentlyContinue
-    }
+Invoke-Test 'System proxy capability repair preserves provider, unrelated settings, and explicit opt-out' {
+    $text = 'model = "example"' + "`n" + '[desktop]' + "`n" + 'notifications = true' + "`n"
+    $edit = Get-CpgSystemProxyConfigEdit -Text $text
+    Assert-True $edit.Changed
+    Assert-True $edit.Text.Contains('respect_system_proxy = true')
+    Assert-True $edit.Text.Contains('[desktop]')
+    Assert-False $edit.Text.Contains('model_provider =')
+    Assert-False (Get-CpgSystemProxyConfigEdit -Text $edit.Text).Changed
+    $optOut = '[features]' + "`n" + 'respect_system_proxy = false' + "`n"
+    $disabled = Get-CpgSystemProxyConfigEdit -Text $optOut
+    Assert-False $disabled.Changed
+    Assert-Equal 'UserDisabled' $disabled.State
+    $existing = '[features]' + "`r`n" + 'other = true' + "`r`n" + '[desktop]' + "`r`n" + 'notifications = true' + "`r`n"
+    $merged = Get-CpgSystemProxyConfigEdit -Text $existing
+    Assert-Equal 1 ([regex]::Matches($merged.Text,'\[features\]').Count)
+    Assert-True $merged.Text.Contains('other = true')
+    Assert-True ($merged.Text.IndexOf('respect_system_proxy = true') -lt $merged.Text.IndexOf('[desktop]'))
 }
 
 Invoke-Test 'Settings never reports a skipped update check as current' {

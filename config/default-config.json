@@ -10,6 +10,7 @@
   "ExternalLaunchDebounceSeconds": 15,
   "SafeRepairExternalCodexLaunches": true,
   "EnableInPlaceProxyRelay": true,
+  "EnableCodexSystemProxyAdaptation": true,
   "RequireManagedLaunchForStreaming": true,
   "SafeExternalLaunchGraceSeconds": 20,
   "NotifyBeforeCodexRestart": false,

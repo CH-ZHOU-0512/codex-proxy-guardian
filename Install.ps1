@@ -233,6 +233,7 @@ if (-not $SkipConnectivityCheck) {
         Copy-Item -LiteralPath (Join-Path $sourceRoot 'src\CodexProxyGuardian.Core.psm1') -Destination (Join-Path $stagingRoot 'CodexProxyGuardian.Core.psm1')
         Copy-Item -LiteralPath (Join-Path $sourceRoot 'src\CodexProxyGuardian.Relay.psm1') -Destination (Join-Path $stagingRoot 'CodexProxyGuardian.Relay.psm1')
         Copy-Item -LiteralPath (Join-Path $sourceRoot 'src\CodexProxyGuardian.CodexLogs.psm1') -Destination (Join-Path $stagingRoot 'CodexProxyGuardian.CodexLogs.psm1')
+        Copy-Item -LiteralPath (Join-Path $sourceRoot 'src\CodexProxyGuardian.Compatibility.psm1') -Destination (Join-Path $stagingRoot 'CodexProxyGuardian.Compatibility.psm1')
         Copy-Item -LiteralPath (Join-Path $sourceRoot 'src\Watch-CodexProxy.ps1') -Destination (Join-Path $stagingRoot 'Watch-CodexProxy.ps1')
         Copy-Item -LiteralPath (Join-Path $sourceRoot 'src\ProxyRelay.ps1') -Destination (Join-Path $stagingRoot 'ProxyRelay.ps1')
         Copy-Item -LiteralPath $defaultConfigPath -Destination (Join-Path $stagingRoot 'config.default.json')
@@ -317,6 +318,7 @@ $payload = [ordered]@{
     (Join-Path $sourceRoot 'src\CodexProxyGuardian.Core.psm1') = 'CodexProxyGuardian.Core.psm1'
     (Join-Path $sourceRoot 'src\CodexProxyGuardian.Relay.psm1') = 'CodexProxyGuardian.Relay.psm1'
     (Join-Path $sourceRoot 'src\CodexProxyGuardian.CodexLogs.psm1') = 'CodexProxyGuardian.CodexLogs.psm1'
+    (Join-Path $sourceRoot 'src\CodexProxyGuardian.Compatibility.psm1') = 'CodexProxyGuardian.Compatibility.psm1'
     (Join-Path $sourceRoot 'src\Watch-CodexProxy.ps1') = 'Watch-CodexProxy.ps1'
     (Join-Path $sourceRoot 'src\ProxyRelay.ps1') = 'ProxyRelay.ps1'
     (Join-Path $sourceRoot 'src\Launch-CodexManaged.ps1') = 'Launch-CodexManaged.ps1'

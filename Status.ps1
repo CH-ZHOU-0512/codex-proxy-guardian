@@ -81,6 +81,7 @@ $summary = [ordered]@{
     EventListenerState = Get-StatusValue $status 'eventListenerState' 'PeriodicFallback'
     EventListenerComponents = @(Get-StatusValue $status 'eventListenerComponents' @())
     CodexLogBackend = Get-StatusValue $status 'codexLogBackend' 'LegacyText'
+    CodexSystemProxyAdaptationState = Get-StatusValue $status 'codexSystemProxyAdaptationState' 'Unavailable'
     ReconnectSignalsDetected = [int](Get-StatusValue $status 'reconnectSignalsDetected' 0)
     ReconnectBurstCount = [int](Get-StatusValue $status 'reconnectBurstCount' 0)
     LastReconnectSignalUtc = Get-StatusValue $status 'lastReconnectSignalUtc' $null

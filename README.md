@@ -17,9 +17,9 @@ Codex Proxy Guardian 是一个非官方、跨平台的 **Codex 代理守护工�
 > **Guardian 不会关闭或重启 Codex。** 它负责代理发现、验证、重连监听和兼容端点的本机转发；代理服务商节点自身的丢包、TLS EOF、WebSocket reset、Windows `10054` 或请求超时仍需由代理软件或服务商解决。详见[重连归因](#如何判断是谁造成的重连)。
 
 > [!TIP]
-> **v1.8.0 将“永不重启 Codex”设为硬策略。** 发现不同的本机代理端口后，Guardian 会在旧端口已经释放、且协议兼容时建立轻量 TCP 转发，让当前 Codex 继续使用原地址；不会弹窗、关闭进程或改写 Windows 系统代理。旧端口仍被其他程序占用、协议不兼容或代理节点上游断流时，Guardian 会保持 Codex 不动并记录准确原因。
+> **v1.8.1 修复首次请求的代理选路。** 在验证过的 Windows 系统代理环境中，Guardian 检测 Codex 是否支持 `respect_system_proxy`，支持时为新会话启用原生代理选路，保留内置 OpenAI provider 和 Dot。配置修改前会备份，用户显式关闭时不会覆盖。此开关在当前 Codex 中属于开发中能力，因此按运行版本检测，不按版本号猜测。
 >
-> 已适配 Codex `26.1021.3705.0` 的新 `logs_2.sqlite` 日志后端，可实时识别 app-server 的 `Reconnecting 1/5 → 5/5`、远控 WebSocket 重连和本地 IPC 错误；不依赖外部 SQLite，也不读取任务正文。
+> Guardian 始终遵守“永不重启 Codex”。端口变化仍可通过兼容端点转发接续；新版日志改用 Windows 自带 SQLite 引擎只读查询，修复 WAL 大小不变时漏报 `n/5` 重试的问题。
 
 ## 30 秒看懂
 

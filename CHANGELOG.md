@@ -4,6 +4,13 @@ All notable changes are documented here. This project follows semantic versionin
 
 ## [未发布 / Unreleased]
 
+## [1.8.1] - 2026-10-28
+
+- 修复首次请求在 Responses WebSocket 上连续超时的问题：在实际验证过的 Windows 系统代理环境中，检测当前 app-server CLI 是否支持 `respect_system_proxy`，支持时为新会话启用原生系统代理选路。保留内置 OpenAI provider、Dot 和模型功能，不重启 Codex；用户显式设为 `false` 时保持选择。
+- 替换 v1.8.0 不可靠的 WAL 字节尾读：使用 Windows 自带 `winsqlite3.dll` 只读查询已提交日志，以记录 ID 增量读取。覆盖 WAL 文件大小不变时的空间复用、检查点及事务提交，并过滤工具输出中的日志回显。
+- 修改 Codex 配置前保留备份，仅添加带 Guardian 标记的配置；卸载仅移除仍与原始托管内容一致的标记块。
+- 新增真实 SQLite 事务/WAL 复用测试，以及配置合并、显式退出与 provider 保留测试。
+
 ## [1.8.0] - 2026-10-28
 
 - Windows 将 `CodexRestartPolicy=Never` 设为硬策略，删除所有运行时关闭/重启 Codex 的调用路径；Automatic 与 Strict 都只执行不打断当前任务的修复。
