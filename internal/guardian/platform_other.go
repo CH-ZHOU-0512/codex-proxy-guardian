@@ -12,9 +12,6 @@ func (*unsupportedManager) Observe(string) AppObservation { return AppObservatio
 func (*unsupportedManager) Launch(string, []string) error {
 	return fmt.Errorf("this binary supports macOS and Linux")
 }
-func (*unsupportedManager) Restart(string, Config) error {
-	return fmt.Errorf("this binary supports macOS and Linux")
-}
 func platformSystemProxyCandidates(Config) []Candidate { return nil }
 func platformListenerCandidates(Config) []Candidate    { return nil }
 func platformPACSources(Config) []pacSource            { return nil }

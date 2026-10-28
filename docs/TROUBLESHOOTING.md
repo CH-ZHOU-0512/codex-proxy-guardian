@@ -35,32 +35,17 @@ codex-proxy-guardian doctor
 
 安装、修复和卸载都不要使用 `sudo`。
 
-## Codex 反复重启
+## Codex 被意外关闭
 
-先确认 Guardian 已升级到 v1.4.3 或更高版本。v1.4.1 及更早版本会把同一个混合代理端口的 HTTP/SOCKS5 验证波动误判为端点变化；v1.4.2 挡住了恢复后的立即回切，但当前协议短暂验证失败时仍可能切换。v1.4.3 将同一主机与端口固定为同一个生命周期端点，不再因此关闭 Codex。
+v1.8.0 起，Guardian 的公开状态固定为 `CodexRestartPolicy=Never`，代码中没有关闭 Codex 的调用路径。若 Codex 仍然退出，请记录发生时间，并检查 Windows 事件、Codex 自身日志及代理程序日志；这不应由 Guardian 的代理切换触发。
 
-v1.4.3 起，真正不同的代理地址或端口需要修复现有 Codex 时，Windows 会显示前台确认框。只有点击“是”才会重启；点击“否”、等待超时或提示无法显示都会延后，状态显示 `RestartDeferred`。除非你明确接受无人值守自动重启，否则不要关闭 `NotifyBeforeCodexRestart`。
+若本机仍安装旧版本，可运行最新版安装器原位升级。升级会保留代理设置，只重启 Guardian 后台任务，不会关闭 Codex。
 
-1. 立即停止守护任务；此操作不会改变任何网络设置：
+## 本机代理端口变化后如何在线接续
 
-   ```powershell
-   Stop-ScheduledTask -TaskName 'Codex Proxy Guardian'
-   ```
+Windows 会在以下条件同时满足时建立本机 TCP 转发：旧地址和新地址都是回环地址、旧端口已释放、两端同属 HTTP 或 SOCKS5 协议族，并且新端点已经通过真实 HTTPS 验证。成功后 `Status.ps1` 显示 `InPlaceProxyRelayActive=true`。
 
-2. 先在开始菜单 **Codex Proxy Guardian Settings** 中选择“自动（Safe）”。如果还要完全关闭普通启动修复，再在安装目录的 `config.json` 中将 `SafeRepairExternalCodexLaunches` 设为 `false`。
-3. 检查 `status.json` 和最新的 `logs\guardian-*.jsonl`。重复出现 `proxy_changed` 表示候选端点不稳定；重复出现 `unmanaged_codex` 或 `external_codex_repair` 表示普通 Codex 启动没有带上当前代理参数。
-4. 如果自动发现了多个监听器，将 `ExplicitProxy` 设为稳定的 HTTP/混合入站端口。
-5. 如果代理软件切换配置时会重建监听器，可适当增加 `DebounceSeconds`、`StableSamples` 或 `RestartCooldownSeconds`。
-
-0.2 及更高版本在 `RestartLimitWindowMinutes` 时间内发生 `RestartLimitCount` 次重启后会停止继续尝试。`Status.ps1` 会显示 `RestartCircuitOpen` 和解除时间。在查清候选端点反复变化的原因前，不要仅仅提高次数上限。
-
-守护程序会匹配当前 Codex 根进程上的 `--proxy-server=<已验证 URI>`，不会依赖启动器 PID 归属，因为 MSIX/Electron 进程交接期间的 PID 关系并不可靠。
-
-## 受控重启后 Codex 一直关闭
-
-0.2 及更高版本会在关闭 Codex 前持久化 `RecoveryLaunchRequired`。如果新进程启动失败，`GuardianState` 会变为 `RecoveringCodex`，代理仍有效时守护程序会在正常频率限制内重试。
-
-从 0.3 起，默认的 Safe 模式会先观察另行启动、但未带代理参数的 Codex：证据等待期内如果发现它已通过当前代理通信，就保持不动；否则进行一次受控修复。只有同时关闭 `SafeRepairExternalCodexLaunches` 和 `ManageExternalCodexLaunches` 时，这类进程才可能使恢复状态变为 `RecoveryBlockedByCodex`；此时请关闭该进程并使用 **Codex (Managed Proxy)**。失败尝试与正常重启共用同一个次数预算；达到上限后 `RestartCircuitOpen` 会阻止无限循环。
+若显示 `InPlaceRepairPending`，通常是旧端口仍被其他程序占用、当前 Codex 没有可识别的旧显式端点，或新旧协议不兼容。Guardian 不会抢占端口、修改系统代理或重启 Codex；可将代理软件固定为一个稳定的 HTTP/混合入站端口，提高长期命中率。
 
 ## 自动更新失败
 
@@ -74,14 +59,12 @@ v1.5.4 起，后台自动更新安装成功后会发送一次系统通知，显�
 
 ## Codex 没有被重启，但仍显示正在重新连接
 
-先查看 Guardian 日志是否在同一时间出现 `codex_restart` 或 `proxy_changed`。如果没有，而 Codex 日志出现 TLS EOF、WebSocket reset、`10054` 或请求超时，说明流式连接在代理上游被中断。
+先查看 `Status.ps1`。如果 `InPlaceProxyRelayActive=true`，说明本地端口变化已经在线接续；Codex 日志仍出现 TLS EOF、WebSocket reset、`10054` 或请求超时，通常表示流式连接在代理上游被中断。
 
 v1.5.1 起还要先看 `StreamingProxyGuaranteed`：
 
-- `false` 或 `EffectivenessEvidence=SystemProxyHttpTrafficOnly`：普通启动只证明 HTTP 通过了 Windows 系统代理，不能证明新版 Codex 的 WebSocket/流式子进程继承了显式代理。先完成当前任务，再在 Guardian 确认窗口选择“重启Codex”；暂时不方便时选择“60分钟后再提醒我”。也可以在设置页点击“优化流式连接”，或关闭 Codex 后打开 **Codex (Managed Proxy)**。
+- `false` 或 `EffectivenessEvidence=SystemProxyHttpTrafficOnly`：普通启动只证明 HTTP 通过了 Windows 系统代理，不能证明新版 Codex 的 WebSocket/流式子进程继承了显式代理。Guardian 会保持当前 Codex 不动，并在存在兼容旧端点时尝试在线转发。
 - `true` 且 `EffectivenessEvidence=ManagedTrafficObserved`：受管启动与实际端点流量都已观察到。若仍重连且没有 Guardian 生命周期事件，再检查代理节点上游。
-
-品牌确认窗口只有明确选择“重启Codex”才会关闭并重新打开 Codex；选择“60分钟后再提醒我”、关闭窗口、超时或界面失败都会保持当前 Codex 并延后询问。Guardian 不会为此修改系统代理或永久环境变量。
 
 v1.4.4 默认要求 `chatgpt.com` 关键目标通过；`Status.ps1` 和 `Doctor.ps1` 会显示 `ProxyCriticalTargetsPassed` 与 `ProxyCriticalFailures`。若代理软件日志同时出现上游 `i/o timeout`，请手动换一个稳定节点。
 
@@ -93,7 +76,7 @@ v1.5.0 起，Codex Store/MSIX 包版本变化后，新版进程会进入 `Observ
 
 若出现 `CodexCompatibilityReviewRequired`，表示用户已批准的一次 Managed 启动在超时后仍没有得到参数或流量证据。为避免反复关闭任务，Guardian 已停止该 Codex/Guardian 组合的自动生命周期操作；当前 Codex 会保持打开。即时更新检查与每日更新仍会自动运行，新 Guardian 版本安装后会清除旧保持并重新审计。
 
-检查最新日志中的 `codex_started`、`loop_error` 和 `restart_circuit_opened`。不要为了绕过限制直接删除 `state.json`，应先解决启动失败或 MSIX 包路径解析问题。
+检查最新日志中的 `proxy_relay_started`、`proxy_relay_unavailable`、`proxy_upstream_suspected` 和 `loop_error`。不要直接删除 `state.json`；它保存已验证端点与在线转发目标。
 
 ## 没有选中任何代理
 

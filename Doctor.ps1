@@ -160,10 +160,6 @@ if (-not $proxyEnabled -and @($environmentProxyNames).Count -eq 0 -and @($recogn
     $issues += 'tun_only_likely'
     $recommendations += 'A tunnel adapter is present without a discoverable HTTP endpoint. Codex may already be transparently routed; use a mixed/HTTP inbound for explicit verification.'
 }
-if ([bool](Get-SafeProperty $status 'restartCircuitOpen' $false)) {
-    $issues += 'restart_circuit_open'
-    $recommendations += 'Keep Safe mode enabled and inspect candidate changes before closing the restart circuit.'
-}
 $guardianLifecycle = [string](Get-SafeProperty $status 'guardianState' '')
 if ($guardianAlive -and $guardianLifecycle -eq 'WaitingForProxy') {
     $issues += 'guardian_waiting_for_proxy'
@@ -171,16 +167,12 @@ if ($guardianAlive -and $guardianLifecycle -eq 'WaitingForProxy') {
 }
 if ($guardianLifecycle -eq 'RecoveryBlockedByCodex') {
     $issues += 'codex_relaunch_recovery_blocked'
-    $recommendations += 'A Codex root without the current proxy argument is blocking recovery. Use the managed shortcut, or enable SafeRepairExternalCodexLaunches/Enforce mode.'
-}
-elseif ([bool](Get-SafeProperty $status 'recoveryLaunchRequired' $false)) {
-    $issues += 'codex_relaunch_recovery_pending'
-    $recommendations += 'The last managed relaunch has not been confirmed. Leave the guardian running; it will retry within the restart-rate limit.'
+    $recommendations += 'The running Codex process has no explicit proxy argument. Guardian will keep it open and attempt an in-place relay when a compatible old local endpoint is known.'
 }
 $externalLaunchState = [string](Get-SafeProperty $status 'externalLaunchState' '')
 if ($externalLaunchState -eq 'ManagedShortcutRequired') {
     $issues += 'codex_managed_launch_required'
-    $recommendations += 'Open "Codex (Managed Proxy)", or enable SafeRepairExternalCodexLaunches after checking the restart safeguards.'
+    $recommendations += 'Keep Codex open. Guardian will validate the endpoint and attempt a compatible in-place relay without restarting the app.'
 }
 elseif ($externalLaunchState -eq 'CodexResolutionUnavailable') {
     $issues += 'codex_replacement_resolution_unavailable'
@@ -188,7 +180,7 @@ elseif ($externalLaunchState -eq 'CodexResolutionUnavailable') {
 }
 if ($guardianAlive -and [bool](Get-SafeProperty $status 'streamingRepairRequired' $false)) {
     $issues += 'codex_streaming_proxy_not_guaranteed'
-    $recommendations += 'Current Codex HTTP traffic reaches the proxy, but its WebSocket/streaming transport was not launched with explicit proxy environment variables. Finish the active task, then approve the guarded managed relaunch; No or timeout always keeps Codex open.'
+    $recommendations += 'Current Codex HTTP traffic reaches the proxy, but its WebSocket/streaming transport has no explicit proxy argument. Keep Codex open; Guardian will preserve a compatible old loopback endpoint with an in-place relay when possible.'
 }
 if ($Online -and $null -ne $onlineResult -and -not [bool](Get-SafeProperty ([pscustomobject]$onlineResult) 'proxyValid' $false)) {
     $issues += 'online_proxy_validation_failed'
@@ -204,7 +196,7 @@ if ($guardianLifecycle -eq 'CodexCompatibilityReviewRequired' -or [bool](Get-Saf
 }
 elseif ($guardianAlive -and $null -ne $status -and -not [bool](Get-SafeProperty $status 'proxyCriticalTargetsPassed' $false)) {
     $issues += 'critical_stream_target_failed'
-    $recommendations += 'If Codex shows Reconnecting without a matching codex_restart/proxy_changed event, inspect the proxy-provider node for TLS EOF, WebSocket reset, Windows 10054, or timeout errors.'
+    $recommendations += 'If Codex shows Reconnecting while the validated endpoint and in-place relay are healthy, inspect the proxy-provider node for TLS EOF, WebSocket reset, Windows 10054, or timeout errors.'
 }
 
 $health = 'Ready'
@@ -274,6 +266,7 @@ $report = [ordered]@{
         streamStabilityLimitation = Get-SafeProperty $status 'streamStabilityLimitation' $null
         eventListenerState = Get-SafeProperty $status 'eventListenerState' 'PeriodicFallback'
         eventListenerComponents = @(Get-SafeProperty $status 'eventListenerComponents' @())
+        codexLogBackend = Get-SafeProperty $status 'codexLogBackend' 'LegacyText'
         reconnectSignalsDetected = [int](Get-SafeProperty $status 'reconnectSignalsDetected' 0)
         reconnectBurstCount = [int](Get-SafeProperty $status 'reconnectBurstCount' 0)
         lastReconnectSignalUtc = Get-SafeProperty $status 'lastReconnectSignalUtc' $null
@@ -310,7 +303,12 @@ $report = [ordered]@{
     }
     reconnectAttribution = [ordered]@{
         meaning = 'CodexStreamRetryNotProofOfGuardianRestartOrEndpointFailure'
-        guardianEvidenceEvents = @('codex_restart', 'proxy_changed')
+        codexRestartPolicy = Get-SafeProperty $status 'codexRestartPolicy' 'Never'
+        inPlaceProxyRelayEnabled = [bool](Get-SafeProperty $status 'inPlaceProxyRelayEnabled' $false)
+        inPlaceProxyRelayActive = [bool](Get-SafeProperty $status 'inPlaceProxyRelayActive' $false)
+        inPlaceProxyRelaySource = Get-SafeProperty $status 'inPlaceProxyRelaySource' $null
+        inPlaceProxyRelayTarget = Get-SafeProperty $status 'inPlaceProxyRelayTarget' $null
+        guardianEvidenceEvents = @('proxy_changed', 'proxy_changed_in_place', 'in_place_proxy_relay_started')
         commonUpstreamSignals = @('TLS EOF', 'WebSocket reset', 'Windows 10054', 'request timeout')
         providerNodeManagedByGuardian = $false
         listener = 'Codex log and process events trigger immediate fresh proxy validation; they do not restart Codex by themselves.'
@@ -350,6 +348,7 @@ if ($Json) { $reportJson; return }
     ProxyReachability = Get-SafeProperty $status 'proxyReachability' $null
     StreamStability = Get-SafeProperty $status 'streamStability' $null
     EventListenerState = Get-SafeProperty $status 'eventListenerState' 'PeriodicFallback'
+    CodexLogBackend = Get-SafeProperty $status 'codexLogBackend' 'LegacyText'
     ReconnectSignalsDetected = [int](Get-SafeProperty $status 'reconnectSignalsDetected' 0)
     ReconnectBurstCount = [int](Get-SafeProperty $status 'reconnectBurstCount' 0)
     ReconnectListenerAction = Get-SafeProperty $status 'reconnectListenerAction' 'Monitoring'
@@ -369,7 +368,7 @@ if ($Json) { $reportJson; return }
     ProxyCriticalTargetsPassed = [bool](Get-SafeProperty $status 'proxyCriticalTargetsPassed' $false)
     ProxyCriticalFailures = @((Get-SafeProperty $status 'proxyCriticalFailures' @()))
     ReconnectMeaning = 'Codex stream retry; not proof of a Guardian restart'
-    ReconnectEvidenceEvents = 'codex_restart, proxy_changed'
+    ReconnectEvidenceEvents = 'proxy_changed, proxy_changed_in_place, in_place_proxy_relay_started'
     ProviderNodeManagedByGuardian = $false
     LaunchProxyMatch = Get-SafeProperty $status 'codexProxyArgumentMatch' $null
     ProxyTrafficObservedRecently = Get-SafeProperty $status 'codexProxyConnectionObservedRecently' $null

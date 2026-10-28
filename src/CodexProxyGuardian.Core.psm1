@@ -1055,8 +1055,20 @@ function Get-CpgReconnectLogSignal {
     if ($Line -match '(?i)failed to (?:connect to )?app-server remote control websocket|required remote control server token refresh failed') {
         $category = 'RemoteControlWebSocket'
     }
+    elseif ($Line -match '(?i)(?:app_server_connection\.state_changed|AppServerConnection).*(?:initialize failed|initializ(?:e|ation).*(?:timeout|timed out)|ipc-connection-reset|connection reset)') {
+        # Codex 26.903+ reports local app-server/IPC failures separately from
+        # the remote-control WebSocket. Keep them visible without labeling
+        # every local stdio reset as an upstream proxy outage.
+        $category = 'AppServerIpc'
+    }
     elseif ($Line -match '(?i)(?:response stream|websocket).*(?:connection reset|timed out|timeout|unexpected eof|disconnected before completion)' -and
         $Line -match '(?i)(?:chatgpt\.com|api\.openai\.com)') {
+        $category = 'ResponseStream'
+    }
+    elseif ($Line -match '(?i)stream disconnected\s*-\s*retrying sampling request\s*\(\d+/\d+' -and
+        $Line -match '(?i)sampling_error=') {
+        # Codex 26.1021+ persists app-server events in logs_2.sqlite. These
+        # records omit the URL but explicitly identify a retried response stream.
         $category = 'ResponseStream'
     }
     elseif ($Line -match '(?i)error sending request for url \(https://(?:chatgpt\.com|api\.openai\.com)/') {
@@ -1065,7 +1077,7 @@ function Get-CpgReconnectLogSignal {
     if ($null -eq $category) { return $empty }
 
     $errorClass = 'TransportError'
-    if ($Line -match '(?i)(?:os error 10054|connection reset)') { $errorClass = 'ConnectionReset' }
+    if ($Line -match '(?i)(?:os error 10054|connection reset|ipc-connection-reset)') { $errorClass = 'ConnectionReset' }
     elseif ($Line -match '(?i)(?:os error 10060|timedout|timed out|timeout)') { $errorClass = 'ConnectionTimeout' }
     elseif ($Line -match '(?i)(?:unexpected eof|tls eof)') { $errorClass = 'TlsEof' }
 
@@ -1074,8 +1086,9 @@ function Get-CpgReconnectLogSignal {
     if ($endpointMatch.Success) { $endpoint = $endpointMatch.Groups['host'].Value.ToLowerInvariant() }
 
     $attempt = 0
-    $attemptMatches = [regex]::Matches($Line, '(?i)reconnect_attempt\\?\"\s*:\s*(?<attempt>\d+)')
+    $attemptMatches = [regex]::Matches($Line, '(?i)reconnect_attempt(?:\\?\"\s*:\s*|=)(?<attempt>\d+)')
     if ($attemptMatches.Count -gt 0) { $attempt = [int]$attemptMatches[$attemptMatches.Count - 1].Groups['attempt'].Value }
+    elseif ($Line -match '(?i)retrying sampling request\s*\((?<attempt>\d+)/\d+') { $attempt = [int]$matches['attempt'] }
 
     $observedUtc = $null
     $timestampMatches = [regex]::Matches($Line, '\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z')

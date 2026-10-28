@@ -45,6 +45,7 @@ function Assert-Null {
 }
 
 Import-Module (Join-Path $repoRoot 'src\CodexProxyGuardian.Core.psm1') -Force
+Import-Module (Join-Path $repoRoot 'src\CodexProxyGuardian.CodexLogs.psm1') -Force
 
 Invoke-Test 'All PowerShell files parse on this runtime' {
     $errors = @()
@@ -55,6 +56,24 @@ Invoke-Test 'All PowerShell files parse on this runtime' {
         foreach ($parseError in @($parseErrors)) { $errors += "$($file.FullName):$($parseError.Extent.StartLineNumber): $($parseError.Message)" }
     }
     Assert-Equal 0 $errors.Count ($errors -join [Environment]::NewLine)
+}
+
+Invoke-Test 'Watcher modules coexist in Windows PowerShell 5.1' {
+    $windowsPowerShell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    $temporaryRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('cpg-module-test-' + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $temporaryRoot -Force | Out-Null
+    try {
+        foreach ($name in @('Watch-CodexProxy.ps1', 'CodexProxyGuardian.Core.psm1', 'CodexProxyGuardian.Relay.psm1', 'CodexProxyGuardian.CodexLogs.psm1', 'ProxyRelay.ps1')) {
+            Copy-Item -LiteralPath (Join-Path (Join-Path $repoRoot 'src') $name) -Destination (Join-Path $temporaryRoot $name)
+        }
+        Copy-Item -LiteralPath (Join-Path $repoRoot 'config\default-config.json') -Destination (Join-Path $temporaryRoot 'config.default.json')
+        Copy-Item -LiteralPath (Join-Path $repoRoot 'config\default-config.json') -Destination (Join-Path $temporaryRoot 'config.json')
+        $output = @(& $windowsPowerShell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $temporaryRoot 'Watch-CodexProxy.ps1') -SelfTest 2>&1)
+        Assert-Equal 0 $LASTEXITCODE (($output | ForEach-Object { [string]$_ }) -join [Environment]::NewLine)
+    }
+    finally {
+        Remove-Item -LiteralPath $temporaryRoot -Recurse -Force -ErrorAction SilentlyContinue
+    }
 }
 
 Invoke-Test 'Localized settings UI has a Windows PowerShell compatible UTF-8 BOM' {
@@ -108,7 +127,7 @@ Invoke-Test 'Default configuration is conservative' {
     Assert-True ([int]$config.PacMaxBytes -le 1048576)
     Assert-True $config.UseChromiumProxyArgument
     Assert-True $config.RequireManagedLaunchForStreaming
-    Assert-True $config.NotifyBeforeCodexRestart
+    Assert-False $config.NotifyBeforeCodexRestart
     Assert-True ([int]$config.RestartPromptTimeoutSeconds -ge 15)
     Assert-True ([int]$config.RestartPromptSnoozeMinutes -ge 1)
     Assert-True ([int]$config.RestartCooldownSeconds -ge 10)
@@ -387,6 +406,47 @@ Invoke-Test 'Reconnect listener classifies Codex WebSocket failures and ignores 
 
     $normal = Get-CpgReconnectLogSignal '2026-09-08T03:14:28.065Z info app_server_connection.state_changed currentState=connected'
     Assert-False $normal.IsSignal
+
+    $ipc = Get-CpgReconnectLogSignal '2026-09-10T00:41:12.000Z info [AppServerConnection] app_server_connection.state_changed cause=initialize_failed connectionError=ipc-connection-reset'
+    Assert-True $ipc.IsSignal
+    Assert-Equal 'AppServerIpc' ([string]$ipc.Category)
+    Assert-Equal 'ConnectionReset' ([string]$ipc.ErrorClass)
+
+    $sqliteResponse = Get-CpgReconnectLogSignal 'codex_core::responses_retry: stream disconnected - retrying sampling request (5/5 in 3.115s)... retries=5 max_retries=5 sampling_error=request timed out'
+    Assert-True $sqliteResponse.IsSignal
+    Assert-Equal 'ResponseStream' ([string]$sqliteResponse.Category)
+    Assert-Equal 'ConnectionTimeout' ([string]$sqliteResponse.ErrorClass)
+    Assert-Equal 5 ([int]$sqliteResponse.Attempt)
+
+    $sqliteRemote = Get-CpgReconnectLogSignal 'failed to connect to app-server remote control websocket websocket_url=wss://chatgpt.com/backend-api/wham/remote/control/server error=os error 10060 reconnect_attempt=9'
+    Assert-True $sqliteRemote.IsSignal
+    Assert-Equal 'RemoteControlWebSocket' ([string]$sqliteRemote.Category)
+    Assert-Equal 9 ([int]$sqliteRemote.Attempt)
+}
+
+Invoke-Test 'Codex 26.1021 SQLite WAL reconnect records are tailed without a SQLite dependency' {
+    $temporaryRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('cpg-sqlite-log-test-' + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $temporaryRoot -Force | Out-Null
+    try {
+        $walPath = Join-Path $temporaryRoot 'logs_2.sqlite-wal'
+        [System.IO.File]::WriteAllBytes($walPath, (New-Object byte[] 32))
+        $state = New-CpgCodexSqliteTailState -ConfiguredPath $walPath
+        $message = 'codex_core::responses_retry stream disconnected - retrying sampling request (4/5 in 1.2s) retries=4 sampling_error=request timed out'
+        $payload = [System.Text.Encoding]::UTF8.GetBytes(([char]0 + $message + [char]0))
+        $stream = New-Object System.IO.FileStream($walPath, [System.IO.FileMode]::Append, [System.IO.FileAccess]::Write, [System.IO.FileShare]::ReadWrite)
+        try { $stream.Write($payload, 0, $payload.Length) }
+        finally { $stream.Dispose() }
+
+        $records = @(Read-CpgCodexSqliteTail -State $state -ConfiguredPath $walPath -MaxReadBytes 65536)
+        Assert-Equal 1 $records.Count
+        $signal = Get-CpgReconnectLogSignal ([string]$records[0])
+        Assert-True $signal.IsSignal
+        Assert-Equal 'ResponseStream' ([string]$signal.Category)
+        Assert-Equal 4 ([int]$signal.Attempt)
+    }
+    finally {
+        Remove-Item -LiteralPath $temporaryRoot -Recurse -Force -ErrorAction SilentlyContinue
+    }
 }
 
 Invoke-Test 'Settings never reports a skipped update check as current' {
@@ -399,7 +459,7 @@ Invoke-Test 'Settings never reports a skipped update check as current' {
     Assert-True ($settingsSource.Contains('Version = $version'))
     Assert-True ($settingsSource.Contains('ReconnectGuidanceVisible'))
     Assert-True ($settingsSource.Contains('StreamStabilityVisible'))
-    Assert-True ($settingsSource.Contains('codex_restart / proxy_changed'))
+    Assert-True ($settingsSource.Contains("ReconnectGuidanceVisible = (`$reconnectDescription.Text -like '*" + [char]0x4E0D + [char]0x4F1A + [char]0x91CD + [char]0x542F + " Codex*')"))
 }
 
 Invoke-Test 'Automatic update completion is announced exactly once' {
@@ -421,7 +481,7 @@ Invoke-Test 'Public diagnostics explain how to attribute reconnects' {
     $statusSource = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'Status.ps1')
     $doctorSource = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'Doctor.ps1')
     $issueTemplate = Get-Content -Raw -LiteralPath (Join-Path $repoRoot '.github\ISSUE_TEMPLATE\bug_report.yml')
-    foreach ($required in @('CodexStreamRetryNotProofOfGuardianRestart', 'codex_restart', 'proxy_changed', 'WebSocket reset', 'ProviderNodeManagedByGuardian')) {
+    foreach ($required in @('CodexStreamRetryNotProofOfGuardianRestart', 'proxy_changed_in_place', 'proxy_changed', 'WebSocket reset', 'ProviderNodeManagedByGuardian')) {
         Assert-True ($statusSource.Contains($required)) "Status is missing reconnect attribution: $required"
         Assert-True ($doctorSource.Contains($required) -or ($required -eq 'ProviderNodeManagedByGuardian' -and $doctorSource.Contains('providerNodeManagedByGuardian'))) "Doctor is missing reconnect attribution: $required"
     }
@@ -715,6 +775,8 @@ Invoke-Test 'Installer provisions settings and a verified-release update task' {
     Assert-False $updater.Contains('::Replace($statusTemporaryPath, $updateStatusPath, $null') 'Windows PowerShell cannot bind an empty File.Replace backup path safely.'
     $control = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'Control.ps1')
     Assert-False $control.Contains('::Replace($temporaryPath, $configPath, $null') 'Mode changes use an invalid File.Replace backup path.'
+    Assert-True $installer.Contains('New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1)') 'Guardian startup task has no periodic health trigger.'
+    Assert-True $installer.Contains("-RepetitionInterval (New-TimeSpan -Minutes 1)") 'Guardian health trigger is not one-minute bounded.'
 }
 
 Invoke-Test 'Codex package changes trigger owned verified updates and fail safe' {
@@ -742,7 +804,7 @@ Invoke-Test 'Codex package changes trigger owned verified updates and fail safe'
     )) {
         Assert-True $watcher.Contains($required) "Watcher is missing compatibility automation: $required"
     }
-    Assert-True $watcher.Contains('-not $script:CompatibilityHold -and $restartRequired') 'A compatibility hold does not block endpoint-change restarts.'
+    Assert-True $watcher.Contains('$restartRequired = $false') 'Watcher does not clear restart state after in-place endpoint repair.'
     Assert-True $watcher.Contains('-CompatibilityBlocked:$script:CompatibilityHold') 'External-launch decisions ignore the compatibility hold.'
 }
 
@@ -818,7 +880,7 @@ Invoke-Test 'Installer verifies the started guardian and retries one unexpected 
 Invoke-Test 'Installer and health sampling understand streaming-safe evidence' {
     $installer = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'Install.ps1')
     Assert-True $installer.Contains("'SafeStreamingRepair'") 'Installer does not report the streaming-safe launch policy.'
-    Assert-True $installer.Contains('HTTP traffic alone does not prove WebSocket proxy inheritance') 'Installer does not explain the guarded managed relaunch.'
+    Assert-True $installer.Contains('Leave Codex open') 'Installer does not explain the in-place no-restart policy.'
 
     $healthSampler = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'tools\Measure-GuardianHealth.ps1')
     Assert-True $healthSampler.Contains("'ManagedTrafficObserved'") 'Health sampling ignores managed streaming traffic evidence.'
@@ -826,7 +888,7 @@ Invoke-Test 'Installer and health sampling understand streaming-safe evidence' {
 
 Invoke-Test 'Watcher publishes explicit lifecycle states' {
     $watcher = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'src\Watch-CodexProxy.ps1')
-    foreach ($state in @('WaitingForProxy', 'Stabilizing', 'Ready', 'EvaluatingCodexLaunch', 'StreamingGuaranteeGrace', 'CodexNeedsManagedLaunch', 'CodexResolutionUnavailable', 'RecoveringCodex', 'RecoveryBlockedByCodex', 'RestartApprovalRequired', 'RestartDeferred', 'RestartCircuitOpen')) {
+    foreach ($state in @('WaitingForProxy', 'Stabilizing', 'Ready', 'EvaluatingCodexLaunch', 'StreamingGuaranteeGrace', 'CodexNeedsManagedLaunch', 'CodexResolutionUnavailable', 'RecoveringCodex', 'RecoveryBlockedByCodex', 'InPlaceRepairActive', 'InPlaceRepairPending')) {
         Assert-True ($watcher.Contains("'$state'")) "Missing guardian lifecycle state: $state"
     }
     Assert-True $watcher.Contains('Show-CpgRestartApprovalDialog') 'Watcher does not contain the branded restart prompt.'
@@ -846,14 +908,25 @@ Invoke-Test 'Watcher publishes explicit lifecycle states' {
     Assert-True $watcher.Contains('safe_streaming_proxy_not_guaranteed') 'Watcher does not distinguish HTTP fallback from guaranteed streaming proxy injection.'
     Assert-True $watcher.Contains('[Math]::Max(60, $configuredSnoozeMinutes)') 'A declined streaming repair can prompt too frequently.'
     Assert-True $watcher.Contains('$script:LastProxyConnection = [datetime]::MinValue') 'A managed launch can reuse stale traffic evidence.'
+    Assert-True $watcher.Contains("codexRestartPolicy = 'Never'") 'Watcher does not publish the no-restart policy.'
+    Assert-True $watcher.Contains('Start-CpgInPlaceProxyRelay') 'Watcher does not attempt in-place proxy repair.'
     $restartCalls = @([regex]::Matches($watcher, '(?m)^\s*\$managedRootPid\s*=\s*Restart-CodexManaged\b[^\r\n]*'))
-    Assert-True ($restartCalls.Count -ge 3) 'Expected all managed restart call paths to be present.'
-    foreach ($restartCall in $restartCalls) {
-        Assert-True $restartCall.Value.Contains('-ApprovalGranted') "A managed restart call bypasses approval: $($restartCall.Value.Trim())"
-    }
+    Assert-Equal 0 $restartCalls.Count 'Codex restart call paths must be disabled.'
     $stopCalls = @([regex]::Matches($watcher, '(?m)^\s*Stop-CodexDesktop\b[^\r\n]*'))
-    Assert-Equal 1 $stopCalls.Count 'Codex shutdown must remain centralized behind the approval-guarded restart function.'
+    Assert-Equal 0 $stopCalls.Count 'Codex shutdown must never be called by the guardian.'
 }
+
+Invoke-Test 'In-place proxy relay forwards a live TCP stream' {
+    $windowsPowerShell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    $output = @(& $windowsPowerShell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $repoRoot 'tests\Test-ProxyRelay.ps1') 2>&1)
+    Assert-Equal 0 $LASTEXITCODE (($output | ForEach-Object { [string]$_ }) -join [Environment]::NewLine)
+    Assert-True (($output -join [Environment]::NewLine).Contains('PASS  In-place proxy relay forwards a live TCP stream')) 'Relay round-trip evidence was not produced.'
+
+    $relayModule = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'src\CodexProxyGuardian.Relay.psm1')
+    Assert-True $relayModule.Contains('InstanceToken') 'Relay ownership does not use an instance token.'
+    Assert-True $relayModule.Contains('CommandLine') 'Relay shutdown does not verify process ownership from its command line.'
+}
+
 
 Invoke-Test 'Injected Codex proxy variables cannot feed back into discovery' {
     $watcher = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'src\Watch-CodexProxy.ps1')

@@ -62,7 +62,7 @@ $compatibilityText = switch ($compatibilityState) {
     'Compatible' { '当前 Codex 已取得兼容证据' }
     'NeedsManagedLaunch' { 'HTTP 已走代理，但流式代理尚未保障' }
     'AwaitingEvidence' { '新版入口已自动解析，等待真实使用证据' }
-    'ReviewRequired' { '适配未确认：已暂停自动重启并请求受信更新' }
+    'ReviewRequired' { '适配未确认：保持 Codex 运行并请求受信更新' }
     default { '使用通用 MSIX 清单适配' }
 }
 $updateAuditText = switch ($compatibilityUpdateState) {
@@ -108,7 +108,7 @@ $automaticRadio.Checked = $profile -ne 'Strict'
 $modeGroup.Controls.Add($automaticRadio)
 
 $automaticDescription = New-Object System.Windows.Forms.Label
-$automaticDescription.Text = '自动验证 HTTP 与流式代理。普通启动只证明 HTTP 时会弹窗询问；只有点击“是”才受控修复。'
+$automaticDescription.Text = '自动验证并维护当前代理。端点变化时优先在后台接续旧端口，不关闭 Codex。'
 $automaticDescription.Location = New-Object System.Drawing.Point(38, 55)
 $automaticDescription.Size = New-Object System.Drawing.Size(460, 38)
 $modeGroup.Controls.Add($automaticDescription)
@@ -122,7 +122,7 @@ $strictRadio.Checked = $profile -eq 'Strict'
 $modeGroup.Controls.Add($strictRadio)
 
 $strictDescription = New-Object System.Windows.Forms.Label
-$strictDescription.Text = '只要 Codex 缺少当前代理参数，就在防抖和重启保护允许时进行校正。'
+$strictDescription.Text = '缩短观察时间，更积极地建立本机转发；仍然不会关闭或重启 Codex。'
 $strictDescription.Location = New-Object System.Drawing.Point(38, 127)
 $strictDescription.Size = New-Object System.Drawing.Size(460, 35)
 $modeGroup.Controls.Add($strictDescription)
@@ -168,7 +168,7 @@ $reconnectGroup.Size = New-Object System.Drawing.Size(520, 205)
 $form.Controls.Add($reconnectGroup)
 
 $reconnectDescription = New-Object System.Windows.Forms.Label
-$reconnectDescription.Text = '这表示 Codex 的流式连接正在重试，不等于 Guardian 重启。普通启动时 HTTP 能走系统代理，也不代表 WebSocket 已继承显式代理；受管启动会同时注入 HTTP/HTTPS/WS/WSS。若日志没有 codex_restart / proxy_changed，再检查代理节点。'
+$reconnectDescription.Text = 'Guardian 不会重启 Codex。检测到端口变化时会在后台尝试接续旧端口；如果状态显示“上游异常”，请在代理软件中换一个稳定节点。'
 $reconnectDescription.Location = New-Object System.Drawing.Point(18, 25)
 $reconnectDescription.Size = New-Object System.Drawing.Size(480, 70)
 $reconnectGroup.Controls.Add($reconnectDescription)
@@ -213,7 +213,7 @@ $managedLaunchPath = Join-Path $resolvedRoot 'Launch-CodexManaged.ps1'
 $repairButton.Add_Click({
     try {
         & $managedLaunchPath -InstallRoot $resolvedRoot
-        [void][System.Windows.Forms.MessageBox]::Show("连接优化已经准备好。`r`n`r`n如果 Codex 正在运行，Guardian 会显示确认窗口；只有你明确选择【重启Codex】才会操作。选择【60分钟后再提醒我】或关闭窗口，都不会打断当前任务。", '等待你的确认', 'OK', 'Information')
+        [void][System.Windows.Forms.MessageBox]::Show("连接优化已经准备好。`r`n`r`nGuardian 会保持 Codex 运行，并在后台验证代理、监听重连和接续变化后的本机端口。你不需要额外操作。", '后台守护已开启', 'OK', 'Information')
     }
     catch {
         [void][System.Windows.Forms.MessageBox]::Show($_.Exception.Message, '提交修复失败', 'OK', 'Error')
@@ -292,7 +292,7 @@ if ($SelfTest) {
         ModeProfile = $profile
         AutomaticUpdates = $automaticUpdates
         UpdateChannel = $updateChannel
-        ReconnectGuidanceVisible = ($reconnectDescription.Text -like '*不等于 Guardian 重启*')
+        ReconnectGuidanceVisible = ($reconnectDescription.Text -like '*不会重启 Codex*')
         StreamStabilityVisible = ($connectionStatusLabel.Text -like '*连接判定*')
         CompatibilityAutomationVisible = ($connectionStatusLabel.Text -like '*兼容机制*')
         StreamingProxyGuaranteeVisible = ($connectionStatusLabel.Text -like '*流式保障*')

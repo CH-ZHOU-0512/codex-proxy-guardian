@@ -13,7 +13,6 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
-	"time"
 )
 
 type macManager struct{ cfg Config }
@@ -130,28 +129,6 @@ func (manager *macManager) Launch(proxyURI string, arguments []string) error {
 	defer nullFile.Close()
 	command.Stdin, command.Stdout, command.Stderr = nullFile, nullFile, nullFile
 	return command.Start()
-}
-
-func (manager *macManager) Restart(proxyURI string, cfg Config) error {
-	observation := manager.Observe(proxyURI)
-	if observation.Running {
-		applicationName := "ChatGPT"
-		if strings.Contains(observation.Executable, "/Codex.app/") {
-			applicationName = "Codex"
-		}
-		_ = exec.Command("osascript", "-e", fmt.Sprintf("tell application %q to quit", applicationName)).Run()
-		deadline := time.Now().Add(time.Duration(cfg.GracefulCloseSeconds) * time.Second)
-		for time.Now().Before(deadline) {
-			if !manager.Observe(proxyURI).Running {
-				break
-			}
-			time.Sleep(250 * time.Millisecond)
-		}
-		if current := manager.Observe(proxyURI); current.Running && current.RootPID == observation.RootPID {
-			_ = syscall.Kill(observation.RootPID, syscall.SIGTERM)
-		}
-	}
-	return manager.Launch(proxyURI, nil)
 }
 
 var macProxyLine = regexp.MustCompile(`^\s*(HTTP|HTTPS|SOCKS)(Enable|Proxy|Port)\s*:\s*(.+?)\s*$`)

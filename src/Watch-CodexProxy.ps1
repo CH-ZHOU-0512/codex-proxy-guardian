@@ -13,6 +13,8 @@ $ErrorActionPreference = 'Stop'
 
 $script:Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 Import-Module (Join-Path $script:Root 'CodexProxyGuardian.Core.psm1') -Force
+Import-Module (Join-Path $script:Root 'CodexProxyGuardian.Relay.psm1') -Force
+Import-Module (Join-Path $script:Root 'CodexProxyGuardian.CodexLogs.psm1') -Force
 
 $script:ConfigPath = Join-Path $script:Root 'config.json'
 $script:LogsPath = Join-Path $script:Root 'logs'
@@ -23,10 +25,15 @@ $script:LaunchRequestPath = Join-Path $script:Root 'launch.request'
 $script:AdoptRequestPath = Join-Path $script:Root 'adopt-current-once.request'
 $script:ConfigReloadRequestPath = Join-Path $script:Root 'config.reload.request'
 $script:UpdateStatusPath = Join-Path $script:Root 'update-status.json'
+$script:ProxyRelayPath = Join-Path $script:Root 'ProxyRelay.ps1'
+$script:ProxyRelayStatePath = Join-Path $script:Root 'proxy-relay.json'
+$script:ProxyRelayReadyPath = Join-Path $script:Root 'proxy-relay.ready'
+$script:ProxyRelayStopPath = Join-Path $script:Root 'proxy-relay.stop'
 $script:ValidationCache = @{}
 $script:ProxyAddressCache = @{}
 $script:PACDiscoveryCache = $null
 $script:CodexLogOffsets = @{}
+$script:CodexSqliteLogOffsets = @{}
 $script:ReconnectSignalFingerprints = @{}
 $script:InheritedProxyEnvironment = @{}
 foreach ($proxyVariableName in @('HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy', 'ALL_PROXY', 'all_proxy')) {
@@ -154,6 +161,8 @@ function Initialize-CpgCodexLogTail {
     foreach ($file in @(Get-CpgRecentCodexLogFiles $Config)) {
         $script:CodexLogOffsets[$file.FullName] = [pscustomobject]@{ Offset = [int64]$file.Length; Carry = '' }
     }
+    $sqlitePath = [string](Get-CpgConfigValue $Config 'CodexSqliteLogPath' '')
+    $script:CodexSqliteLogOffsets = New-CpgCodexSqliteTailState -ConfiguredPath $sqlitePath
 }
 
 function Read-CpgNewCodexLogLines {
@@ -201,6 +210,14 @@ function Read-CpgNewCodexLogLines {
         catch {
             Write-GuardianLog 'DEBUG' 'codex_log_tail_retry' 'A Codex log could not be tailed yet; the listener will retry.' @{ error = $_.Exception.GetType().Name }
         }
+    }
+    $sqlitePath = [string](Get-CpgConfigValue $Config 'CodexSqliteLogPath' '')
+    try {
+        $result += @(Read-CpgCodexSqliteTail -State $script:CodexSqliteLogOffsets `
+            -ConfiguredPath $sqlitePath -MaxReadBytes $maxReadBytes)
+    }
+    catch {
+        Write-GuardianLog 'DEBUG' 'codex_sqlite_log_tail_retry' 'The Codex SQLite WAL could not be tailed yet; the listener will retry.' @{ error = $_.Exception.GetType().Name }
     }
     return @($result)
 }
@@ -302,6 +319,29 @@ function Initialize-CpgEventListener {
     }
 
     try {
+        $sqlitePath = Get-CpgCodexSqliteWalPath -ConfiguredPath ([string](Get-CpgConfigValue $Config 'CodexSqliteLogPath' ''))
+        $sqliteParent = Split-Path -Parent $sqlitePath
+        $sqliteFilter = Split-Path -Leaf $sqlitePath
+        if (Test-Path -LiteralPath $sqliteParent -PathType Container) {
+            $watcher = New-Object System.IO.FileSystemWatcher($sqliteParent, $sqliteFilter)
+            $watcher.IncludeSubdirectories = $false
+            $watcher.NotifyFilter = [System.IO.NotifyFilters]'FileName, LastWrite, Size'
+            foreach ($eventName in @('Changed', 'Created', 'Renamed')) {
+                $sourceIdentifier = "$sourcePrefix.CodexSqliteLog.$eventName"
+                $subscription = Register-ObjectEvent -InputObject $watcher -EventName $eventName -SourceIdentifier $sourceIdentifier
+                [void]$subscriptions.Add($subscription)
+                [void]$sourceIdentifiers.Add($sourceIdentifier)
+            }
+            $watcher.EnableRaisingEvents = $true
+            [void]$watchers.Add($watcher)
+            [void]$components.Add('CodexSqliteLog')
+        }
+    }
+    catch {
+        Write-GuardianLog 'WARN' 'event_listener_codex_sqlite_log_unavailable' 'Codex SQLite log events are unavailable; periodic checks remain active.' @{ error = $_.Exception.GetType().Name }
+    }
+
+    try {
         $watcher = New-Object System.IO.FileSystemWatcher($script:Root, 'update-status.json')
         $watcher.NotifyFilter = [System.IO.NotifyFilters]'FileName, LastWrite, Size'
         foreach ($eventName in @('Changed', 'Created', 'Renamed')) {
@@ -360,7 +400,8 @@ function Wait-CpgEventListener {
     $reasons = @()
     foreach ($eventRecord in @(Get-Event -ErrorAction SilentlyContinue | Where-Object { [string]$_.SourceIdentifier -like "$($Listener.SourcePrefix).*" })) {
         $source = [string]$eventRecord.SourceIdentifier
-        if ($source -like '*.CodexLog.*') { $reasons += 'CodexLog' }
+        if ($source -like '*.CodexSqliteLog.*') { $reasons += 'CodexSqliteLog' }
+        elseif ($source -like '*.CodexLog.*') { $reasons += 'CodexLog' }
         elseif ($source -like '*.UpdateStatus.*') { $reasons += 'UpdateStatus' }
         elseif ($source -like '*.CodexProcess.*') { $reasons += 'CodexProcess' }
         Remove-Event -EventIdentifier $eventRecord.EventIdentifier -ErrorAction SilentlyContinue
@@ -1348,47 +1389,6 @@ function Request-CodexRestartApproval {
     return $false
 }
 
-function Stop-CodexDesktop {
-    param([int[]]$RootIds, $Config)
-
-    foreach ($rootId in $RootIds) {
-        $process = Get-Process -Id $rootId -ErrorAction SilentlyContinue
-        if ($null -ne $process) { [void]$process.CloseMainWindow() }
-    }
-
-    $deadline = (Get-Date).AddSeconds([int](Get-CpgConfigValue $Config 'GracefulCloseSeconds' 10))
-    do {
-        $remaining = @($RootIds | Where-Object { $null -ne (Get-Process -Id $_ -ErrorAction SilentlyContinue) })
-        if ($remaining.Count -eq 0) { return }
-        Start-Sleep -Milliseconds 250
-    } while ((Get-Date) -lt $deadline)
-
-    foreach ($processId in @(Get-ProcessTreeIds $RootIds)) {
-        Stop-Process -Id $processId -Force -ErrorAction SilentlyContinue
-    }
-}
-
-function Restart-CodexManaged {
-    param($Roots, [string]$ProxyUri, $Config, $CodexApp, [switch]$ApprovalGranted)
-
-    if (-not $ApprovalGranted) {
-        throw 'Refusing to close Codex without an explicit restart approval result.'
-    }
-
-    if ($null -eq $CodexApp -or -not (Test-Path -LiteralPath ([string]$CodexApp.ExecutablePath))) {
-        throw 'Codex was left running because a replacement MSIX executable could not be resolved.'
-    }
-
-    $rootIds = @($Roots | ForEach-Object { [int]$_.ProcessId })
-    Write-GuardianLog 'INFO' 'codex_restart' 'Restarting Codex after a stable proxy change.' @{
-        old_pids = $rootIds
-        proxy = Protect-CpgProxyUri $ProxyUri
-    }
-    Stop-CodexDesktop $rootIds $Config
-    Start-Sleep -Milliseconds 750
-    return Start-CodexManaged $ProxyUri $Config $CodexApp
-}
-
 function Save-PersistentState {
     param([string]$ActiveProxy, [string]$ActiveSource, [datetime]$LastRestart)
 
@@ -1422,6 +1422,8 @@ function Save-PersistentState {
         compatibilityHoldCodexVersion = $script:CompatibilityHoldCodexVersion
         compatibilityHoldGuardianVersion = $script:CompatibilityHoldGuardianVersion
         lastCompatibleCodexFingerprint = $script:LastCompatibleCodexFingerprint
+        inPlaceProxyRelaySource = $script:InPlaceProxyRelaySource
+        inPlaceProxyRelayTarget = $script:InPlaceProxyRelayTarget
         updatedUtc = (Get-Date).ToUniversalTime().ToString('o')
     })
 }
@@ -1570,9 +1572,15 @@ $script:PendingListenerWakeReasons = @()
 $script:LastListenerWakeAt = [datetime]::MinValue
 $script:LastListenerWakeReason = ''
 $script:EventListener = $null
+$script:InPlaceProxyRelayActive = $false
+$script:InPlaceProxyRelaySource = ''
+$script:InPlaceProxyRelayTarget = ''
+$script:InPlaceProxyRelayLastAttempt = [datetime]::MinValue
 $hadStoredCodexPackageVersion = $false
 $lastEquivalentValidationUri = ''
 if ($null -ne $persistentState) {
+    $script:InPlaceProxyRelaySource = [string](Get-CpgConfigValue $persistentState 'inPlaceProxyRelaySource' '')
+    $script:InPlaceProxyRelayTarget = [string](Get-CpgConfigValue $persistentState 'inPlaceProxyRelayTarget' '')
     $lastRestartText = [string](Get-CpgConfigValue $persistentState 'lastRestartUtc' '')
     if (-not [string]::IsNullOrWhiteSpace($lastRestartText)) {
         try { $lastRestart = ([datetime]::Parse($lastRestartText)).ToLocalTime() } catch { $lastRestart = [datetime]::MinValue }
@@ -1588,7 +1596,8 @@ if ($null -ne $persistentState) {
     if (-not [string]::IsNullOrWhiteSpace($trafficText)) {
         try { $script:LastProxyConnection = ([datetime]::Parse($trafficText)).ToLocalTime() } catch { $script:LastProxyConnection = [datetime]::MinValue }
     }
-    $script:RecoveryLaunchRequired = [bool](Get-CpgConfigValue $persistentState 'recoveryLaunchRequired' $false)
+    # v1.8 never resumes legacy relaunch recovery state. A running Codex process is immutable.
+    $script:RecoveryLaunchRequired = $false
     $deferredText = [string](Get-CpgConfigValue $persistentState 'restartDeferredUntilUtc' '')
     if (-not [string]::IsNullOrWhiteSpace($deferredText)) {
         try { $script:RestartDeferredUntil = ([datetime]::Parse($deferredText)).ToLocalTime() } catch { $script:RestartDeferredUntil = [datetime]::MinValue }
@@ -1652,6 +1661,36 @@ function Get-CpgOwnedUpdateContext {
         Running = ($fallbackRunning -or ($taskOwned -and [string]$task.State -eq 'Running'))
         UpdaterPath = $updaterPath
     }
+}
+
+function Stop-CpgInPlaceProxyRelay {
+    Stop-CpgProxyRelayProcess -StatePath $script:ProxyRelayStatePath `
+        -ReadyPath $script:ProxyRelayReadyPath -StopPath $script:ProxyRelayStopPath
+}
+
+function Start-CpgInPlaceProxyRelay {
+    param([string]$SourceProxyUri, [string]$TargetProxyUri, $Config)
+
+    if (-not [bool](Get-CpgConfigValue $Config 'EnableInPlaceProxyRelay' $true)) { return $false }
+    $result = Start-CpgProxyRelayProcess -SourceProxyUri $SourceProxyUri -TargetProxyUri $TargetProxyUri `
+        -RelayScriptPath $script:ProxyRelayPath -StatePath $script:ProxyRelayStatePath `
+        -ReadyPath $script:ProxyRelayReadyPath -StopPath $script:ProxyRelayStopPath
+    if ([bool]$result.Started) {
+        Write-GuardianLog 'INFO' 'proxy_relay_started' 'Codex kept running while Guardian forwarded the old local proxy endpoint to the validated endpoint.' @{
+            pid = [int]$result.Pid
+            source = Protect-CpgProxyUri $SourceProxyUri
+            target = Protect-CpgProxyUri $TargetProxyUri
+        }
+    }
+    elseif (-not [bool]$result.Active) {
+        Write-GuardianLog 'WARN' 'proxy_relay_unavailable' 'The in-place proxy relay could not bind the old local endpoint; Codex was left running.' @{
+            source = Protect-CpgProxyUri $SourceProxyUri
+            target = Protect-CpgProxyUri $TargetProxyUri
+            reason = [string]$result.Reason
+            exit_code = Get-CpgConfigValue $result 'ExitCode' $null
+        }
+    }
+    return [bool]$result.Active
 }
 
 function Start-CpgOwnedUpdateCheck {
@@ -2044,11 +2083,16 @@ try {
                             }
                             else {
                                 $script:LastProxyConnection = [datetime]::MinValue
-                                $restartRequired = [bool]$changeDecision.RestartRequired
-                                Write-GuardianLog 'INFO' 'proxy_changed' 'The validated proxy endpoint changed after debounce.' @{
+                                $script:InPlaceProxyRelaySource = $oldProxy
+                                $script:InPlaceProxyRelayTarget = $activeProxy
+                                $script:InPlaceProxyRelayActive = Start-CpgInPlaceProxyRelay -SourceProxyUri $oldProxy -TargetProxyUri $activeProxy -Config $config
+                                $restartRequired = $false
+                                Write-GuardianLog 'INFO' 'proxy_changed_in_place' 'The validated proxy endpoint changed; Codex was left running and the old local endpoint will be forwarded when possible.' @{
                                     old_proxy = Protect-CpgProxyUri $oldProxy
                                     new_proxy = Protect-CpgProxyUri $activeProxy
                                     source = $activeSource
+                                    in_place_relay = $script:InPlaceProxyRelayActive
+                                    restart_requested = $false
                                 }
                             }
                         }
@@ -2072,6 +2116,16 @@ try {
                     Write-GuardianLog 'WARN' 'proxy_unavailable' 'No candidate passed listener and HTTPS validation; Codex was left untouched.' @{}
                     $lastUnavailableLog = Get-Date
                 }
+            }
+
+            if (-not [string]::IsNullOrWhiteSpace($script:InPlaceProxyRelaySource) -and
+                -not [string]::IsNullOrWhiteSpace($script:InPlaceProxyRelayTarget) -and
+                ((Get-Date) - $script:InPlaceProxyRelayLastAttempt).TotalSeconds -ge 10) {
+                $script:InPlaceProxyRelayLastAttempt = Get-Date
+                $script:InPlaceProxyRelayActive = Start-CpgInPlaceProxyRelay `
+                    -SourceProxyUri $script:InPlaceProxyRelaySource `
+                    -TargetProxyUri $script:InPlaceProxyRelayTarget `
+                    -Config $config
             }
 
             $roots = @(Get-CodexRootProcesses $codexApps)
@@ -2167,11 +2221,6 @@ try {
                         pid = $managedRootPid
                     }
                 }
-                if ($script:RecoveryLaunchRequired) {
-                    $script:RecoveryLaunchRequired = $false
-                    Save-PersistentState $activeProxy $activeSource $lastRestart
-                    Write-GuardianLog 'INFO' 'codex_restart_confirmed' 'The relaunched Codex root was observed with the current proxy argument.' @{ pid = $managedRootPid }
-                }
             }
             elseif ($managedRootPid -ne 0 -and $managedRootPid -notin $rootIds) { $managedRootPid = 0 }
 
@@ -2263,35 +2312,6 @@ try {
                 Save-PersistentState $proxyToPersist $activeSource $lastRestart
             }
 
-            if (-not $ObserveOnly -and -not $script:CompatibilityHold -and $script:RecoveryLaunchRequired -and $proxyIsValid -and $roots.Count -eq 0 -and $null -ne $codexApp) {
-                if (((Get-Date) - $lastRestart).TotalSeconds -ge $recoveryLaunchRetrySeconds -and (Test-GuardianRestartBudget)) {
-                    $lastRestart = Get-Date
-                    Register-GuardianRestart $lastRestart
-                    Save-PersistentState $activeProxy $activeSource $lastRestart
-                    Write-GuardianLog 'WARN' 'codex_recovery_retry' 'Retrying a managed Codex launch after the previous relaunch was not confirmed.' @{
-                        proxy = Protect-CpgProxyUri $activeProxy
-                        attempt_count = @($script:RestartHistory).Count
-                    }
-                    $managedRootPid = Start-CodexManaged $activeProxy $config $codexApp
-                    $restartRequired = $false
-                }
-            }
-
-            if (-not $ObserveOnly -and -not $script:CompatibilityHold -and $restartRequired -and $proxyIsValid -and $stabilityReady -and $roots.Count -gt 0 -and $null -ne $codexApp) {
-                if (((Get-Date) - $lastRestart).TotalSeconds -ge $restartCooldownSeconds -and (Test-GuardianRestartBudget)) {
-                    if (Request-CodexRestartApproval -Reason 'proxy_endpoint_changed' -ProxyUri $activeProxy -Config $config) {
-                        $lastRestart = Get-Date
-                        Register-GuardianRestart $lastRestart
-                        $script:RecoveryLaunchRequired = $true
-                        Save-PersistentState $activeProxy $activeSource $lastRestart
-                        $managedRootPid = Restart-CodexManaged $roots $activeProxy $config $codexApp -ApprovalGranted
-                        $restartRequired = $false
-                        $pendingExternalPid = 0
-                        Save-PersistentState $activeProxy $activeSource $lastRestart
-                    }
-                }
-            }
-
             $externalMismatch = $proxyIsValid -and $roots.Count -gt 0 -and $matchingRoots.Count -eq 0 -and -not $restartRequired
             if (-not $ObserveOnly -and $externalMismatch -and $null -ne $codexApp) {
                 $externalPid = [int]$roots[0].ProcessId
@@ -2335,25 +2355,20 @@ try {
                     'Keep' { $externalLaunchState = 'ProxyTrafficObserved' }
                     'ManagedShortcut' { $externalLaunchState = 'ManagedShortcutRequired' }
                     'Repair' {
-                        $externalLaunchState = 'WaitingForRestartBudget'
-                        if (((Get-Date) - $lastRestart).TotalSeconds -ge $restartCooldownSeconds -and (Test-GuardianRestartBudget)) {
-                            if (Request-CodexRestartApproval -Reason ([string]$externalDecision.Reason) -ProxyUri $activeProxy -Config $config) {
-                                $lastRestart = Get-Date
-                                Register-GuardianRestart $lastRestart
-                                $script:RecoveryLaunchRequired = $true
-                                Save-PersistentState $activeProxy $activeSource $lastRestart
-                                Write-GuardianLog 'INFO' 'external_codex_repair' 'The external Codex launch is being replaced with a validated managed launch.' @{
-                                    pid = $externalPid
-                                    policy = $externalLaunchPolicy
-                                    reason = [string]$externalDecision.Reason
-                                }
-                                $managedRootPid = Restart-CodexManaged $roots $activeProxy $config $codexApp -ApprovalGranted
-                                $pendingExternalPid = 0
-                                $pendingExternalTrafficObserved = $false
-                                $externalLaunchState = 'Repairing'
-                                Save-PersistentState $activeProxy $activeSource $lastRestart
-                            }
-                            else { $externalLaunchState = 'RestartDeferred' }
+                        $legacyProxy = Get-CpgRootProxyUriFromCommandLine $roots[0]
+                        if (-not [string]::IsNullOrWhiteSpace($legacyProxy)) {
+                            $script:InPlaceProxyRelaySource = $legacyProxy
+                            $script:InPlaceProxyRelayTarget = $activeProxy
+                            $script:InPlaceProxyRelayActive = Start-CpgInPlaceProxyRelay `
+                                -SourceProxyUri $legacyProxy -TargetProxyUri $activeProxy -Config $config
+                        }
+                        $externalLaunchState = if ($script:InPlaceProxyRelayActive) { 'InPlaceRelayActive' } else { 'InPlaceRepairPending' }
+                        Write-GuardianLog 'INFO' 'external_codex_repair_in_place' 'Codex stayed open; Guardian attempted an in-place relay for the existing proxy endpoint instead of restarting the process.' @{
+                            pid = $externalPid
+                            old_proxy = if ([string]::IsNullOrWhiteSpace($legacyProxy)) { $null } else { Protect-CpgProxyUri $legacyProxy }
+                            new_proxy = Protect-CpgProxyUri $activeProxy
+                            relay_active = $script:InPlaceProxyRelayActive
+                            restart_requested = $false
                         }
                     }
                 }
@@ -2376,20 +2391,30 @@ try {
                     Remove-Item -LiteralPath $script:LaunchRequestPath -Force -ErrorAction SilentlyContinue
                     $lastRestart = Get-Date
                     Register-GuardianRestart $lastRestart
-                    $script:RecoveryLaunchRequired = $true
+                    $script:RecoveryLaunchRequired = $false
                     Save-PersistentState $activeProxy $activeSource $lastRestart
                     $managedRootPid = Start-CodexManaged $activeProxy $config $codexApp
+                    Write-GuardianLog 'INFO' 'codex_managed_launch_requested' 'Codex was not running; the user-requested managed launch was started with the validated proxy.' @{
+                        proxy = Protect-CpgProxyUri $activeProxy
+                        pid = $managedRootPid
+                        codex_was_running = $false
+                    }
                 }
-                elseif ($proxyIsValid -and $roots.Count -gt 0 -and $null -ne $codexApp -and ((Get-Date) - $lastRestart).TotalSeconds -ge $restartCooldownSeconds -and (Test-GuardianRestartBudget)) {
-                    if (Request-CodexRestartApproval -Reason 'managed_shortcut_takeover' -ProxyUri $activeProxy -Config $config) {
-                        Remove-Item -LiteralPath $script:LaunchRequestPath -Force -ErrorAction SilentlyContinue
-                        $lastRestart = Get-Date
-                        Register-GuardianRestart $lastRestart
-                        $script:RecoveryLaunchRequired = $true
-                        Save-PersistentState $activeProxy $activeSource $lastRestart
-                        Write-GuardianLog 'INFO' 'managed_launch_takeover' 'The managed shortcut requested replacement of a Codex root missing the current proxy argument.' @{ old_pids = $rootIds }
-                        $managedRootPid = Restart-CodexManaged $roots $activeProxy $config $codexApp -ApprovalGranted
-                        $pendingExternalPid = 0
+                elseif ($proxyIsValid -and $roots.Count -gt 0 -and $null -ne $codexApp) {
+                    Remove-Item -LiteralPath $script:LaunchRequestPath -Force -ErrorAction SilentlyContinue
+                    $legacyProxy = Get-CpgRootProxyUriFromCommandLine $roots[0]
+                    if (-not [string]::IsNullOrWhiteSpace($legacyProxy)) {
+                        $script:InPlaceProxyRelaySource = $legacyProxy
+                        $script:InPlaceProxyRelayTarget = $activeProxy
+                        $script:InPlaceProxyRelayActive = Start-CpgInPlaceProxyRelay `
+                            -SourceProxyUri $legacyProxy -TargetProxyUri $activeProxy -Config $config
+                    }
+                    Write-GuardianLog 'INFO' 'managed_launch_kept_open' 'A managed-launch request arrived while Codex was already open; Guardian kept the current process and attempted an in-place relay.' @{
+                        old_pids = $rootIds
+                        old_proxy = if ([string]::IsNullOrWhiteSpace($legacyProxy)) { $null } else { Protect-CpgProxyUri $legacyProxy }
+                        new_proxy = Protect-CpgProxyUri $activeProxy
+                        relay_active = $script:InPlaceProxyRelayActive
+                        restart_requested = $false
                     }
                 }
             }
@@ -2442,6 +2467,8 @@ try {
             if (-not $proxyIsValid -and -not [string]::IsNullOrWhiteSpace([string]$pendingProxy)) { $guardianState = 'Stabilizing' }
             if ($proxyIsValid) { $guardianState = 'Ready' }
             if ($proxyIsValid -and $externalLaunchState -in @('SafeEvidenceGrace', 'StreamingGuaranteeGrace', 'EnforceDebounce', 'WaitingForRestartBudget')) { $guardianState = 'EvaluatingCodexLaunch' }
+            if ($script:InPlaceProxyRelayActive -or $externalLaunchState -eq 'InPlaceRelayActive') { $guardianState = 'InPlaceRepairActive' }
+            elseif ($externalLaunchState -eq 'InPlaceRepairPending') { $guardianState = 'InPlaceRepairPending' }
             if ($observationActive) { $guardianState = 'ObservingAfterCodexUpdate' }
             if ($script:UpstreamSuspected) { $guardianState = 'UpstreamSuspected' }
             if ($proxyIsValid -and $externalLaunchState -eq 'ManagedShortcutRequired') { $guardianState = 'CodexNeedsManagedLaunch' }
@@ -2449,11 +2476,7 @@ try {
             if ($script:RecoveryLaunchRequired) { $guardianState = 'RecoveringCodex' }
             if ($script:RecoveryLaunchRequired -and $roots.Count -gt 0 -and $matchingRoots.Count -eq 0 -and -not $manageExternalLaunches -and -not $safeRepairExternalLaunches) { $guardianState = 'RecoveryBlockedByCodex' }
             if ([string]$compatibilityDecision.State -eq 'ReviewRequired') { $guardianState = 'CodexCompatibilityReviewRequired' }
-            $restartApprovalRequired = $restartRequired -or $externalLaunchState -eq 'RestartDeferred'
-            if ($restartApprovalRequired) {
-                $guardianState = if ($script:RestartDeferredUntil -gt (Get-Date)) { 'RestartDeferred' } else { 'RestartApprovalRequired' }
-            }
-            if ($script:CircuitBreakerUntil -gt (Get-Date)) { $guardianState = 'RestartCircuitOpen' }
+            $restartApprovalRequired = $false
 
             Write-JsonAtomically $script:StatusPath ([ordered]@{
                 running = $true
@@ -2465,6 +2488,7 @@ try {
                 eventListenerEnabled = [bool]$script:EventListener.Enabled
                 eventListenerComponents = @($script:EventListener.Components)
                 eventListenerState = if ([bool]$script:EventListener.Enabled) { 'Ready' } else { 'PeriodicFallback' }
+                codexLogBackend = 'LegacyTextAndSqliteWal'
                 lastListenerWakeUtc = if ($script:LastListenerWakeAt -gt [datetime]::MinValue) { $script:LastListenerWakeAt.ToUniversalTime().ToString('o') } else { $null }
                 lastListenerWakeReason = if ([string]::IsNullOrWhiteSpace($script:LastListenerWakeReason)) { $null } else { $script:LastListenerWakeReason }
                 externalLaunchPolicy = $externalLaunchPolicy
@@ -2474,6 +2498,11 @@ try {
                 streamingProxyGuaranteed = ($matchingRoots.Count -gt 0)
                 streamingProxyEvidence = if ($matchingRoots.Count -gt 0) { 'ManagedLaunchEnvironmentAndChromiumArgument' } elseif ($trafficObservedRecently) { 'SystemProxyHttpTrafficOnly' } else { 'NoManagedStreamingEvidence' }
                 streamingRepairRequired = ($requireManagedLaunchForStreaming -and $roots.Count -gt 0 -and $matchingRoots.Count -eq 0)
+                codexRestartPolicy = 'Never'
+                inPlaceProxyRelayEnabled = [bool](Get-CpgConfigValue $config 'EnableInPlaceProxyRelay' $true)
+                inPlaceProxyRelayActive = $script:InPlaceProxyRelayActive
+                inPlaceProxyRelaySource = if ([string]::IsNullOrWhiteSpace($script:InPlaceProxyRelaySource)) { $null } else { Protect-CpgProxyUri $script:InPlaceProxyRelaySource }
+                inPlaceProxyRelayTarget = if ([string]::IsNullOrWhiteSpace($script:InPlaceProxyRelayTarget)) { $null } else { Protect-CpgProxyUri $script:InPlaceProxyRelayTarget }
                 pendingExternalCodexPid = if ($pendingExternalPid -eq 0) { $null } else { $pendingExternalPid }
                 pendingExternalProxyTrafficObserved = $pendingExternalTrafficObserved
                 activeProxy = $activeProxy
@@ -2551,14 +2580,14 @@ try {
                 codexProxyConnectionObservedNow = $trafficObservedNow
                 codexProxyConnectionObservedRecently = $trafficObservedRecently
                 lastProxyConnectionUtc = if ($script:LastProxyConnection -eq [datetime]::MinValue) { $null } else { $script:LastProxyConnection.ToUniversalTime().ToString('o') }
-                restartRequired = $restartRequired
-                restartApprovalRequired = $restartApprovalRequired
-                restartNotificationEnabled = [bool](Get-CpgConfigValue $config 'NotifyBeforeCodexRestart' $true)
-                restartDeferredUntilUtc = if ($script:RestartDeferredUntil -gt (Get-Date)) { $script:RestartDeferredUntil.ToUniversalTime().ToString('o') } else { $null }
-                recoveryLaunchRequired = $script:RecoveryLaunchRequired
-                recentRestartCount = @($script:RestartHistory).Count
-                restartCircuitOpen = ($script:CircuitBreakerUntil -gt (Get-Date))
-                circuitBreakerUntilUtc = if ($script:CircuitBreakerUntil -gt (Get-Date)) { $script:CircuitBreakerUntil.ToUniversalTime().ToString('o') } else { $null }
+                restartRequired = $false
+                restartApprovalRequired = $false
+                restartNotificationEnabled = $false
+                restartDeferredUntilUtc = $null
+                recoveryLaunchRequired = $false
+                recentRestartCount = 0
+                restartCircuitOpen = $false
+                circuitBreakerUntilUtc = $null
                 systemProxyModified = $false
             })
 
@@ -2580,6 +2609,7 @@ try {
 }
 finally {
     Stop-CpgEventListener $script:EventListener
+    Stop-CpgInPlaceProxyRelay
     Write-GuardianLog 'INFO' 'guardian_stopped' 'Codex Proxy Guardian stopped.' @{}
     $mutex.ReleaseMutex()
     $mutex.Dispose()

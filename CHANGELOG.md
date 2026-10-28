@@ -4,6 +4,21 @@ All notable changes are documented here. This project follows semantic versionin
 
 ## [未发布 / Unreleased]
 
+## [1.8.0] - 2026-10-28
+
+- Windows 将 `CodexRestartPolicy=Never` 设为硬策略，删除所有运行时关闭/重启 Codex 的调用路径；Automatic 与 Strict 都只执行不打断当前任务的修复。
+- 新增本机在线转发：代理端口变化后，旧回环端口已释放且新旧协议兼容时，Guardian 会把旧端口的 TCP 流转发到已验证的新端点；失败只记录为 `InPlaceRepairPending`，不会抢占端口或修改系统代理。
+- 转发器拆分为独立模块和隐藏子进程，并使用 PID + 随机实例令牌验证所有权；新增真实 TCP 往返回归测试，而非只检查配置或日志。
+- Settings、Status、Doctor、README 与架构文档改为无打扰在线修复语义；自动更新和 Guardian 自愈均不要求 Codex 重启。
+- 适配 `OpenAI.Codex 26.1021.3705.0` 的新日志后端：除旧版文本日志外，直接监听 `%USERPROFILE%\.codex\logs_2.sqlite-wal`，无需安装 SQLite 即可识别 app-server 记录的 `stream disconnected - retrying sampling request (n/5)`。
+- 兼容新版远控 WebSocket 的 `reconnect_attempt=n` 字段，并把 response stream、remote-control WebSocket 和本地 IPC 故障分别归因；日志只提取连接错误片段，不读取任务内容。
+
+## [1.7.0] - 2026-09-10
+
+- 修复 Guardian 在 Windows 更新器、会话切换或异常终止后只剩“已注册但未运行”的严重问题：启动任务增加每分钟健康触发，下一分钟自动拉起失效的守护进程；原有失败重启和单实例保护保持不变。
+- 兼容 Codex 26.903 及后续版本新增的本地 app-server/IPC 日志信号，和远程控制 WebSocket 断流分开记录，避免把本地 stdio 重置误判为代理节点故障。
+- 新增回归测试，覆盖 `AppServerIpc` 信号分类和 Windows 任务自愈触发器。
+
 ## [1.6.1] - 2026-09-08
 
 - 修复自动更新的直连回退仍继承系统代理的问题。代理出口被 GitHub API 限流或返回 403 时，Windows 更新器现在会明确使用 `curl --noproxy "*"` 直连，再按需回退到 PowerShell；不会把同一个受限代理重复当成“默认网络”。

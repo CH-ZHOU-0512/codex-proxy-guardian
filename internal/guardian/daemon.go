@@ -233,7 +233,8 @@ func (daemon *daemonRuntime) manageMacApplication(previousProxy string, observat
 		return "Ready"
 	}
 	if previousProxy != "" && previousProxy != daemon.persistent.ActiveProxy {
-		return daemon.performRestart("proxy_changed")
+		daemon.logger.Log("INFO", "proxy_changed_without_restart", "Adopted the validated endpoint without restarting the running Codex application.", nil)
+		return "CodexNeedsManagedLaunch"
 	}
 	if observation.LaunchConfigured || observation.TrafficObserved {
 		daemon.externalPID = 0
@@ -252,24 +253,7 @@ func (daemon *daemonRuntime) manageMacApplication(previousProxy string, observat
 	if time.Since(daemon.externalSeenAt) < wait {
 		return "EvaluatingCodexLaunch"
 	}
-	return daemon.performRestart("missing_proxy_argument")
-}
-
-func (daemon *daemonRuntime) performRestart(reason string) string {
-	if !daemon.allowRestart() {
-		if daemon.persistent.CircuitBreakerUntil != nil && daemon.persistent.CircuitBreakerUntil.After(time.Now()) {
-			return "RestartCircuitOpen"
-		}
-		return "WaitingForRestartBudget"
-	}
-	if err := daemon.manager.Restart(daemon.persistent.ActiveProxy, daemon.cfg); err != nil {
-		daemon.logger.Log("ERROR", "codex_restart_failed", "Could not restart the macOS Codex application.", map[string]any{"reason": reason, "error_class": classifyError(err)})
-		return "RecoveryPending"
-	}
-	daemon.registerRestart()
-	daemon.externalPID = 0
-	daemon.logger.Log("INFO", "codex_restarted", "Restarted the macOS Codex application with the validated proxy.", map[string]any{"reason": reason})
-	return "Ready"
+	return "CodexNeedsManagedLaunch"
 }
 
 func (daemon *daemonRuntime) recentRestarts() []time.Time {

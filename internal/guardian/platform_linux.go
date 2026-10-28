@@ -21,10 +21,6 @@ func (manager *linuxManager) Observe(string) AppObservation {
 func (manager *linuxManager) Launch(proxyURI string, arguments []string) error {
 	return execCodexCLI(manager.cfg, proxyURI, arguments)
 }
-func (manager *linuxManager) Restart(string, Config) error {
-	return fmt.Errorf("Linux terminal sessions are never restarted automatically; launch with codex-guard")
-}
-
 func platformSystemProxyCandidates(cfg Config) []Candidate {
 	mode, err := exec.Command("gsettings", "get", "org.gnome.system.proxy", "mode").Output()
 	if err != nil || !strings.Contains(string(mode), "manual") {

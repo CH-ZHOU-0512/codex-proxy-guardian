@@ -34,9 +34,9 @@ The Windows implementation remains PowerShell-based. macOS/Linux share a small s
 
 Root processes are matched by exact resolved executable path and absence of an Electron child-process `--type=` argument. A managed root is recognized by the normalized `--proxy-server` command-line value, which remains meaningful across launcher PID handoff.
 
-On macOS the same exact-path/root-process rule is applied to configured ChatGPT/Codex application bundle executables; Electron child processes are excluded. A graceful AppleScript quit is attempted before a signal is sent, and the signal is allowed only for the same verified root PID. Linux never enumerates and kills Codex CLI processes.
+On macOS the same exact-path/root-process rule is applied to configured ChatGPT/Codex application bundle executables; Electron child processes are excluded. macOS and Linux do not terminate Codex processes. A changed endpoint is saved for the next natural launch; Linux users can apply it explicitly through `codex-guard`.
 
-## Restart state machine
+## In-place repair state machine
 
 ```mermaid
 stateDiagram-v2
@@ -44,31 +44,31 @@ stateDiagram-v2
     Discovering --> Debouncing: candidate passes checks
     Debouncing --> Discovering: candidate disappears or changes
     Debouncing --> Active: stable samples and duration reached
-    Active --> RestartPending: validated endpoint changes
-    RestartPending --> Relaunching: cooldown and budget allow
-    Relaunching --> Active: matching Codex root is confirmed
-    Relaunching --> RecoveryPending: launch fails
-    RecoveryPending --> Relaunching: proxy valid, retry and budget allow
-    RecoveryPending --> CircuitOpen: restart limit reached
-    CircuitOpen --> RecoveryPending: breaker expires
+    Active --> RelayPending: validated local endpoint changes
+    RelayPending --> RelayActive: old port released and protocol compatible
+    RelayPending --> Active: old endpoint still serves traffic
+    RelayActive --> RelayActive: forward old endpoint to validated endpoint
+    RelayActive --> RelayPending: target changes or relay exits
     Active --> Active: candidate unchanged
 ```
 
-In Safe mode, an ordinary Codex root missing the launch argument enters an evidence grace period. If that exact process tree is observed using the validated proxy, it is left untouched; otherwise one managed repair is attempted after the grace period. In Enforce mode the missing argument is sufficient to trigger a debounced repair. Either mode can restart a running Codex instance after a validated endpoint change, and every repair uses the same cooldown, restart budget, and circuit breaker.
+Windows never closes or restarts Codex. When a running root still points at an older loopback endpoint and a different endpoint passes debounce and real HTTPS validation, Guardian attempts to bind the released old port and forwards raw TCP streams to the new endpoint. Forwarding is allowed only between loopback endpoints in the same HTTP-family or SOCKS5-family protocol. If the old port is occupied, no compatible source is known, or the protocols differ, Guardian leaves Codex untouched and publishes `InPlaceRepairPending`.
 
 On Windows, the resolved Store/MSIX package version is persisted separately from the active proxy. When that version changes, Guardian does not disturb an old process that is still running. Once a root from the new executable path appears, it starts a post-update observation that requires three fresh critical-target validations over at least 60 seconds by default. Cached validations do not increment the sample count. Until the observation completes, Safe-mode local traffic evidence cannot exempt a missing launch argument.
 
 The same version transition immediately starts the installation-owned update scheduled task when automatic updates are enabled. Before starting it, Guardian verifies the install marker, canonical install root, task name, PowerShell action, and exact `Update.ps1` path. Guardian then reads the updater's atomic terminal status rather than treating task launch as success. A failure is retried for the same Codex version after the configured interval; the daily task remains a second fallback when an adapter release is not yet available.
 
-Windows also maintains an event-assisted listener. A `FileSystemWatcher` observes Codex desktop logs and the updater's atomic `update-status.json`; a process event watcher observes `ChatGPT.exe`/`Codex.exe` starts. Log lines are tailed incrementally and matched against known WebSocket, response-stream, timeout, reset, and request-transport failures. Duplicates from the same Codex error are collapsed by the embedded event timestamp, then the validation cache is invalidated and the current proxy is rechecked immediately. If the listener cannot attach (for example, Codex has not created its log directory yet), the normal bounded polling path remains active. The listener never closes Codex solely because a reconnect line was observed.
+Windows also maintains an event-assisted listener. A `FileSystemWatcher` observes legacy Codex desktop logs, Codex `26.1021.3705.0` and later `%USERPROFILE%\.codex\logs_2.sqlite-wal`, and the updater's atomic `update-status.json`; a process event watcher observes `ChatGPT.exe`/`Codex.exe` starts. The WAL adapter reads only newly appended bytes, extracts connection-failure fragments without bundling a SQLite engine, and never collects task content. Both log formats are matched against known WebSocket, response-stream, timeout, reset, request-transport, and local app-server/IPC failures. Duplicates from the same Codex error are collapsed, then the validation cache is invalidated and the current proxy is rechecked immediately. If a listener cannot attach, the normal bounded polling path remains active. The listener never closes Codex solely because a reconnect record was observed.
+
+The Windows startup task has both a logon trigger and a one-minute health trigger. The latter is intentionally redundant with `RestartOnFailure`: Windows can leave a scheduled task in `Ready` after an updater or session transition stops its PowerShell host, and a periodic trigger is the bounded self-healing path for that state.
 
 The guardian update heartbeat checks the atomic updater result at a configurable interval (60 minutes by default). It starts the installation-owned scheduled task when due; if that task is missing or points elsewhere, it starts the exact installed `Update.ps1` through the updater's own global mutex. This keeps automatic updates recoverable without trusting an unrelated task or changing network configuration.
 
-A capability fingerprint covers package identity, version, application ID, root executable name, manifest resolution method, and launch-strategy selection. If a user-approved managed launch returns a Codex root but neither the expected proxy argument nor current-root proxy traffic can be confirmed within the configured timeout, `CodexCompatibilityReviewRequired` is persisted for that Codex/Guardian pair. Recovery intent is cleared and all automatic lifecycle paths are held. A Codex version change or verified Guardian upgrade clears the old pair-specific hold and starts a new audit.
+A capability fingerprint covers package identity, version, application ID, root executable name, manifest resolution method, and launch-strategy selection. If a Codex root can no longer be confirmed through expected arguments or current-root traffic, `CodexCompatibilityReviewRequired` is persisted for that Codex/Guardian pair. Risky takeover paths remain held while verified Guardian updates continue. A Codex version change or verified Guardian upgrade clears the old pair-specific hold and starts a new audit.
 
 Listener reachability and upstream validation are separate states. A reachable listener with a failed critical external validation becomes `UpstreamSuspected`; the current Codex process is preserved, candidate failover is held for that active physical endpoint, and no lifecycle action is requested for the degradation. A later fresh critical-target success clears the condition. Guardian does not select subscription nodes inside a proxy provider application.
 
-A recovery flag is written before the old Codex process is stopped and cleared only after a matching new root is observed. A failed launch is retried only while the proxy is still valid. A sliding restart window opens a persistent circuit breaker after the configured limit; while open, the guardian performs no further lifecycle action. This converts a bad detection or launch environment into a diagnosable degraded state instead of an endless restart loop or an unreported closed application.
+The relay is a separate hidden current-user process with a random ownership token. Guardian stops it only when both the recorded PID and token match, preventing stale-PID termination of unrelated processes. The relay never changes Windows proxy, DNS, routes, firewall rules, or persistent environment variables.
 
 ## Mode and update control plane
 
@@ -94,8 +94,7 @@ The [official Codex network-isolation documentation](https://learn.chatgpt.com/d
 
 ## Persistence and isolation
 
-- `state.json` stores the last validated endpoint and last restart time.
-- Restart history, circuit-breaker expiry, pending relaunch recovery, and the last observed Codex-to-proxy connection time are persisted across guardian restarts.
+- `state.json` stores the last validated endpoint, relay source/target, compatibility evidence, and the last observed Codex-to-proxy connection time.
 - `status.json` is an atomic operational snapshot.
 - JSONL logs rotate by date, size, retention, and file count.
 - A mutex derived from the normalized install path gives each installation a distinct single-instance boundary.

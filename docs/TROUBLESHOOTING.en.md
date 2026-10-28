@@ -29,30 +29,15 @@ If status shows `CodexApplicationUnavailable`, make sure ChatGPT/Codex is under 
 
 Do not use `sudo` for install, repair, or uninstall.
 
-## Codex repeatedly restarts
+## Codex was closed unexpectedly
 
-First confirm that Guardian is v1.4.3 or newer. v1.4.1 and earlier can mistake HTTP/SOCKS5 validation fluctuations on one mixed proxy port for endpoint changes. v1.4.2 prevents the immediate switch-back, but can still switch after the current scheme briefly fails validation. v1.4.3 treats one host and port as one lifecycle endpoint and never closes Codex for a protocol-only change.
+Starting with v1.8.0, Guardian publishes `CodexRestartPolicy=Never` and has no Codex shutdown call path. If Codex still exits, capture the timestamp and inspect Codex, Windows, and proxy-leader logs. Reinstalling v1.8.0 or newer in place removes legacy lifecycle behavior while preserving proxy configuration.
 
-Starting with v1.4.3, Windows shows a foreground confirmation before a genuinely different proxy host or port can replace the running Codex process. Only an explicit Yes proceeds. No, timeout, or a prompt failure defers the restart and publishes `RestartDeferred`. Do not disable `NotifyBeforeCodexRestart` unless unattended restarts are explicitly acceptable.
+## In-place repair after a Windows proxy-port change
 
-1. Stop the task immediately without changing network settings:
+Guardian can bind a released old loopback port and forward it to a newly validated endpoint when both endpoints use the same HTTP-family or SOCKS5-family protocol. `InPlaceProxyRelayActive=true` confirms the relay is active.
 
-   ```powershell
-   Stop-ScheduledTask -TaskName 'Codex Proxy Guardian'
-   ```
-
-2. Select Automatic (`Safe`) in **Codex Proxy Guardian Settings**. To disable ordinary-launch repair completely, also set `SafeRepairExternalCodexLaunches` to `false` in the installed `config.json`.
-3. Inspect `status.json` and the newest `logs\guardian-*.jsonl` file. Repeated `proxy_changed` events indicate an unstable candidate selection; repeated `unmanaged_codex` or `external_codex_repair` events indicate that an ordinary Codex launch did not carry the current proxy argument.
-4. Set `ExplicitProxy` to the stable HTTP/mixed inbound endpoint if automatic discovery sees multiple listeners.
-5. Increase `DebounceSeconds`, `StableSamples`, or `RestartCooldownSeconds` for a proxy application that recreates listeners during profile switches.
-
-Version 0.2 and later also stops attempting restarts after `RestartLimitCount` events inside `RestartLimitWindowMinutes`. `Status.ps1` shows `RestartCircuitOpen` and its expiry. Do not simply raise the limit until the candidate-change cause is understood.
-
-The watchdog intentionally matches `--proxy-server=<validated URI>` on the current root process. It does not use launcher PID ownership, which is unreliable during MSIX/Electron process handoff.
-
-## Codex stayed closed after a managed restart
-
-Version 0.2 and later persists a `RecoveryLaunchRequired` flag before stopping Codex. If launch fails, `GuardianState` becomes `RecoveringCodex` and the guardian retries while the proxy remains valid. Starting with 0.3, Safe mode observes a separately launched Codex that lacks the current proxy argument: it leaves the process alone if current-proxy traffic appears during the evidence window, and otherwise performs one controlled repair. Such a process can produce `RecoveryBlockedByCodex` only when both `SafeRepairExternalCodexLaunches` and `ManageExternalCodexLaunches` are disabled; in that case, close it and use **Codex (Managed Proxy)**. Failed attempts share the normal restart budget; after the limit, `RestartCircuitOpen` prevents an unbounded loop. Check the newest `codex_started`, `loop_error`, and `restart_circuit_opened` log events. Do not delete `state.json` merely to bypass the limit; correct the launch or package-resolution failure first.
+`InPlaceRepairPending` means that the old port is still occupied, no compatible source endpoint is known, or the protocols differ. Guardian leaves Codex open and does not seize the port or modify Windows networking. Setting `ExplicitProxy` to a stable HTTP or mixed inbound can reduce endpoint churn.
 
 ## Automatic update failed
 
@@ -66,14 +51,12 @@ Starting with v1.5.4, a successful background update sends one desktop notificat
 
 ## Codex was not restarted but still shows Reconnecting
 
-Compare the timestamp with Guardian's `codex_restart` and `proxy_changed` events. If neither is present while Codex records TLS EOF, WebSocket reset, Windows `10054`, or a request timeout, the streaming connection was interrupted upstream of Guardian.
+Check `InPlaceProxyRelayActive`. If it is true while Codex records TLS EOF, WebSocket reset, Windows `10054`, or a request timeout, the streaming connection was normally interrupted upstream of Guardian.
 
 Starting with v1.5.1, check `StreamingProxyGuaranteed` first:
 
-- `false`, or `EffectivenessEvidence=SystemProxyHttpTrafficOnly`: the ordinary launch proved only that HTTP used the Windows system proxy. It did not prove that the newer Codex WebSocket/streaming child inherited explicit proxy variables. Finish the current task, then choose **Restart Codex** in Guardian's branded prompt; choose **Remind me in 60 minutes** when it is not convenient. You can also use the connection-optimization button in Settings or close Codex and open **Codex (Managed Proxy)**.
+- `false`, or `EffectivenessEvidence=SystemProxyHttpTrafficOnly`: the ordinary launch proved only that HTTP used the Windows system proxy. Guardian keeps Codex open and attempts a compatible in-place relay when the old endpoint is known.
 - `true` with `EffectivenessEvidence=ManagedTrafficObserved`: managed launch configuration and endpoint traffic were both observed. If reconnects remain and no Guardian lifecycle event exists, inspect the upstream provider node.
-
-The branded prompt closes Codex only after an explicit **Restart Codex** choice. **Remind me in 60 minutes**, closing the window, timeout, or prompt failure leaves Codex running and snoozes the prompt. Guardian does not modify the system proxy or persistent environment variables.
 
 Version 1.4.4 requires the critical `chatgpt.com` probe to pass and exposes `ProxyCriticalTargetsPassed` and `ProxyCriticalFailures` in status and Doctor output. If the proxy application's own log reports upstream `i/o timeout`, select a healthier node there.
 

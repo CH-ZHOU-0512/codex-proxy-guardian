@@ -231,7 +231,10 @@ if (-not $SkipConnectivityCheck) {
     try {
         New-Item -ItemType Directory -Path $stagingRoot -Force | Out-Null
         Copy-Item -LiteralPath (Join-Path $sourceRoot 'src\CodexProxyGuardian.Core.psm1') -Destination (Join-Path $stagingRoot 'CodexProxyGuardian.Core.psm1')
+        Copy-Item -LiteralPath (Join-Path $sourceRoot 'src\CodexProxyGuardian.Relay.psm1') -Destination (Join-Path $stagingRoot 'CodexProxyGuardian.Relay.psm1')
+        Copy-Item -LiteralPath (Join-Path $sourceRoot 'src\CodexProxyGuardian.CodexLogs.psm1') -Destination (Join-Path $stagingRoot 'CodexProxyGuardian.CodexLogs.psm1')
         Copy-Item -LiteralPath (Join-Path $sourceRoot 'src\Watch-CodexProxy.ps1') -Destination (Join-Path $stagingRoot 'Watch-CodexProxy.ps1')
+        Copy-Item -LiteralPath (Join-Path $sourceRoot 'src\ProxyRelay.ps1') -Destination (Join-Path $stagingRoot 'ProxyRelay.ps1')
         Copy-Item -LiteralPath $defaultConfigPath -Destination (Join-Path $stagingRoot 'config.default.json')
         $prospectiveConfig | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $stagingRoot 'config.json') -Encoding UTF8
         $selfTestOutput = @(& $powershellPath -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $stagingRoot 'Watch-CodexProxy.ps1') -SelfTest 2>&1)
@@ -312,7 +315,10 @@ $marker | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $resolve
 
 $payload = [ordered]@{
     (Join-Path $sourceRoot 'src\CodexProxyGuardian.Core.psm1') = 'CodexProxyGuardian.Core.psm1'
+    (Join-Path $sourceRoot 'src\CodexProxyGuardian.Relay.psm1') = 'CodexProxyGuardian.Relay.psm1'
+    (Join-Path $sourceRoot 'src\CodexProxyGuardian.CodexLogs.psm1') = 'CodexProxyGuardian.CodexLogs.psm1'
     (Join-Path $sourceRoot 'src\Watch-CodexProxy.ps1') = 'Watch-CodexProxy.ps1'
+    (Join-Path $sourceRoot 'src\ProxyRelay.ps1') = 'ProxyRelay.ps1'
     (Join-Path $sourceRoot 'src\Launch-CodexManaged.ps1') = 'Launch-CodexManaged.ps1'
     (Join-Path $sourceRoot 'src\Run-Guardian.vbs') = 'Run-Guardian.vbs'
     (Join-Path $sourceRoot 'src\Run-ManagedCodex.vbs') = 'Run-ManagedCodex.vbs'
@@ -349,9 +355,14 @@ Write-CpgInstallProgress 76 'RegisteringStartup'
 try {
     $taskAction = New-ScheduledTaskAction -Execute $powershellPath -Argument ('-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File "{0}"' -f (Join-Path $resolvedRoot 'Watch-CodexProxy.ps1')) -WorkingDirectory $resolvedRoot
     $taskTrigger = New-ScheduledTaskTrigger -AtLogOn -User $identity
+    # Keep a one-minute health trigger in addition to logon.  RestartOnFailure
+    # does not cover a task that is externally stopped during an update or
+    # session transition; MultipleInstances=IgnoreNew keeps this idle while
+    # the guardian is healthy and starts it again after an unexpected exit.
+    $healthTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 1) -RepetitionDuration (New-TimeSpan -Days 3650)
     $taskPrincipal = New-ScheduledTaskPrincipal -UserId $identity -LogonType Interactive -RunLevel Limited
     $taskSettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -MultipleInstances IgnoreNew -RestartCount 50 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit ([TimeSpan]::Zero)
-    Register-ScheduledTask -TaskName $TaskName -Action $taskAction -Trigger $taskTrigger -Principal $taskPrincipal -Settings $taskSettings -Description 'Validates the active proxy and relaunches Codex after a stable endpoint change. Does not modify Windows proxy settings.' -Force | Out-Null
+    Register-ScheduledTask -TaskName $TaskName -Action $taskAction -Trigger @($taskTrigger, $healthTrigger) -Principal $taskPrincipal -Settings $taskSettings -Description 'Validates the active proxy and maintains an in-place local relay without restarting Codex or modifying Windows proxy settings.' -Force | Out-Null
 
     $runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
     $existingRun = Get-RunValue $RunValueName
@@ -524,13 +535,13 @@ $externalLaunchPolicy = if ($effectiveMode -eq 'Enforce' -or [bool](Get-CpgConfi
 $nextStep = $null
 if ($managedLaunchRecommended) {
     if ($externalLaunchPolicy -eq 'SafeStreamingRepair') {
-        $nextStep = 'Safe mode found an ordinary Codex launch. HTTP traffic alone does not prove WebSocket proxy inheritance; finish the active task, then approve the guarded managed relaunch, or open "Codex (Managed Proxy)" when ready.'
+        $nextStep = 'Safe mode found an ordinary Codex launch. Leave Codex open: Guardian will validate the endpoint and use a compatible local relay when the endpoint changes. The managed shortcut is only needed for a future natural launch.'
     }
     elseif ($externalLaunchPolicy -eq 'SafeEvidenceRepair') {
         $nextStep = 'Safe mode is evaluating the current Codex launch. Leave the guardian running, or open "Codex (Managed Proxy)" to apply the validated proxy immediately.'
     }
     elseif ($externalLaunchPolicy -eq 'Enforce') {
-        $nextStep = 'Enforce mode is waiting for its debounce and restart budget before correcting the current Codex launch.'
+        $nextStep = 'Strict mode is waiting for stable evidence before attempting an in-place local relay.'
     }
     else {
         $nextStep = 'Open the Start Menu shortcut "Codex (Managed Proxy)" to apply the validated proxy to the current Codex session.'
